@@ -1,0 +1,6 @@
+packages:
+  - core
+  - adapters
+  - indexer
+  - api
+  - dashboard
