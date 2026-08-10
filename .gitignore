@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# Indexer run log (step 4 interim storage; replaced by Postgres in step 5)
+runs.jsonl
 .env
 .env.local
 *.log

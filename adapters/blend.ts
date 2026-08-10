@@ -410,11 +410,11 @@ export class BlendAdapter implements Adapter<BlendRawData> {
 
   async computeRiskFactors(raw: BlendRawData): Promise<RiskFactorMap> {
     return {
-      [RiskFactorType.CollateralConcentration]: this.collateralConcentration(raw),
-      [RiskFactorType.OracleStaleness]: this.oracleStaleness(raw),
-      [RiskFactorType.AdminKeyActivity]: this.adminKeyActivity(raw),
-      [RiskFactorType.LiquidityDepth]: this.liquidityDepth(raw),
-      [RiskFactorType.UtilizationSpike]: this.utilizationSpike(raw),
+      [RiskFactorType.CollateralSafety]: this.collateralSafety(raw),
+      [RiskFactorType.OracleSafety]: this.oracleSafety(raw),
+      [RiskFactorType.AdminKeySafety]: this.adminKeySafety(raw),
+      [RiskFactorType.LiquiditySafety]: this.liquiditySafety(raw),
+      [RiskFactorType.UtilizationSafety]: this.utilizationSafety(raw),
     };
   }
 
@@ -423,7 +423,7 @@ export class BlendAdapter implements Adapter<BlendRawData> {
   // single de-peg/liquidation cascade than a balanced one. HHI = Σ(share²);
   // for n reserves it ranges [1/n, 1]. We map 1/n → 100 (safest, even split)
   // and 1 → 0 (all in one asset). Pure on-chain supplied USD, no assumptions.
-  private collateralConcentration(raw: BlendRawData): RiskFactor {
+  private collateralSafety(raw: BlendRawData): RiskFactor {
     const weight = 0.2;
     const values = raw.reserves
       .map((r) => suppliedUsd(r, raw.oracleDecimals))
@@ -452,7 +452,7 @@ export class BlendAdapter implements Adapter<BlendRawData> {
   // timestamp; a stale price is what lets bad debt accrue undetected. Fresh
   // (< 10 min) → 100, degrading linearly to 0 at 60 min. Thresholds are a
   // conservative v1 heuristic; ideally we'd read the oracle's own resolution.
-  private oracleStaleness(raw: BlendRawData): RiskFactor {
+  private oracleSafety(raw: BlendRawData): RiskFactor {
     const weight = 0.25;
     const fresh = 10 * 60;
     const dead = 60 * 60;
@@ -477,7 +477,7 @@ export class BlendAdapter implements Adapter<BlendRawData> {
   // Recent admin-account activity ("AdminKeyActivity") lowers safety further —
   // an actively-used admin key is a live lever. Contract-governed admins can't
   // be introspected via Horizon, so they get a flagged neutral baseline.
-  private adminKeyActivity(raw: BlendRawData): RiskFactor {
+  private adminKeySafety(raw: BlendRawData): RiskFactor {
     const weight = 0.2;
     const a = raw.admin;
 
@@ -508,7 +508,7 @@ export class BlendAdapter implements Adapter<BlendRawData> {
   // This is the withdrawal/liquidation cushion: how much can leave before the
   // pool is drained. Distinct from utilizationSpike below, which measures
   // proximity to the *protocol-configured* cap rather than absolute headroom.
-  private liquidityDepth(raw: BlendRawData): RiskFactor {
+  private liquiditySafety(raw: BlendRawData): RiskFactor {
     const weight = 0.15;
     let worstRatio = 1;
     let worstAsset = '';
@@ -533,7 +533,7 @@ export class BlendAdapter implements Adapter<BlendRawData> {
   // it is a concrete stress signal. headroom = (max_util − util)/max_util,
   // worst reserve wins. util here is computed live (borrowed/supplied), not the
   // config's target field.
-  private utilizationSpike(raw: BlendRawData): RiskFactor {
+  private utilizationSafety(raw: BlendRawData): RiskFactor {
     const weight = 0.2;
     let worst = 100;
     let worstAsset = '';

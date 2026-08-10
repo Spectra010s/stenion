@@ -8,17 +8,24 @@ export interface ProtocolMetadata {
 }
 
 /**
- * Closed set of risk categories every adapter reports against. This shared
+ * Closed set of risk dimensions every adapter reports against. This shared
  * taxonomy is what makes protocols comparable on the leaderboard/API —
- * adding a category here is a breaking change felt by every adapter, so
+ * adding a dimension here is a breaking change felt by every adapter, so
  * extend deliberately.
+ *
+ * Naming/polarity: every member is a `*Safety` dimension scored on the same
+ * scale as the overall score — 0-100, higher = safer (see RiskFactor.value).
+ * The name direction deliberately matches the value direction so a factor's
+ * name never disagrees with its number (a `collateralSafety` of 70 means
+ * well-diversified/safe, not 70%-concentrated). Do not add a member whose
+ * name implies "higher = riskier".
  */
 export enum RiskFactorType {
-  CollateralConcentration = 'collateralConcentration',
-  OracleStaleness = 'oracleStaleness',
-  AdminKeyActivity = 'adminKeyActivity',
-  LiquidityDepth = 'liquidityDepth',
-  UtilizationSpike = 'utilizationSpike',
+  CollateralSafety = 'collateralSafety',
+  OracleSafety = 'oracleSafety',
+  AdminKeySafety = 'adminKeySafety',
+  LiquiditySafety = 'liquiditySafety',
+  UtilizationSafety = 'utilizationSafety',
 }
 
 export interface RiskFactor {
