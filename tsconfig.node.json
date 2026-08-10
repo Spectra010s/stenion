@@ -1,0 +1,17 @@
+{
+  // Backend packages (core, adapters, indexer, api): Node runtime, NodeNext modules.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    // ES2022 only — no DOM. TypeScript defaults `lib` to include DOM when unset,
+    // which would leak browser globals into Node code; pin it explicitly.
+    "lib": ["ES2022"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    // Load ONLY Node's global types automatically. Without this, TypeScript walks
+    // up the directory tree and auto-includes every @types/* it finds — including
+    // a stray C:\Users\USER\node_modules\@types (axios/react/wrong @types/node)
+    // that leaks into projects under the home dir and makes type resolution
+    // non-deterministic between the editor and the CLI.
+    "types": ["node"]
+  }
+}

@@ -1,7 +1,15 @@
 {
+  // Frontend: browser target, resolved by a bundler (framework TBD — see src/index.ts).
+  // Extends the shared base directly rather than tsconfig.node.json.
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "dist",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    // Browser code — no Node globals. A framework may add its own (e.g. "vite/client").
+    "types": [],
+    // A bundler emits the build; tsc is type-check only here (matches package.json scripts).
+    "noEmit": true,
     "rootDir": "src"
   },
   "include": ["src"]

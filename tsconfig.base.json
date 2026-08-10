@@ -1,9 +1,10 @@
 {
+  // Shared, environment-agnostic options only. Module system and lib/types are
+  // deliberately NOT set here — they differ between the Node backend packages
+  // (tsconfig.node.json) and the browser/bundler dashboard (dashboard/tsconfig.json).
+  // Every leaf config extends one of those, never this directly for module settings.
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022"],
-    "module": "CommonJS",
-    "moduleResolution": "Node",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,

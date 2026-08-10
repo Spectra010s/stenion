@@ -17,6 +17,7 @@ export enum RiskFactorType {
   CollateralConcentration = 'collateralConcentration',
   OracleStaleness = 'oracleStaleness',
   AdminKeyActivity = 'adminKeyActivity',
+  LiquidityDepth = 'liquidityDepth',
   UtilizationSpike = 'utilizationSpike',
 }
 

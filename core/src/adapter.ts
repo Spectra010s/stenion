@@ -1,6 +1,15 @@
 import { ProtocolMetadata, RiskFactorMap, RiskScoreResult } from './types';
 
 /**
+ * Version of the Adapter contract itself (not of any protocol). Bumped only
+ * when the shape of the interface below changes in a way adapters must react
+ * to — e.g. a future partial-failure-aware error model. Kept as a seam so a v2
+ * can be introduced without breaking every existing adapter at once; do not
+ * build v2 behavior speculatively against it.
+ */
+export const ADAPTER_INTERFACE_VERSION = 1 as const;
+
+/**
  * The contract every protocol adapter implements.
  *
  * Lifecycle, driven by the indexer on an interval:
