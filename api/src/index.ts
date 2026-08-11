@@ -25,11 +25,24 @@
 import { createStore, getPool, type Store } from '@stenion/db';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 
+// CORS: this API serves only public, read-only, payment-blind data, so any
+// origin may read it (a wallet, the dashboard's dev server, its deployed
+// domain, any third party). `*` is the correct, simplest policy here — there is
+// nothing origin-specific to protect. Only GET is exposed; OPTIONS is answered
+// for completeness. Deliberately not a configurable/generic CORS layer — two
+// GET routes over public data don't warrant one.
+const CORS_HEADERS = {
+  'access-control-allow-origin': '*',
+  'access-control-allow-methods': 'GET, OPTIONS',
+  'access-control-allow-headers': 'content-type',
+} as const;
+
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(payload),
+    ...CORS_HEADERS,
   });
   res.end(payload);
 }
@@ -44,6 +57,15 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
  * intentionally not included per history row (only on the top-level current score).
  */
 async function handle(req: IncomingMessage, res: ServerResponse, store: Store): Promise<void> {
+  // CORS preflight: a browser may send OPTIONS before a cross-origin GET. Answer
+  // it directly with the CORS headers and no body (simple GETs won't trigger it,
+  // but responding keeps any stricter client happy).
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, CORS_HEADERS);
+    res.end();
+    return;
+  }
+
   // Only GET is supported; anything else is a clean 405 rather than a 404.
   if (req.method !== 'GET') {
     sendJson(res, 405, { error: 'Method not allowed' });
@@ -94,7 +116,11 @@ export function createRequestHandler(store: Store) {
 function main(): void {
   const store = createStore(getPool());
   const handler = createRequestHandler(store);
-  const port = Number(process.env.API_PORT);
+
+  // Default 3001 so `pnpm --filter @stenion/api start` is reachable without extra
+  // env (matches dashboard/.env.local's STENION_API_URL); override with API_PORT.
+  // Without a default this is Number(undefined) → NaN → a random OS-assigned port.
+  const port = Number(process.env.API_PORT) || 3001;
 
   const server = createServer(handler);
   server.listen(port, () => {

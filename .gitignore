@@ -1,5 +1,10 @@
 node_modules/
 dist/
+*.tsbuildinfo
+# Next.js (dashboard) build output
+.next/
+out/
+next-env.d.ts
 # Legacy indexer run log (step 4 interim storage; superseded by Postgres in step 5)
 runs.jsonl
 .env

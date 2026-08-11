@@ -5,3 +5,16 @@ packages:
   - indexer
   - api
   - dashboard
+
+# Build scripts we knowingly skip. `sharp` is only needed by next/image, which
+# the dashboard doesn't use — skipping its native build avoids a compile step and
+# the interactive approve-builds prompt.
+ignoredBuiltDependencies:
+  - sharp
+# pnpm 11 treats a skipped build script as a hard error (non-zero exit) by
+# default, which also breaks `pnpm --filter <pkg> <script>` (its deps-status
+# precheck re-runs install). We've explicitly acknowledged sharp above, so demote
+# that to a warning instead of failing every command.
+strictDepBuilds: false
+allowBuilds:
+  sharp: set this to true or false

@@ -1,16 +1,27 @@
 {
-  // Frontend: browser target, resolved by a bundler (framework TBD — see src/index.ts).
-  // Extends the shared base directly rather than tsconfig.node.json.
-  "extends": "../tsconfig.base.json",
+  // Standalone Next.js config — deliberately does NOT extend tsconfig.node.json
+  // (per CLAUDE.md "TypeScript config"): the dashboard is browser/bundler code,
+  // so it uses `moduleResolution: bundler` and the Next TS plugin, not Node's
+  // nodeNext resolution.
   "compilerOptions": {
+    "target": "ES2022",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    // Browser code — no Node globals. A framework may add its own (e.g. "vite/client").
-    "types": [],
-    // A bundler emits the build; tsc is type-check only here (matches package.json scripts).
+    "jsx": "preserve",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
     "noEmit": true,
-    "rootDir": "src"
+    "allowJs": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "incremental": true,
+    "plugins": [{ "name": "next" }],
+    "paths": {
+      "@/*": ["./*"]
+    }
   },
-  "include": ["src"]
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
 }
