@@ -14,7 +14,7 @@
 // failing never aborts the cycle or process; a DB write failure is likewise
 // caught and logged so it can't kill the loop.
 
-import { BlendAdapter } from '@stenion/adapters';
+import { BlendAdapter, KineticAdapter } from '@stenion/adapters';
 import type { Adapter, ProtocolMetadata, RiskFactorMap } from '@stenion/core';
 import { closePool, createStore, getPool, type RunRecord, type Store } from '@stenion/db';
 
@@ -87,7 +87,14 @@ function buildTargets(config: IndexerConfig): IndexTarget[] {
     rpcUrl: config.rpcUrl,
     horizonUrl: config.horizonUrl,
   });
-  return [toTarget(blend)];
+  // Kinetic (K2) — second, genuinely-independent protocol. Same run loop via
+  // the toTarget<T> wrapper (its TRawData differs from Blend's, so the list
+  // can't be typed Adapter<unknown>[] directly — that's what the wrapper is for).
+  const kinetic = new KineticAdapter({
+    rpcUrl: config.rpcUrl,
+    horizonUrl: config.horizonUrl,
+  });
+  return [toTarget(blend), toTarget(kinetic)];
 }
 
 async function main(): Promise<void> {

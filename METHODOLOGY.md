@@ -3,8 +3,17 @@
 This document is the **source of truth for how every safety factor is calculated.**
 It exists so that anyone — including the protocols being scored — can see, verify, and
 challenge the actual rules, not just the output numbers. Every formula below is extracted
-directly from the shipped code (currently [`adapters/blend.ts`](adapters/blend.ts)); this
-file is not a summary of intent, it is the rulebook the adapters must implement.
+directly from the shipped code (currently [`adapters/blend.ts`](adapters/blend.ts) and
+[`adapters/kinetic.ts`](adapters/kinetic.ts)); this file is not a summary of intent, it is
+the rulebook the adapters must implement.
+
+**One formula, per-protocol data sources.** Every factor's formula, scale, and thresholds
+are fixed here and identical across protocols. What legitimately differs per adapter is only
+*where the raw inputs are read on-chain* — e.g. Blend reads a per-reserve `max_util` cap,
+while Kinetic (K2), being Aave-V3-style, has no such cap and instead anchors the same
+utilization formula to its own `OPTIMAL_UTILIZATION_RATE` (see §5). The *anchoring pattern*
+("grade against the protocol's own on-chain parameter") is the invariant; the specific
+parameter that pattern resolves to is a documented per-protocol fact, not a new threshold.
 
 If the code and this document ever disagree, that is a bug — open an issue (see
 [Disputing or changing a threshold](#disputing-or-changing-a-threshold)).
@@ -253,32 +262,45 @@ anchor.
 
 ### 5. `utilizationSafety` — headroom below the configured cap (weight 0.20)
 
-**What it measures:** how close live utilization is to the reserve's own on-chain
-`max_util` cap. Blend throttles and eventually pauses borrowing as utilization nears
-`max_util`, so approaching it is a concrete, protocol-defined stress signal.
+**What it measures:** how close live utilization is to the protocol's own on-chain
+utilization stress line — the point the protocol itself defines as "borrowing should stop
+growing here." Approaching it is a concrete, protocol-defined stress signal.
 
-**Raw on-chain data (Soroban RPC):** per reserve, `ResData` and `ResConfig` — specifically
-`max_util` (7-decimal fixed point) alongside `supplied`/`borrowed`. Utilization is computed
-**live** from balances (`borrowed / supplied`), not read from the config's target field.
-
-**Formula** — headroom below the cap, worst reserve:
+**Formula** — headroom below the protocol's utilization line, worst reserve:
 
 ```
 For each reserve with supplied > 0 and cap > 0:
-    util = borrowed / supplied
-    cap  = max_util / SCALAR_7
+    util = borrowed / supplied            # computed LIVE from balances, not a config field
     headroom = clamp( (cap − util) / cap × 100 , 0, 100 )
 
 utilizationSafety = min(headroom) across all such reserves    # worst reserve wins
 ```
 
+**`cap` is per-protocol — it is always the protocol's own on-chain utilization parameter,
+never a Stenion constant.** Which parameter that resolves to:
+
+| Protocol | `cap` source | Meaning of the line |
+|----------|--------------|---------------------|
+| **Blend** | per-reserve `max_util` (`ResData`/`ResConfig`, 7-dec fixed point → `max_util / SCALAR_7`) | a **hard throttle** — Blend throttles and eventually pauses borrowing as utilization nears `max_util` |
+| **Kinetic (K2)** | `OPTIMAL_UTILIZATION_RATE` = **0.80** (`contracts/shared/src/constants.rs`) | the interest-rate **kink** — past 80% util, K2's Aave-V3 rate curve steepens sharply to discourage further borrowing |
+
 **Why this anchor (the strongest in the set):** the threshold is **not a Stenion constant at
-all — it is the protocol's own on-chain `max_util` parameter.** The formula grades each
-reserve against the exact cap Blend configured for it, so the "danger line" is set by the
-protocol, not by us. This is the pattern every continuous factor should aspire to: anchor to
-the protocol's own on-chain configuration wherever one exists. Worst-reserve selection is
+all — it is the protocol's own on-chain parameter.** The formula grades each reserve against
+the exact line the protocol configured, so the "danger line" is set by the protocol, not by
+us. This is the pattern every continuous factor should aspire to. Worst-reserve selection is
 deliberate for the same reason as liquidity — the binding constraint is the single reserve
-closest to its cap.
+closest to its line.
+
+> **⚠️ Two honest caveats on the K2 anchor (flagged, not hidden):**
+> 1. K2's kink is a **rate inflection, not a hard pause** — past 80% util K2 keeps lending
+>    (just expensively), whereas Blend's `max_util` is an actual throttle. The two lines mean
+>    slightly different things; the formula treats "distance to the protocol's declared
+>    utilization ceiling" uniformly, which is the intended abstraction.
+> 2. `OPTIMAL_UTILIZATION_RATE` is read as K2's **global default (0.80)**. Per-reserve kink
+>    overrides, if any, live in K2's `interest_rate` strategy contract, which is **out of
+>    scope in the audited source** (`code-423n4/2026-04-k2`) and so not independently
+>    verifiable — if a reserve overrides the default this factor uses the documented 80%, not
+>    that reserve's exact kink. Revisit if K2 exposes a readable per-reserve optimal-util.
 
 ---
 
