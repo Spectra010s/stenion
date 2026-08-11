@@ -38,6 +38,9 @@ importers:
       '@stenion/core':
         specifier: workspace:*
         version: link:../core
+      '@stenion/db':
+        specifier: workspace:*
+        version: link:../db
 
   core: {}
 

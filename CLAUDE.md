@@ -24,7 +24,8 @@ _Resolved (2026-08-10): the factor naming and polarity questions that used to li
 
 - **Overall score: higher = safer**, 0-100 scale, field/API name `safetyScore` (not `riskScore`).
 - **Every factor is on the same scale as the overall score: 0-100, higher = safer.** The factor names are `*Safety` so a name never disagrees with its number — a `collateralSafety` of 70 means well-diversified (safe), not "70% concentrated." Don't add a factor whose name implies higher = riskier.
-- Fixed shared taxonomy across every adapter — not freeform per protocol. The names live in the `RiskFactorType` enum in `core/src/types.ts` (the type/map/enum are still called `RiskFactor*` — they're the *dimensions of risk we assess*, each scored for safety). Every adapter must populate all five:
+- Fixed shared taxonomy across every adapter — not freeform per protocol. The names live in the `RiskFactorType` enum in `core/src/types.ts` (the type/map/enum are still called `RiskFactor*` — they're the _dimensions of risk we assess_, each scored for safety). Every adapter must populate all five:
+
   ```
   riskFactors: {
     collateralSafety,    // collateral concentration (diversification)
@@ -34,6 +35,7 @@ _Resolved (2026-08-10): the factor naming and polarity questions that used to li
     utilizationSafety,   // headroom below the configured utilization cap
   }
   ```
+
   How an adapter computes a factor can differ per protocol — the names/scale do not. New factors are added to `core` for everyone, not invented per-adapter.
 
 - **`METHODOLOGY.md` (repo root) is the source of truth for every factor's formula, thresholds, and weights.** It's the public-facing rulebook (protocols can read and challenge it). A new adapter must **match** the formulas documented there — same thresholds, same anchoring pattern (continuous factors anchored to the protocol's own on-chain caps where they exist; `adminKeySafety` is a defined tier table) — not invent new thresholds inline. Code and `METHODOLOGY.md` are not allowed to drift: any change to a formula/threshold changes both together, at the same review bar. If you touch factor logic, update `METHODOLOGY.md` in the same change.
@@ -41,14 +43,14 @@ _Resolved (2026-08-10): the factor naming and polarity questions that used to li
 ## Adapter error handling
 
 - Adapter methods throw on failure; the indexer wraps each run in try/catch, records failed/stale runs. Error handling lives in the indexer, not duplicated per adapter.
-- The indexer runs adapters through a small `toTarget<T>(adapter)` wrapper (see `indexer/src/index.ts`) that binds the three-method lifecycle and hides each adapter's `TRawData`. This is deliberate: `Adapter<BlendRawData>` is *not* assignable to `Adapter<unknown>` (`computeRiskFactors` is contravariant in `TRawData`), so a heterogeneous adapter list can't be typed as `Adapter<unknown>[]` — the wrapper is how future adapters share one run loop without `any`.
+- The indexer runs adapters through a small `toTarget<T>(adapter)` wrapper (see `indexer/src/index.ts`) that binds the three-method lifecycle and hides each adapter's `TRawData`. This is deliberate: `Adapter<BlendRawData>` is _not_ assignable to `Adapter<unknown>` (`computeRiskFactors` is contravariant in `TRawData`), so a heterogeneous adapter list can't be typed as `Adapter<unknown>[]` — the wrapper is how future adapters share one run loop without `any`.
 - `core/src/adapter.ts` carries `ADAPTER_INTERFACE_VERSION = 1` — shipped. Future breaking changes bump this rather than rewriting every adapter at once.
 
 ## adminKeySafety data source (resolved)
 
 Soroban RPC only exposes the pool's admin _address_, not signer structure or activity. Resolved approach: query **Horizon** (official Stellar infra, not third-party) for the admin account's signer weights/thresholds and recent op count — real signal, matches admin-key activity literally. When the admin is a contract (not a keypair account), Horizon has nothing to introspect — in that case use a clearly-flagged neutral baseline (currently `60`), never a fabricated number.
 
-`adminKeySafety` is formalized as a **tier table** (contract-governed `60` neutral baseline / single-key `40` / N-of-M multisig `90` / multisig+timelock `100` *reserved, not yet detectable*) minus a continuous activity penalty (`−3` per admin op in 30d, capped `−30`). Tier values were agreed with the maintainer (2026-08-11), not invented; the full definition and rationale live in `METHODOLOGY.md` (the source of truth). The current Blend code implements exactly this — the timelock tier is documented but unreachable until an on-chain timelock signal is available.
+`adminKeySafety` is formalized as a **tier table** (contract-governed `60` neutral baseline / single-key `40` / N-of-M multisig `90` / multisig+timelock `100` _reserved, not yet detectable_) minus a continuous activity penalty (`−3` per admin op in 30d, capped `−30`). Tier values were agreed with the maintainer (2026-08-11), not invented; the full definition and rationale live in `METHODOLOGY.md` (the source of truth). The current Blend code implements exactly this — the timelock tier is documented but unreachable until an on-chain timelock signal is available.
 
 ## Tech stack
 
@@ -97,10 +99,68 @@ Soroban RPC only exposes the pool's admin _address_, not signer structure or act
 - **Schema** (`db/migrations/0001_init.sql`):
   - `protocols` — `id` (slug PK, = `ProtocolMetadata.id`), `name`, `chain`, `adapter` (adapter class name, e.g. `BlendAdapter`), `created_at`, `updated_at`. Upserted once at indexer startup from adapter metadata.
   - `risk_scores` — append-only history: `id` (identity PK), `protocol_id` FK, `status` (`ok`/`failed`), `safety_score` (numeric, null on failed), `factors` (jsonb, null on failed), `error` (null on ok), `computed_at` (null on failed), `run_at` (always), `inserted_at`. A `risk_scores_shape` CHECK enforces the ok/failed discriminated union at the DB level. Index on `(protocol_id, run_at DESC)` for latest-score lookups.
-- **JSON-vs-columns decision: factors = one `jsonb` column; `safety_score` = its own `numeric` column.** Rule applied: *promote what you rank on (the leaderboard sorts by score → column), JSON what you only display (the factor map is a lossless 1:1 mirror of `RiskFactorMap`, and growing the factor taxonomy — a breaking change per CLAUDE.md — then needs no migration).* `factors` is still queryable later via `factors->'x'->>'value'`.
+- **JSON-vs-columns decision: factors = one `jsonb` column; `safety_score` = its own `numeric` column.** Rule applied: _promote what you rank on (the leaderboard sorts by score → column), JSON what you only display (the factor map is a lossless 1:1 mirror of `RiskFactorMap`, and growing the factor taxonomy — a breaking change per CLAUDE.md — then needs no migration)._ `factors` is still queryable later via `factors->'x'->>'value'`.
 - **Migrations: raw `.sql` + a ~40-line runner** (`db/src/migrate.ts`), no ORM. `schema_migrations(version)` tracks applied files; each runs once in a transaction, filename order. Run: `pnpm --filter @stenion/db build && pnpm --filter @stenion/db migrate`.
 - **Verified end-to-end against a live Neon DB (2026-08-11).** `DATABASE_URL` is set in the repo-root `.env` (Neon pooled endpoint, db `neondb`). Confirmed: migrate applied `0001_init.sql` and is idempotent on re-run (`up to date, nothing to apply`); `pnpm --filter @stenion/indexer start -- --once` landed one real `blend` row — `protocols` = `blend/Blend/stellar/BlendAdapter`, `risk_scores` = `status ok, safety_score 54`, factors queryable via `factors->'collateralSafety'->>'value'` (70/100/16 matching live output); the `risk_scores_shape` CHECK held; `--once` closed the pool and exited cleanly.
-- **Known warning (non-blocking):** `pg-connection-string` prints a deprecation notice that `sslmode=require` is currently treated as `verify-full`; that's the *stricter* behavior and Neon's valid cert satisfies it, so nothing to do now. When pg v9 / pg-connection-string v3 lands, `require` will weaken to libpq semantics — revisit then if strict verification is still wanted (pin `sslmode=verify-full`).
+- **Known warning (non-blocking):** `pg-connection-string` prints a deprecation notice that `sslmode=require` is currently treated as `verify-full`; that's the _stricter_ behavior and Neon's valid cert satisfies it, so nothing to do now. When pg v9 / pg-connection-string v3 lands, `require` will weaken to libpq semantics — revisit then if strict verification is still wanted (pin `sslmode=verify-full`).
+
+## Public API — `@stenion/api` (shipped — step 6)
+
+- **Framework: bare `node:http`**, no new dependency (two static reads need no middleware). Entry `api/src/index.ts`.
+- **Read-only, payment-blind, no auth/rate-limit/pagination** (those are deferred, not built speculatively). Leaderboard ranks purely on `safety_score` — a non-negotiable rule.
+- **Reads only** — the indexer still owns scoring on its interval; the API never recomputes, it shapes stored `risk_scores`/`protocols` rows into JSON.
+- **Connection: reuses `@stenion/db`'s `getPool()` + `createStore`** — the same repo-root `DATABASE_URL`, which is Neon's **pooled** (`-pooler`/PgBouncer) endpoint. Correct for Vercel serverless (many short-lived instances multiplexed through the pooler). No second/duplicated connection. Same `pg-connection-string` `sslmode=require`→`verify-full` deprecation warning as the indexer/db — non-blocking, see "Storage".
+- **Read methods live on the `Store`** (`@stenion/db`), not in route handlers: `listProtocolsWithLatestScore()` → `LeaderboardEntry[]`, `getProtocolDetail(id)` → `ProtocolDetail | null`. Both use the `(protocol_id, run_at DESC)` index via two `LEFT JOIN LATERAL … LIMIT 1` subqueries per protocol (latest _ok_ score for the number shown; latest run of any status for the staleness flag). `DETAIL_HISTORY_LIMIT = 50`.
+- **Staleness model (settled):** the displayed `safetyScore` is always the latest **ok** run (null if never scored); the newest run of any status is surfaced separately as `lastRunAt`/`lastRunStatus`. A leaderboard that's honest about freshness beats one with holes on a failed cycle.
+- **`createRequestHandler(store)` is exported** (server startup is guarded by `require.main === module`) so the same handler can be reused as a Vercel serverless function without opening a port. `main()` `listen`s on `PORT` (default 3000). **No CORS yet** — add it as the first step-7 task (browser cross-origin).
+- **Frozen contract** (what the dashboard + any third party depend on — changing a field is a breaking change):
+
+  `GET /protocols` — envelope (not a bare array, so freshness/count metadata can be added later without breaking), sorted by `safetyScore` desc, never-scored last:
+
+  ```json
+  {
+    "protocols": [
+      {
+        "id": "blend",
+        "name": "Blend",
+        "chain": "stellar",
+        "safetyScore": 54,
+        "computedAt": "…Z",
+        "lastRunAt": "…Z",
+        "lastRunStatus": "ok"
+      }
+    ]
+  }
+  ```
+
+  `safetyScore`/`computedAt` are `null` until the first ok run.
+
+  `GET /protocol/:id`:
+
+  ```json
+  {
+    "id": "blend",
+    "name": "Blend",
+    "chain": "stellar",
+    "adapter": "BlendAdapter",
+    "safetyScore": 54,
+    "computedAt": "…Z",
+    "factors": {
+      "collateralSafety": { "value": 70, "weight": 0.2, "detail": "…" },
+      "…": {}
+    },
+    "lastRunAt": "…Z",
+    "lastRunStatus": "ok",
+    "history": [
+      { "status": "ok", "safetyScore": 54, "computedAt": "…Z", "runAt": "…Z" },
+      { "status": "failed", "error": "…", "runAt": "…Z" }
+    ]
+  }
+  ```
+
+  Top-level `safetyScore`/`computedAt`/`factors` = latest ok run (all `null` if never scored; a single factor member may be `null` per the taxonomy). `history` = up to 50 recent rows, newest first, a **discriminated union on `status`** (`ok` → `safetyScore`/`computedAt`/`runAt`; `failed` → `error`/`runAt`). `history` rows deliberately **omit factors** — they're still in the `risk_scores` jsonb, so adding them to the array shape later is a cheap backward-compatible change if step 7 needs per-factor history. Unknown id → `404 {"error":"Protocol not found","id":…}`; non-GET → `405`; other errors → `500 {"error":"Internal server error"}` (raw DB errors logged server-side, never leaked).
+
+- **Run:** `pnpm --filter @stenion/db build && pnpm --filter @stenion/api build && pnpm --filter @stenion/api start` (needs `DATABASE_URL` + migrated tables). **Verified end-to-end against the live Neon DB (2026-08-11):** real `blend` row on both endpoints (`safetyScore 54`, all five factors with `detail`), 404/405/route-not-found/500 paths all confirmed.
 
 ## Build order
 
@@ -109,15 +169,14 @@ Soroban RPC only exposes the pool's admin _address_, not signer structure or act
 3. ✅ Blend adapter — built, typechecks, lints clean, verified against live mainnet. Naming/polarity decisions resolved (`*Safety`), committed 2026-08-10.
 4. ✅ Minimal indexer/scheduler — `indexer/src/index.ts` runs the Blend adapter on an interval (`STENION_INTERVAL_MS`, default 5 min), try/catch per run, appends each outcome to a JSONL log (`STENION_OUTPUT_FILE`, default `indexer/runs.jsonl`, gitignored). `--once`/`STENION_RUN_ONCE=1` runs a single cycle and exits (used to verify). No retries, no alerting — deliberately dumb. `pnpm --filter @stenion/indexer start` after a build; JSONL is interim storage, replaced by step 5.
 5. ✅ Postgres storage — `@stenion/db` package: Neon Postgres, `protocols` + `risk_scores` tables (factors as jsonb, `safety_score` promoted to a column), raw-SQL migrations + runner. Indexer's `writeRecord`/JSONL replaced by `store.insertRunRecord`; run loop and `RunRecord` shape unchanged. Builds + lints clean; **verified end-to-end against the live Neon DB (2026-08-11)** — migration applied + idempotent, real `blend` row landed (`safetyScore 54`). See "Storage" above.
-6. **← Next.** Public API: `GET /protocols`, `GET /protocol/:id`.
-   - `api` already scaffolded (`api/src/index.ts`, depends on `@stenion/core`). Add `@stenion/db` as a dependency and read through `createStore`/`getPool` — do **not** duplicate the connection. Likely add read methods to the `Store` (e.g. `listProtocolsWithLatestScore()`, `getProtocolWithHistory(id)`) rather than raw SQL in the route handlers.
-   - `GET /protocols` = leaderboard: each protocol + its latest `risk_scores` row, ranked by `safety_score` desc. Use the `(protocol_id, run_at DESC)` index (`DISTINCT ON (protocol_id) … ORDER BY protocol_id, run_at DESC`). Remember failed runs have null `safety_score` — decide whether the latest-row is the latest *ok* row or the latest row regardless of status (probably latest ok, with staleness surfaced).
-   - `GET /protocol/:id` = that protocol + recent score history (the append-only `risk_scores` rows).
-   - Keep the API read-only and payment-blind (leaderboard ranks purely on score — non-negotiable rule). Pick a minimal HTTP layer (bare `node:http` or a tiny framework) — flag if adding a dep.
-7. Barebones dashboard hitting the API, deployed to Vercel
-8. Connect `stenion.com` once the dashboard shows real data
+6. ✅ Public API — `@stenion/api`: read-only `GET /protocols` + `GET /protocol/:id`, served straight from the step-5 Postgres tables (nothing recomputed live). Bare `node:http`, no new dependency. Reuses `@stenion/db`'s `getPool()`/`createStore` (the Neon **pooled** connection — no duplicated connection). Read methods live on the `Store`, not in route handlers. Builds + lints clean; **verified end-to-end against the live Neon DB (2026-08-11)** — real `blend` row served on both endpoints, 404/405/500 paths confirmed. See "Public API" below.
+7. **← Next.** Barebones dashboard hitting the API, deployed to Vercel.
+   - Scaffold `dashboard` as its own workspace package with its own framework-generated `tsconfig` (Next.js or Vite) — **do not** make it extend `tsconfig.node.json`; let it default to `bundler` resolution (per "TypeScript config" above).
+   - Consume the two shipped endpoints (contract frozen in "Public API" below). Two views: a leaderboard (from `GET /protocols`, ranked by `safetyScore` desc, surface `lastRunStatus`/`lastRunAt` staleness) and a protocol detail page (from `GET /protocol/:id` — show the five `*Safety` factors with their `detail` text, and the `history` array as a score sparkline/uptime strip).
+   - The API currently has no CORS headers and only `listen`s on `PORT` (default 3000). Before a browser on a different origin can call it, add permissive CORS (read-only, public data) — flag this as the first dashboard-integration task. `createRequestHandler(store)` is already exported for reuse as a serverless function handler if the API is deployed to Vercel alongside the dashboard.
+   - Keep it minimal per house style: real data from one protocol beats a polished mock of five. Deploy to `.vercel.app` first
 
-Local git initialized; commit history tracks scaffold → interface/blend scaffold → Blend adapter (`*Safety` taxonomy) → indexer → Postgres storage (`@stenion/db`) as checkpoints. GitHub org/remote still intentionally not set up — local-only for now. (Step 5 storage work is complete in the working tree but not yet committed.)
+Local git initialized; commit history tracks scaffold → interface/blend scaffold → Blend adapter (`*Safety` taxonomy) → indexer → Postgres storage (`@stenion/db`) as checkpoints. GitHub org/remote still intentionally not set up — local-only for now. (Steps 5 storage and 6 API are complete in the working tree; step 5 is committed, step 6 is uncommitted.)
 
 ## Keeping this file current
 
