@@ -36,6 +36,8 @@ _Resolved (2026-08-10): the factor naming and polarity questions that used to li
   ```
   How an adapter computes a factor can differ per protocol — the names/scale do not. New factors are added to `core` for everyone, not invented per-adapter.
 
+- **`METHODOLOGY.md` (repo root) is the source of truth for every factor's formula, thresholds, and weights.** It's the public-facing rulebook (protocols can read and challenge it). A new adapter must **match** the formulas documented there — same thresholds, same anchoring pattern (continuous factors anchored to the protocol's own on-chain caps where they exist; `adminKeySafety` is a defined tier table) — not invent new thresholds inline. Code and `METHODOLOGY.md` are not allowed to drift: any change to a formula/threshold changes both together, at the same review bar. If you touch factor logic, update `METHODOLOGY.md` in the same change.
+
 ## Adapter error handling
 
 - Adapter methods throw on failure; the indexer wraps each run in try/catch, records failed/stale runs. Error handling lives in the indexer, not duplicated per adapter.
@@ -45,6 +47,8 @@ _Resolved (2026-08-10): the factor naming and polarity questions that used to li
 ## adminKeySafety data source (resolved)
 
 Soroban RPC only exposes the pool's admin _address_, not signer structure or activity. Resolved approach: query **Horizon** (official Stellar infra, not third-party) for the admin account's signer weights/thresholds and recent op count — real signal, matches admin-key activity literally. When the admin is a contract (not a keypair account), Horizon has nothing to introspect — in that case use a clearly-flagged neutral baseline (currently `60`), never a fabricated number.
+
+`adminKeySafety` is formalized as a **tier table** (contract-governed `60` neutral baseline / single-key `40` / N-of-M multisig `90` / multisig+timelock `100` *reserved, not yet detectable*) minus a continuous activity penalty (`−3` per admin op in 30d, capped `−30`). Tier values were agreed with the maintainer (2026-08-11), not invented; the full definition and rationale live in `METHODOLOGY.md` (the source of truth). The current Blend code implements exactly this — the timelock tier is documented but unreachable until an on-chain timelock signal is available.
 
 ## Tech stack
 
