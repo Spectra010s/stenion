@@ -1,6 +1,7 @@
 packages:
   - core
   - adapters
+  - db
   - indexer
   - api
   - dashboard

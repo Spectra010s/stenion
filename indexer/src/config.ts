@@ -13,8 +13,8 @@ export interface IndexerConfig {
   horizonUrl: string;
   /** Scoring-cycle interval in milliseconds. */
   intervalMs: number;
-  /** Absolute path the JSONL run log is appended to. */
-  outputFile: string;
+  /** Postgres connection string each run outcome is written to. */
+  databaseUrl: string;
   /** Run a single cycle then exit instead of looping. */
   runOnce: boolean;
 }
@@ -85,6 +85,25 @@ function requiredUrl(name: string): string {
   return raw;
 }
 
+function requiredPostgresUrl(name: string): string {
+  const raw = process.env[name]?.trim();
+  if (!raw) {
+    problems.push(`${name} is required but is missing or empty`);
+    return '';
+  }
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    problems.push(`${name} must be a valid URL, got "${raw}"`);
+    return raw;
+  }
+  if (url.protocol !== 'postgres:' && url.protocol !== 'postgresql:') {
+    problems.push(`${name} must be a postgres:// URL, got "${raw}"`);
+  }
+  return raw;
+}
+
 function optionalPositiveInt(name: string, fallback: number): number {
   const raw = process.env[name]?.trim();
   if (!raw) return fallback;
@@ -118,7 +137,7 @@ export function loadConfig(cwd: string = process.cwd()): IndexerConfig {
     rpcUrl: requiredUrl('STENION_RPC_URL'),
     horizonUrl: requiredUrl('STENION_HORIZON_URL'),
     intervalMs: optionalPositiveInt('STENION_INTERVAL_MS', 5 * 60 * 1000),
-    outputFile: resolve(cwd, process.env.STENION_OUTPUT_FILE?.trim() || 'runs.jsonl'),
+    databaseUrl: requiredPostgresUrl('DATABASE_URL'),
     runOnce:
       process.argv.includes('--once') || optionalBool('STENION_RUN_ONCE', false),
   };
