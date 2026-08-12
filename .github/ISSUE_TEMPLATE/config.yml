@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Discussions — questions about the code or methodology
+    url: https://github.com/stenion-lab/stenion/discussions
+    about: Technical questions, methodology debates, adapter design — no wallet talk
+  - name: Telegram — community chat
+    url: https://t.me/stenion_lab
+    about: General chat and updates

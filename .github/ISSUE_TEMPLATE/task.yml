@@ -1,0 +1,60 @@
+name: Task
+description: A scoped piece of work — feature, fix, test, or docs
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for contributing to Stenion. Before opening, please check
+        [CONTRIBUTING.md](../CONTRIBUTING.md) and [METHODOLOGY.md](../METHODOLOGY.md).
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What currently exists, and why this needs doing. Link to the relevant file/section.
+      placeholder: "`core/src/adapter.ts` splits scoring into three methods so `score()` is testable without RPC, but there are no tests covering it."
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What this issue covers — and explicitly what it does NOT.
+      placeholder: |
+        In scope: unit tests for `score()` weighted-mean and null-renormalization.
+        Out of scope: integration tests hitting live RPC.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How we both know this is done. Be concrete and checkable.
+      placeholder: |
+        - [ ] Tests cover 0-reserve, 1-reserve, and missing-price cases
+        - [ ] `pnpm test` passes
+        - [ ] No changes to scoring behaviour itself
+    validations:
+      required: true
+
+  - type: dropdown
+    id: difficulty
+    attributes:
+      label: Difficulty
+      options:
+        - Easy — self-contained, no deep protocol knowledge needed
+        - Intermediate — needs familiarity with the codebase or methodology
+        - Hard — design decision required before code
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes / open questions
+      description: Anything that needs deciding before or during the work.
+    validations:
+      required: false

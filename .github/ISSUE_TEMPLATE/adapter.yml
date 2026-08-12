@@ -1,0 +1,48 @@
+name: New protocol adapter
+description: Propose or claim an adapter for a Stellar/Soroban protocol
+labels: ["adapter"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Adapters are the main contribution path. Read
+        [CONTRIBUTING.md](../CONTRIBUTING.md) and [METHODOLOGY.md](../METHODOLOGY.md) first —
+        thresholds must be anchored to the protocol's own on-chain parameters, never invented.
+
+  - type: input
+    id: protocol
+    attributes:
+      label: Protocol name
+    validations:
+      required: true
+
+  - type: textarea
+    id: independence
+    attributes:
+      label: Independence check
+      description: |
+        Confirm this is a genuinely independent, native-Soroban protocol — not another
+        deployment of an existing one (see YieldBlox → Blend V2 pool) and not a protocol
+        whose lending logic lives on another chain (see Templar → NEAR).
+      placeholder: "Contract addresses from the protocol's own repo/docs; confirmed distinct interface from Blend and K2."
+    validations:
+      required: true
+
+  - type: textarea
+    id: data
+    attributes:
+      label: Available on-chain data
+      description: Which raw fields are readable, and via what (Soroban RPC / Horizon).
+    validations:
+      required: true
+
+  - type: textarea
+    id: taxonomy
+    attributes:
+      label: Taxonomy mapping
+      description: |
+        How each of the five `*Safety` factors will be computed, and what real protocol
+        parameter each threshold anchors to. Flag any factor that can't be computed from
+        real data rather than approximating it.
+    validations:
+      required: true
