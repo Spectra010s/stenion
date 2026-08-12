@@ -11,6 +11,14 @@ const nextConfig = {
   // on Vercel. The dashboard reads the API server-side (app/lib/api.ts), so there
   // are no rewrites/proxies or image domains to configure.
   outputFileTracingRoot: repoRoot,
+
+  // The /methodology route reads the repo-root METHODOLOGY.md at request time
+  // (single source of truth, not duplicated). It lives outside the dashboard dir,
+  // so include it explicitly in that route's serverless bundle or the read 404s
+  // on Vercel.
+  outputFileTracingIncludes: {
+    '/methodology': ['../METHODOLOGY.md'],
+  },
 };
 
 export default nextConfig;

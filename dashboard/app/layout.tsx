@@ -1,29 +1,40 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
+import { GeistSans } from 'geist/font/sans';
+import { GeistMono } from 'geist/font/mono';
+import { Space_Grotesk } from 'next/font/google';
+import { Nav } from '../components/nav';
+import { Footer } from '../components/footer';
 import './globals.css';
 
+// Self-hosted Geist (no network fetch) for UI + tabular numbers; Space Grotesk
+// (display) only for large headings, to give the site a real type pairing
+// instead of a single-font, system-ui look.
+const display = Space_Grotesk({
+  subsets: ['latin'],
+  weight: ['500', '600', '700'],
+  variable: '--font-display',
+  display: 'swap',
+});
+
 export const metadata: Metadata = {
-  title: 'Stenion — live risk intelligence for Stellar DeFi',
+  title: {
+    default: 'Stenion — live risk intelligence for Stellar DeFi',
+    template: '%s · Stenion',
+  },
   description:
-    'Continuous, on-chain-derived safety scores for Stellar/Soroban DeFi protocols.',
+    'Continuous, on-chain-derived safety scores for Stellar/Soroban DeFi protocols. Audits are a snapshot; Stenion tracks risk as it moves.',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body>
-        <header className="site">
-          <div className="wrap">
-            <Link href="/" className="brand">
-              Stenion
-            </Link>
-            <div className="tagline">
-              Live risk intelligence for Stellar/Soroban DeFi — scored continuously
-              from on-chain data.
-            </div>
-          </div>
-        </header>
-        <main className="wrap">{children}</main>
+    <html
+      lang="en"
+      className={`${GeistSans.variable} ${GeistMono.variable} ${display.variable}`}
+    >
+      <body className="min-h-screen bg-bg text-ink antialiased">
+        <Nav />
+        <main>{children}</main>
+        <Footer />
       </body>
     </html>
   );

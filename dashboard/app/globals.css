@@ -1,229 +1,123 @@
-/* Minimal, functional styling. This is a pipeline-proving pass, not a design
-   pass (per step 7) — legible, honest, no framework. */
+@import 'tailwindcss';
+@plugin '@tailwindcss/typography';
 
-:root {
-  --bg: #0e1116;
-  --panel: #171b22;
-  --border: #262c36;
-  --text: #e6e9ef;
-  --muted: #9aa4b2;
-  --link: #6ea8fe;
-  --high: #3fb950;
-  --mid: #d29922;
-  --low: #f85149;
-  --none: #6e7681;
+/*
+  Stenion design tokens — dark-mode ONLY (no toggle, no light theme yet).
+  Deep navy surfaces + off-white ink, with a deliberately non-default accent
+  pair: cool aqua (`accent`) against a soft periwinkle (`accent-2`) for gradient
+  wordmarks/headings. The score scale (safe/warn/danger) is a separate semantic
+  ramp — it encodes data, not brand, so it must never be reused as decoration.
+*/
+@theme {
+  --color-bg: #06090f;
+  --color-surface: #0b111b;
+  --color-surface-2: #111926;
+  --color-line: #1b2431;
+  --color-line-soft: #131b28;
+
+  --color-ink: #e9eef7;
+  --color-muted: #8b95a9;
+  --color-faint: #5b6577;
+
+  --color-accent: #3fd0c9; /* custom aqua — not tailwind teal */
+  --color-accent-2: #8b8ff5; /* periwinkle */
+
+  --color-safe: #35d99a;
+  --color-warn: #f4b53f;
+  --color-danger: #f26a8d;
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, 'SFMono-Regular', monospace;
+  --font-display: var(--font-display), var(--font-geist-sans), sans-serif;
+
+  --radius-xl: 1rem;
 }
 
-* {
-  box-sizing: border-box;
+html {
+  scroll-behavior: smooth;
 }
 
 body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  line-height: 1.5;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizelegibility;
 }
 
-a {
-  color: var(--link);
-  text-decoration: none;
-}
-a:hover {
-  text-decoration: underline;
-}
-
-.wrap {
-  max-width: 860px;
-  margin: 0 auto;
-  padding: 2rem 1.25rem 4rem;
-}
-
-header.site {
-  border-bottom: 1px solid var(--border);
-}
-header.site .wrap {
-  padding-top: 1.5rem;
-  padding-bottom: 1.5rem;
-}
-.brand {
-  font-size: 1.35rem;
-  font-weight: 700;
-  color: var(--text);
-}
-.tagline {
-  color: var(--muted);
-  font-size: 0.9rem;
-  margin-top: 0.15rem;
-}
-
-h1 {
-  font-size: 1.5rem;
-  margin: 0 0 0.25rem;
-}
-.subtle {
-  color: var(--muted);
-  font-size: 0.9rem;
-}
-
-/* Leaderboard table */
-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 1.5rem;
-}
-th,
-td {
-  text-align: left;
-  padding: 0.7rem 0.6rem;
-  border-bottom: 1px solid var(--border);
-  vertical-align: middle;
-}
-th {
-  color: var(--muted);
-  font-weight: 600;
-  font-size: 0.78rem;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-td.rank {
-  color: var(--muted);
-  width: 2rem;
-}
-td.score {
+/* Tabular figures everywhere a number carries meaning. */
+.tnum {
   font-variant-numeric: tabular-nums;
-  font-weight: 700;
-  font-size: 1.05rem;
+  font-feature-settings: 'tnum' 1;
 }
 
-.score-high { color: var(--high); }
-.score-mid { color: var(--mid); }
-.score-low { color: var(--low); }
-.score-none { color: var(--none); }
-
-/* Staleness pill */
-.pill {
-  display: inline-block;
-  font-size: 0.72rem;
-  padding: 0.1rem 0.5rem;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  color: var(--muted);
-  white-space: nowrap;
-}
-.pill.ok { color: var(--high); border-color: color-mix(in srgb, var(--high) 40%, var(--border)); }
-.pill.warn { color: var(--low); border-color: color-mix(in srgb, var(--low) 40%, var(--border)); }
-
-/* Detail page */
-.back {
-  font-size: 0.9rem;
-}
-.score-hero {
-  display: flex;
-  align-items: baseline;
-  gap: 0.75rem;
-  margin: 1rem 0 0.25rem;
-}
-.score-hero .big {
-  font-size: 3rem;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-.score-hero .outof {
-  color: var(--muted);
+/* Fine top-lit surface used on cards — subtle depth without a heavy shadow. */
+.surface-lit {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0) 40%),
+    var(--color-surface);
 }
 
-.factors {
-  margin-top: 2rem;
-  display: grid;
-  gap: 0.75rem;
-}
-.factor {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0.9rem 1rem;
-}
-.factor-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 1rem;
-}
-.factor-name {
-  font-weight: 600;
-}
-.factor-weight {
-  color: var(--muted);
-  font-size: 0.8rem;
-}
-.factor-value {
-  font-variant-numeric: tabular-nums;
-  font-weight: 700;
-}
-.bar {
-  height: 6px;
-  border-radius: 3px;
-  background: var(--border);
-  margin: 0.55rem 0;
-  overflow: hidden;
-}
-.bar > span {
-  display: block;
-  height: 100%;
-}
-.bar-high { background: var(--high); }
-.bar-mid { background: var(--mid); }
-.bar-low { background: var(--low); }
-.factor-detail {
-  color: var(--muted);
-  font-size: 0.88rem;
-  margin: 0;
-}
-.factor.na .factor-detail {
-  font-style: italic;
+/* Faint dotted grid for hero backdrops. */
+.grid-backdrop {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 26px 26px;
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 40%, transparent 100%);
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 40%, transparent 100%);
 }
 
-/* History strip */
-.history {
-  margin-top: 2rem;
+/* Shimmer for skeleton loaders. */
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
 }
-.history ul {
-  list-style: none;
-  padding: 0;
-  margin: 0.75rem 0 0;
-}
-.history li {
-  display: flex;
-  gap: 0.75rem;
-  align-items: baseline;
-  padding: 0.4rem 0;
-  border-bottom: 1px solid var(--border);
-  font-size: 0.88rem;
-}
-.history .dot {
-  width: 0.6rem;
-  height: 0.6rem;
-  border-radius: 50%;
-  flex: none;
-}
-.history .dot.ok { background: var(--high); }
-.history .dot.failed { background: var(--low); }
-.history .when {
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-.history .err {
-  color: var(--low);
+.shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.06),
+    transparent
+  );
+  animation: shimmer 1.6s infinite;
 }
 
-.notice {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 1rem;
-  color: var(--muted);
-  margin-top: 1.5rem;
+/* Prose (methodology page) tuned to the dark palette instead of prose-invert's
+   default grays — headings in ink, links in accent, code on a real surface. */
+.prose-stenion {
+  --tw-prose-body: var(--color-muted);
+  --tw-prose-headings: var(--color-ink);
+  --tw-prose-bold: var(--color-ink);
+  --tw-prose-links: var(--color-accent);
+  --tw-prose-quotes: var(--color-ink);
+  --tw-prose-quote-borders: var(--color-line);
+  --tw-prose-code: var(--color-ink);
+  --tw-prose-th-borders: var(--color-line);
+  --tw-prose-td-borders: var(--color-line-soft);
+  --tw-prose-hr: var(--color-line);
+  --tw-prose-counters: var(--color-faint);
+  --tw-prose-bullets: var(--color-line);
+}
+.prose-stenion :where(code):not(:where(pre code)) {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  padding: 0.1em 0.4em;
+  font-size: 0.85em;
+  font-weight: 500;
+}
+.prose-stenion :where(code):not(:where(pre code))::before,
+.prose-stenion :where(code):not(:where(pre code))::after {
+  content: none;
+}
+.prose-stenion :where(pre) {
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+}
+.prose-stenion :where(table) {
+  font-size: 0.9em;
 }

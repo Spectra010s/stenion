@@ -1,16 +1,35 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { ArrowLeft, Boxes } from 'lucide-react';
 import {
   FACTOR_ORDER,
   getProtocolDetail,
   type HistoryEntry,
-  type RiskFactor,
+  type ProtocolDetail,
 } from '../../lib/api';
-import { formatTimestamp, scoreBand, stalenessLabel } from '../../lib/format';
+import { formatTimestamp } from '../../lib/format';
+import { ScoreRing } from '../../../components/score-ring';
+import { StatusPill } from '../../../components/status-pill';
+import { FactorCard } from '../../../components/factor-bar';
+import { Reveal, RevealGroup, RevealItem } from '../../../components/reveal';
 
 export const dynamic = 'force-dynamic';
 
-// Next 15: dynamic route params are async.
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await params;
+  const detail = await getProtocolDetail(id).catch(() => null);
+  if (!detail) return { title: 'Protocol not found' };
+  const score = detail.safetyScore ?? '—';
+  return {
+    title: `${detail.name} — safety ${score}`,
+    description: `Live Stenion safety score and factor breakdown for ${detail.name} on ${detail.chain}.`,
+  };
+}
+
 export default async function ProtocolDetailPage({
   params,
 }: {
@@ -20,111 +39,131 @@ export default async function ProtocolDetailPage({
   const detail = await getProtocolDetail(id);
   if (!detail) notFound();
 
-  const staleness = stalenessLabel(detail.lastRunStatus, detail.safetyScore !== null);
-
   return (
-    <>
-      <p className="back">
-        <Link href="/">← Leaderboard</Link>
-      </p>
-
-      <h1>{detail.name}</h1>
-      <p className="subtle">
-        {detail.chain} · adapter <code>{detail.adapter}</code>
-      </p>
-
-      <div className="score-hero">
-        <span className={`big score-${scoreBand(detail.safetyScore)}`}>
-          {detail.safetyScore ?? '—'}
-        </span>
-        <span className="outof">/ 100 safety</span>
-        <span
-          className={`pill ${
-            staleness.tone === 'ok' ? 'ok' : staleness.tone === 'warn' ? 'warn' : ''
-          }`}
+    <div className="mx-auto max-w-4xl px-5 py-12">
+      <Reveal>
+        <Link
+          href="/registry"
+          className="inline-flex items-center gap-1.5 text-sm text-muted transition-colors hover:text-ink"
         >
-          {staleness.text}
-        </span>
-      </div>
-      <p className="subtle">
-        {detail.computedAt
-          ? `Scored ${formatTimestamp(detail.computedAt)}`
-          : 'Not yet scored'}
-        {' · '}last run {formatTimestamp(detail.lastRunAt)}
-      </p>
+          <ArrowLeft className="h-4 w-4" /> Registry
+        </Link>
+      </Reveal>
 
-      <section className="factors">
+      <Hero detail={detail} />
+
+      <section className="mt-14">
+        <Reveal>
+          <div className="flex items-center gap-2">
+            <Boxes className="h-4 w-4 text-accent" />
+            <h2 className="font-display text-xl font-semibold text-ink">
+              Factor breakdown
+            </h2>
+          </div>
+          <p className="mt-1 text-sm text-muted">
+            Why the score is what it is — each factor on a 0–100 scale, higher is safer.
+          </p>
+        </Reveal>
+
         {detail.factors === null ? (
-          <div className="notice">
+          <div className="mt-6 rounded-xl border border-line surface-lit p-8 text-center text-sm text-muted">
             No factor breakdown yet — this protocol has no successful score run.
           </div>
         ) : (
-          FACTOR_ORDER.map(({ key, label }) => (
-            <FactorRow key={key} label={label} factor={detail.factors![key]} />
-          ))
+          <RevealGroup className="mt-6 grid gap-3 sm:grid-cols-2" stagger={0.06}>
+            {FACTOR_ORDER.map(({ key, label }, i) => (
+              <RevealItem key={key}>
+                <FactorCard label={label} factor={detail.factors![key]} index={i} />
+              </RevealItem>
+            ))}
+          </RevealGroup>
         )}
       </section>
 
       <History history={detail.history} />
-    </>
+    </div>
   );
 }
 
-function FactorRow({ label, factor }: { label: string; factor: RiskFactor | null }) {
-  if (factor === null) {
-    return (
-      <div className="factor na">
-        <div className="factor-head">
-          <span className="factor-name">{label}</span>
-          <span className="factor-value">N/A</span>
-        </div>
-        <p className="factor-detail">Not applicable to this protocol.</p>
-      </div>
-    );
-  }
-  const band = scoreBand(factor.value);
+function Hero({ detail }: { detail: ProtocolDetail }) {
   return (
-    <div className="factor">
-      <div className="factor-head">
-        <span className="factor-name">
-          {label}{' '}
-          <span className="factor-weight">
-            (weight {Math.round(factor.weight * 100)}%)
-          </span>
-        </span>
-        <span className={`factor-value score-${band}`}>{factor.value}</span>
+    <Reveal delay={0.05} className="mt-6">
+      <div className="flex flex-col items-start gap-8 rounded-2xl border border-line surface-lit p-8 sm:flex-row sm:items-center">
+        <ScoreRing score={detail.safetyScore} size={176} />
+
+        <div className="min-w-0 flex-1">
+          <h1 className="font-display text-4xl font-semibold tracking-tight text-ink">
+            {detail.name}
+          </h1>
+          <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
+            <span className="capitalize">{detail.chain}</span>
+            <span className="text-faint">·</span>
+            <span>
+              adapter{' '}
+              <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs text-ink">
+                {detail.adapter}
+              </code>
+            </span>
+          </p>
+
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <StatusPill
+              lastRunStatus={detail.lastRunStatus}
+              hasScore={detail.safetyScore !== null}
+            />
+            <span className="text-sm text-muted">
+              {detail.computedAt
+                ? `Scored ${formatTimestamp(detail.computedAt)}`
+                : 'Not yet scored'}
+            </span>
+          </div>
+          <p className="mt-1.5 text-xs text-faint">
+            Last run {formatTimestamp(detail.lastRunAt)} · updated on every indexer cycle
+          </p>
+        </div>
       </div>
-      <div className="bar">
-        <span
-          className={`bar-${band === 'none' ? 'low' : band}`}
-          style={{ width: `${Math.max(0, Math.min(100, factor.value))}%` }}
-        />
-      </div>
-      <p className="factor-detail">{factor.detail}</p>
-    </div>
+    </Reveal>
   );
 }
 
 function History({ history }: { history: HistoryEntry[] }) {
   if (history.length === 0) return null;
   return (
-    <section className="history">
-      <h2 style={{ fontSize: '1.1rem' }}>Recent runs</h2>
-      <ul>
-        {history.map((h, i) => (
-          <li key={i}>
-            <span className={`dot ${h.status}`} />
-            <span className="when">{formatTimestamp(h.runAt)}</span>
-            {h.status === 'ok' ? (
-              <span>
-                scored <strong>{h.safetyScore}</strong>
+    <section className="mt-14">
+      <Reveal>
+        <h2 className="font-display text-xl font-semibold text-ink">Recent runs</h2>
+        <p className="mt-1 text-sm text-muted">
+          The last {history.length} scoring {history.length === 1 ? 'run' : 'runs'},
+          newest first.
+        </p>
+      </Reveal>
+
+      <Reveal delay={0.05} className="mt-5 overflow-hidden rounded-xl border border-line">
+        <ul className="divide-y divide-line-soft">
+          {history.map((h, i) => (
+            <li
+              key={i}
+              className="flex items-center gap-3 bg-surface/40 px-4 py-3 text-sm"
+            >
+              <span
+                className={`h-2 w-2 shrink-0 rounded-full ${
+                  h.status === 'ok' ? 'bg-safe' : 'bg-danger'
+                }`}
+              />
+              <span className="tnum w-40 shrink-0 text-muted">
+                {formatTimestamp(h.runAt)}
               </span>
-            ) : (
-              <span className="err">failed — {h.error}</span>
-            )}
-          </li>
-        ))}
-      </ul>
+              {h.status === 'ok' ? (
+                <span className="text-ink">
+                  scored <span className="tnum font-semibold">{h.safetyScore}</span>
+                </span>
+              ) : (
+                <span className="truncate text-danger">failed — {h.error}</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      </Reveal>
     </section>
   );
 }

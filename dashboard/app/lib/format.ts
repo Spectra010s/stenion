@@ -30,10 +30,54 @@ export function stalenessLabel(
   return { text: 'live', tone: 'ok' };
 }
 
+export type ScoreBand = 'high' | 'mid' | 'low' | 'none';
+
 /** Coarse safety band for score coloring — purely visual, not part of scoring. */
-export function scoreBand(score: number | null): 'high' | 'mid' | 'low' | 'none' {
+export function scoreBand(score: number | null): ScoreBand {
   if (score === null) return 'none';
   if (score >= 67) return 'high';
   if (score >= 34) return 'mid';
   return 'low';
+}
+
+/** The CSS color value (theme token) for a band — used by SVG strokes/inline fills. */
+export function bandColor(band: ScoreBand): string {
+  switch (band) {
+    case 'high':
+      return 'var(--color-safe)';
+    case 'mid':
+      return 'var(--color-warn)';
+    case 'low':
+      return 'var(--color-danger)';
+    default:
+      return 'var(--color-faint)';
+  }
+}
+
+/** Tailwind text-color class for a band. */
+export function bandTextClass(band: ScoreBand): string {
+  switch (band) {
+    case 'high':
+      return 'text-safe';
+    case 'mid':
+      return 'text-warn';
+    case 'low':
+      return 'text-danger';
+    default:
+      return 'text-faint';
+  }
+}
+
+/** Short human label for a band, e.g. for a legend. */
+export function bandLabel(band: ScoreBand): string {
+  switch (band) {
+    case 'high':
+      return 'Lower risk';
+    case 'mid':
+      return 'Elevated risk';
+    case 'low':
+      return 'High risk';
+    default:
+      return 'Unscored';
+  }
 }
