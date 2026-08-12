@@ -46,6 +46,12 @@ importers:
 
   dashboard:
     dependencies:
+      '@stenion/db':
+        specifier: workspace:*
+        version: link:../db
+      '@stenion/indexer':
+        specifier: workspace:*
+        version: link:../indexer
       clsx:
         specifier: ^2.1.1
         version: 2.1.1

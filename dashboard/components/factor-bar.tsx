@@ -2,7 +2,7 @@
 
 import { motion, useReducedMotion } from 'framer-motion';
 import { bandColor, bandTextClass, scoreBand } from '../app/lib/format';
-import type { RiskFactor } from '../app/lib/api';
+import type { RiskFactor } from '../app/lib/contract';
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 

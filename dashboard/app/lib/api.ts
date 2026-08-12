@@ -1,99 +1,53 @@
-// Server-side API client.
+// Server-side data access for the dashboard's Server Components.
 //
-// Per the step-7 decision, the dashboard reads @stenion/api from the SERVER
-// (React Server Components), never from the browser. So:
-//   - STENION_API_URL is a server-only env var (no NEXT_PUBLIC_ prefix); the
-//     browser never learns the API origin and never calls it directly.
-//   - No CORS is needed for this path (server-to-server). The API sends CORS
-//     headers anyway for future direct/third-party clients.
+// ARCHITECTURE NOTE — deploy merge (2026-08-12). The public API used to be a
+// separate @stenion/api service that this module fetched over HTTP (STENION_API_URL).
+// For the Vercel deploy the API is merged INTO this Next.js app as Route Handlers
+// (app/api/protocols, app/api/protocol/[id]) so there is one deployable, not two.
 //
-// These types mirror the frozen contract documented in CLAUDE.md ("Public API").
-// They are duplicated here rather than imported from @stenion/db on purpose: the
-// dashboard depends on the HTTP contract (the JSON shape), not on the database
-// layer's internals. If the contract changes, that's a breaking change caught here.
+// Because the dashboard renders on the server, its pages now read the same
+// @stenion/db Store DIRECTLY here — no HTTP hop, no self-fetch. Self-fetching our
+// own routes would need an absolute base URL AND could be blocked by Vercel's
+// deployment protection on preview URLs, so a direct in-process Store call is both
+// simpler and more robust. The HTTP routes still exist and return the identical
+// shapes for EXTERNAL consumers (wallets/third parties) — this module and those
+// routes both go through the same Store methods, so the contract can't drift.
+//
+// This file is SERVER-ONLY (it imports `pg` transitively via @stenion/db). The
+// `server-only` import makes a build fail loudly if a client component ever
+// imports it. Client components must import the contract TYPES from ./contract.
 
-const API_BASE = process.env.STENION_API_URL;
+import 'server-only';
+import { createStore, getPool, type Store } from '@stenion/db';
 
-export type RunStatus = 'ok' | 'failed';
+import type { LeaderboardEntry, ProtocolDetail } from './contract';
 
-export interface LeaderboardEntry {
-  id: string;
-  name: string;
-  chain: string;
-  safetyScore: number | null;
-  computedAt: string | null;
-  lastRunAt: string | null;
-  lastRunStatus: RunStatus | null;
+// Re-export the contract types + FACTOR_ORDER so existing server-component
+// importers (`from '../lib/api'`) keep working unchanged.
+export * from './contract';
+
+// One Store per server process, created lazily on first use and reused across
+// warm invocations (the underlying pg Pool is a module singleton — see
+// @stenion/db's getPool). Never closed here: closing it would break connection
+// reuse on the next warm request; the Neon pooler manages the actual connections.
+let store: Store | undefined;
+function getStore(): Store {
+  if (!store) store = createStore(getPool());
+  return store;
 }
-
-export interface RiskFactor {
-  value: number;
-  weight: number;
-  detail: string;
-}
-
-// The five *Safety factors, higher = safer. A member may be null if a factor
-// genuinely doesn't apply to a protocol (render "N/A", don't drop it).
-export type RiskFactorKey =
-  | 'collateralSafety'
-  | 'oracleSafety'
-  | 'adminKeySafety'
-  | 'liquiditySafety'
-  | 'utilizationSafety';
-
-export type RiskFactorMap = Record<RiskFactorKey, RiskFactor | null>;
-
-export type HistoryEntry =
-  | { status: 'ok'; safetyScore: number; computedAt: string; runAt: string }
-  | { status: 'failed'; error: string; runAt: string };
-
-export interface ProtocolDetail {
-  id: string;
-  name: string;
-  chain: string;
-  adapter: string;
-  safetyScore: number | null;
-  computedAt: string | null;
-  factors: RiskFactorMap | null;
-  lastRunAt: string | null;
-  lastRunStatus: RunStatus | null;
-  history: HistoryEntry[];
-}
-
-// Human-friendly order + labels for the factor rows on the detail page.
-export const FACTOR_ORDER: { key: RiskFactorKey; label: string }[] = [
-  { key: 'collateralSafety', label: 'Collateral' },
-  { key: 'oracleSafety', label: 'Oracle' },
-  { key: 'adminKeySafety', label: 'Admin key' },
-  { key: 'liquiditySafety', label: 'Liquidity' },
-  { key: 'utilizationSafety', label: 'Utilization' },
-];
 
 /**
- * Fetch the leaderboard. `cache: 'no-store'` because scores update on the
- * indexer's interval — the dashboard should always show the freshest stored row,
- * not a build-time snapshot.
+ * The leaderboard: every protocol with its latest-ok score, ranked by score desc.
+ * Delegates to the same Store method the HTTP route uses, so both agree.
  */
 export async function getProtocols(): Promise<LeaderboardEntry[]> {
-  const res = await fetch(`${API_BASE}/protocols`, { cache: 'no-store' });
-  if (!res.ok) {
-    throw new Error(`GET /protocols failed: ${res.status} ${res.statusText}`);
-  }
-  const body = (await res.json()) as { protocols: LeaderboardEntry[] };
-  return body.protocols;
+  return getStore().listProtocolsWithLatestScore();
 }
 
 /**
- * Fetch one protocol's detail. Returns null on a 404 (unknown id) so the page
- * can render Next's notFound() cleanly; any other non-ok status throws.
+ * One protocol's detail, or null if the id is unknown (the page renders
+ * notFound() on null — same behaviour as the old 404-from-fetch path).
  */
 export async function getProtocolDetail(id: string): Promise<ProtocolDetail | null> {
-  const res = await fetch(`${API_BASE}/protocol/${encodeURIComponent(id)}`, {
-    cache: 'no-store',
-  });
-  if (res.status === 404) return null;
-  if (!res.ok) {
-    throw new Error(`GET /protocol/${id} failed: ${res.status} ${res.statusText}`);
-  }
-  return (await res.json()) as ProtocolDetail;
+  return getStore().getProtocolDetail(id);
 }

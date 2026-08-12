@@ -1,7 +1,7 @@
 import { CircleCheck, CircleSlash, TriangleAlert } from 'lucide-react';
 import { cn } from '../app/lib/cn';
 import { stalenessLabel } from '../app/lib/format';
-import type { RunStatus } from '../app/lib/api';
+import type { RunStatus } from '../app/lib/contract';
 
 /**
  * Freshness indicator. The displayed score is always the latest *ok* run; this

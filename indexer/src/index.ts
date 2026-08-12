@@ -46,13 +46,32 @@ function toTarget<T>(adapter: Adapter<T>): IndexTarget {
   };
 }
 
-async function runCycle(targets: IndexTarget[], store: Store): Promise<void> {
+/** One protocol's outcome in a cycle summary. */
+export interface CycleRunResult {
+  id: string;
+  status: 'ok' | 'failed';
+  safetyScore?: number;
+  error?: string;
+}
+
+/** What one cycle did — returned so the cron route can respond with a summary. */
+export interface CycleSummary {
+  ran: number;
+  ok: number;
+  failed: number;
+  results: CycleRunResult[];
+}
+
+async function runCycle(targets: IndexTarget[], store: Store): Promise<CycleSummary> {
+  const results: CycleRunResult[] = [];
+
   for (const target of targets) {
     const runAt = new Date().toISOString();
 
     // Build the run outcome first (adapter errors caught here), then persist it
     // separately so a DB write failure is logged without aborting the cycle.
     let record: RunRecord;
+    let result: CycleRunResult;
     try {
       const { safetyScore, factors, computedAt } = await target.run();
       record = {
@@ -63,10 +82,12 @@ async function runCycle(targets: IndexTarget[], store: Store): Promise<void> {
         computedAt: computedAt.toISOString(),
         runAt,
       };
+      result = { id: target.metadata.id, status: 'ok', safetyScore };
       console.log(`[${runAt}] ${target.metadata.id}: safetyScore=${safetyScore}`);
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       record = { protocolId: target.metadata.id, status: 'failed', error, runAt };
+      result = { id: target.metadata.id, status: 'failed', error };
       console.error(`[${runAt}] ${target.metadata.id}: FAILED — ${error}`);
     }
 
@@ -76,7 +97,16 @@ async function runCycle(targets: IndexTarget[], store: Store): Promise<void> {
       const error = err instanceof Error ? err.message : String(err);
       console.error(`[${runAt}] ${target.metadata.id}: DB write failed — ${error}`);
     }
+
+    results.push(result);
   }
+
+  return {
+    ran: results.length,
+    ok: results.filter((r) => r.status === 'ok').length,
+    failed: results.filter((r) => r.status === 'failed').length,
+    results,
+  };
 }
 
 function buildTargets(config: IndexerConfig): IndexTarget[] {
@@ -97,6 +127,37 @@ function buildTargets(config: IndexerConfig): IndexTarget[] {
   return [toTarget(blend), toTarget(kinetic)];
 }
 
+/**
+ * Build the targets, connect, and upsert protocol metadata (idempotent). Shared
+ * by the standalone loop (main) and the single-cycle entry point (runIndexerCycle).
+ * Throws on a bad DATABASE_URL / unreachable DB — callers decide how to report it.
+ */
+async function prepare(config: IndexerConfig): Promise<{ targets: IndexTarget[]; store: Store }> {
+  const targets = buildTargets(config);
+  const store = createStore(getPool());
+  // Protocol metadata is static, so upsert once here; the run loop only appends
+  // scores.
+  for (const target of targets) {
+    await store.upsertProtocol(target.metadata, target.adapterRef);
+  }
+  return { targets, store };
+}
+
+/**
+ * Run exactly one scoring cycle and return a summary. This is the entry point the
+ * dashboard's cron route (app/api/cron/run-indexer) calls: external scheduling
+ * (GitHub Actions every 5 min) triggers the route, the route calls this, one
+ * cycle writes to Postgres. Deliberately does NOT close the pool — under
+ * serverless the pg Pool is reused across warm invocations; the Neon pooler owns
+ * connection lifecycle. Config comes from validated env (loadConfig); a bad env
+ * or unreachable DB throws (the route turns that into a 500).
+ */
+export async function runIndexerCycle(): Promise<CycleSummary> {
+  const config = loadConfig();
+  const { targets, store } = await prepare(config);
+  return runCycle(targets, store);
+}
+
 async function main(): Promise<void> {
   let config: IndexerConfig;
   try {
@@ -113,16 +174,11 @@ async function main(): Promise<void> {
     throw err;
   }
 
-  const targets = buildTargets(config);
-  const store = createStore(getPool());
-
-  // Protocol metadata is static, so upsert once at startup; the run loop only
-  // appends scores. A failure here (bad DATABASE_URL, unreachable DB) should
-  // stop us before the first cycle rather than silently drop every write.
+  // A failure here (bad DATABASE_URL, unreachable DB) should stop us before the
+  // first cycle rather than silently drop every write.
+  let prepared: { targets: IndexTarget[]; store: Store };
   try {
-    for (const target of targets) {
-      await store.upsertProtocol(target.metadata, target.adapterRef);
-    }
+    prepared = await prepare(config);
   } catch (err) {
     console.error(
       `Cannot reach the database — check DATABASE_URL and that migrations have run ` +
@@ -131,6 +187,7 @@ async function main(): Promise<void> {
     await closePool();
     process.exit(1);
   }
+  const { targets, store } = prepared;
 
   console.log(
     `stenion indexer: ${targets.length} target(s), interval ${config.intervalMs}ms → Postgres`,
@@ -145,4 +202,9 @@ async function main(): Promise<void> {
   }, config.intervalMs);
 }
 
-void main();
+// Only run the standalone loop when executed directly (`node dist/index.js`).
+// Importing this module for `runIndexerCycle` (the cron route) must NOT start the
+// interval loop or call process.exit — same guard pattern as the API server.
+if (require.main === module) {
+  void main();
+}
