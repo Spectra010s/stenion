@@ -58,3 +58,9 @@ body:
       description: Anything that needs deciding before or during the work.
     validations:
       required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        💬 Join the community for a better contribution experience — [t.me/stenion_lab](https://t.me/stenion_lab)
