@@ -68,7 +68,9 @@ These override any default behavior and are enforced in code and review:
 ## Deploy architecture (summary — full detail in `ARCHITECTURE.md`)
 
 One Vercel project = the `dashboard`. The API lives as Next.js Route Handlers
-(`/api/protocols`, `/api/protocol/[id]`); the dashboard's own pages read `@stenion/db`'s `Store`
+(`/api/v1/protocols`, `/api/v1/protocol/[id]` — versioned; unversioned paths remain as
+transitional aliases, and the versioning policy lives in `ARCHITECTURE.md`); the dashboard's own
+pages read `@stenion/db`'s `Store`
 in-process (no HTTP hop). The indexer is triggered by a secret-gated cron route
 (`POST /api/cron/run-indexer`) scheduled externally by GitHub Actions. `@stenion/api` is legacy —
 kept but not deployed. Env vars: `DATABASE_URL` (Neon pooled), `STENION_RPC_URL`,

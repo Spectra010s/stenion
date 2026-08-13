@@ -81,7 +81,8 @@ pnpm --filter @stenion/dashboard dev             # http://localhost:3000
 
 The dashboard reads Postgres in-process, so once step 4 has landed at least one row you'll see
 real scores at `http://localhost:3000`. The public API is served by the dashboard at
-`/api/protocols` and `/api/protocol/:id`.
+`/api/v1/protocols` and `/api/v1/protocol/:id` — versioned, with the policy in
+[`ARCHITECTURE.md`](ARCHITECTURE.md#api-versioning).
 
 > **Note:** the public RPC (`mainnet.sorobanrpc.com`) is shared and rate-limited — fine for trying
 > it out, but use your own endpoint for anything sustained.

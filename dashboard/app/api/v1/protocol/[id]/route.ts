@@ -1,10 +1,13 @@
-// GET /api/protocol/:id — one protocol's detail + recent run history.
+// GET /api/v1/protocol/:id — one protocol's detail + recent run history.
 //
 // Migrated verbatim from the standalone @stenion/api's GET /protocol/:id: same
 // Store method (getProtocolDetail), same JSON shape, same 404-on-unknown-id and
 // generic-500-on-error behaviour. Transport change only.
+//
+// Versioned under /v1 as of the API-versioning change: the JSON contract is
+// unchanged (URL-only move). See ARCHITECTURE.md "API versioning" for the policy.
 
-import { CORS_HEADERS, getStore, jsonResponse } from '../../_shared';
+import { CORS_HEADERS, getStore, jsonResponse } from '../../../_shared';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -22,7 +25,7 @@ export async function GET(
     }
     return jsonResponse(detail);
   } catch (err) {
-    console.error(`GET /api/protocol/${id} failed:`, err);
+    console.error(`GET /api/v1/protocol/${id} failed:`, err);
     return jsonResponse({ error: 'Internal server error' }, 500);
   }
 }

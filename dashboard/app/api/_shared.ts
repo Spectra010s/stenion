@@ -7,7 +7,7 @@
 import 'server-only';
 import { createStore, getPool, type Store } from '@stenion/db';
 
-// CORS for the PUBLIC data routes only. Stenion's /protocols + /protocol/:id serve
+// CORS for the PUBLIC data routes only. Stenion's /v1/protocols + /v1/protocol/:id serve
 // public, read-only, payment-blind data — any origin may read them (a wallet, a
 // third-party dashboard, anyone), so `*` is the correct, simplest policy, carried
 // over verbatim from the standalone @stenion/api. NOTE: the Stenion dashboard's

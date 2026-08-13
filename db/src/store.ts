@@ -28,7 +28,7 @@ export type RunRecord =
     };
 
 /**
- * One protocol on the leaderboard (GET /protocols). `safetyScore`/`computedAt`
+ * One protocol on the leaderboard (GET /api/v1/protocols). `safetyScore`/`computedAt`
  * come from the latest *ok* run (null if the protocol has never scored
  * successfully); `lastRunAt`/`lastRunStatus` describe the most recent run of any
  * status, so a stale score (last run failed) is visible without another call.
@@ -44,7 +44,7 @@ export interface LeaderboardEntry {
 }
 
 /**
- * One row of a protocol's recent score history (GET /protocol/:id). A
+ * One row of a protocol's recent score history (GET /api/v1/protocol/:id). A
  * discriminated union on `status` mirroring the persisted RunRecord: `ok` rows
  * carry the score + timestamps, `failed` rows carry the error. Factors are
  * deliberately omitted here (they live on the detail's top-level current score);
@@ -55,7 +55,7 @@ export type HistoryEntry =
   | { status: 'failed'; error: string; runAt: string };
 
 /**
- * Full detail for one protocol (GET /protocol/:id). Top-level
+ * Full detail for one protocol (GET /api/v1/protocol/:id). Top-level
  * `safetyScore`/`computedAt`/`factors` describe the latest *ok* run (all null if
  * never scored); `lastRunAt`/`lastRunStatus` describe the newest run of any
  * status; `history` is the recent run rows, newest first.
@@ -73,7 +73,7 @@ export interface ProtocolDetail {
   history: HistoryEntry[];
 }
 
-/** How many recent history rows GET /protocol/:id returns. */
+/** How many recent history rows GET /api/v1/protocol/:id returns. */
 export const DETAIL_HISTORY_LIMIT = 50;
 
 export interface Store {

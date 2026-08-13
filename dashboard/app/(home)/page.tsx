@@ -14,11 +14,11 @@ import {
   Timer,
   Waves,
 } from 'lucide-react';
-import { getProtocols, type LeaderboardEntry } from './lib/api';
-import { GITHUB_URL } from './lib/site';
-import { ScoreRing } from '../components/score-ring';
-import { StatusPill } from '../components/status-pill';
-import { Reveal, RevealGroup, RevealItem } from '../components/reveal';
+import { getProtocols, type LeaderboardEntry } from '../lib/api';
+import { GITHUB_URL } from '../lib/site';
+import { ScoreRing } from '../../components/score-ring';
+import { StatusPill } from '../../components/status-pill';
+import { Reveal, RevealGroup, RevealItem } from '../../components/reveal';
 
 export const dynamic = 'force-dynamic';
 

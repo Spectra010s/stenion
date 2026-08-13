@@ -65,7 +65,7 @@ three things in one Vercel project:
 1. The public site (homepage, registry, on-site methodology, about, per-protocol detail pages).
    Data pages are async Server Components that read `@stenion/db`'s `Store` **in-process** — no
    HTTP hop.
-2. The public API, as Route Handlers: `GET /api/protocols`, `GET /api/protocol/:id`.
+2. The public API, as Route Handlers: `GET /api/v1/protocols`, `GET /api/v1/protocol/:id`.
 3. A secret-gated cron-trigger route (`POST /api/cron/run-indexer`) that runs one indexer cycle.
 
 **`@stenion/api`** — a standalone `node:http` REST server. **Not deployed** — see below.
@@ -93,7 +93,7 @@ three things in one Vercel project:
           ├──────────────┐
           ▼              ▼
    Dashboard pages   API routes      dashboard reads the Store in-process;
-   (Server           (/api/*)        routes read the same Store for external
+   (Server         (/api/v1/*)       routes read the same Store for external
     Components)                       consumers (wallets, third parties)
 ```
 
@@ -111,10 +111,11 @@ registry that's honest about freshness beats one with holes on a failed cycle.
 **One Vercel project = the `dashboard`.** The indexer and the standalone API are not deployed as
 separate services. Everything runs from the single Next.js app:
 
-- **API** → Next.js Route Handlers inside the dashboard (`app/api/protocols`,
-  `app/api/protocol/[id]`). Same `Store` methods, same JSON as the original standalone API — a
+- **API** → Next.js Route Handlers inside the dashboard (`app/api/v1/protocols`,
+  `app/api/v1/protocol/[id]`). Same `Store` methods, same JSON as the original standalone API — a
   transport change, not a rewrite. CORS (`access-control-allow-origin: *`) is set on these two
   routes only, for future browser/wallet/third-party clients reading public, payment-blind data.
+  `/api/v1/*` is the only public API surface — see "API versioning" below.
 - **Indexer** → triggered by `POST /api/cron/run-indexer`, which calls `runIndexerCycle()` once.
   The route is secret-gated (`Authorization: Bearer <CRON_SECRET>`, compared with
   `crypto.timingSafeEqual`); if `CRON_SECRET` is unset it refuses to run, so it's never open. No
@@ -133,6 +134,41 @@ workspace-dep tracing is correct. On Vercel: Root Directory = `dashboard`, Build
 **Environment variables** (all on the one Vercel project, Production + Preview): `DATABASE_URL`
 (Neon pooled), `STENION_RPC_URL`, `STENION_HORIZON_URL`, `CRON_SECRET`. Locally, every package
 reads these from a single repo-root `.env` via a walk-up loader.
+
+### API versioning
+
+The public API is versioned in the URL. The documented, canonical paths are:
+
+| Endpoint                  | Returns                                            |
+| ------------------------- | -------------------------------------------------- |
+| `GET /api/v1/protocols`   | The leaderboard: every protocol + its latest score. |
+| `GET /api/v1/protocol/:id`| One protocol's detail, factors, and run history.    |
+
+**The policy:**
+
+- **Additive changes stay on `v1`.** A new field in the response — a sixth `*Safety` factor, an
+  extra piece of metadata — does not break a client that ignores fields it doesn't know about, so
+  it ships on `v1`. Consumers should parse defensively and tolerate unknown fields.
+- **Breaking changes get a `v2`.** Renaming a field, removing one, changing a type or the meaning
+  of an existing value, or restructuring the envelope — anything that can break a client reading
+  the documented shape — goes to a new version path, with `v1` left serving its existing contract
+  until it's deliberately retired.
+
+Note that a **methodology** change (a formula, threshold, or weight) is *not* an API version
+change: `safetyScore` is still a 0–100 number with the same meaning, so the scores move but the
+contract doesn't. Methodology changes are versioned in [`METHODOLOGY.md`](METHODOLOGY.md), not in
+the URL. A change to the *taxonomy* — a renamed or removed factor — is breaking, and would need a
+`v2`.
+
+**No unversioned paths.** The pre-versioning paths `/api/protocols` and `/api/protocol/:id` are
+gone — they 404. They existed briefly as transitional aliases during the `/v1` move and were
+removed once a repo-wide sweep confirmed nothing referenced them. Every public API path carries a
+version segment; there is no unversioned surface to fall back to.
+
+**The cron trigger is not versioned.** `POST /api/cron/run-indexer` is internal plumbing, not a
+public contract — it's secret-gated, has no CORS, and its only caller is our own GitHub Actions
+schedule. Versioning it would imply a compatibility promise we don't make. It stays at
+`/api/cron/*`, and a `/api/v1/cron/*` path deliberately does not exist.
 
 ### Why `@stenion/api` exists but isn't deployed
 

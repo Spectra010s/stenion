@@ -23,7 +23,7 @@ commitment — priorities shift as protocols launch and as the project finds fun
 Roughly in priority order, but not committed to dates:
 
 - **More protocol adapters.** The open contribution path (see [`CONTRIBUTING.md`](CONTRIBUTING.md)).
-  The bar: an *independently-scoreable native-Soroban lending protocol* — not another Blend pool,
+  The bar: an _independently-scoreable native-Soroban lending protocol_ — not another Blend pool,
   not a deployment whose lending state lives on another chain.
   - **Nectar Network — watching for mainnet.** Flagged as the next protocol to evaluate once it's
     live on Stellar mainnet. Not built yet, and won't be until we can confirm from its own contracts
@@ -34,23 +34,38 @@ Roughly in priority order, but not committed to dates:
   core pitch — but a natural fit for the "read the chain, warn users" mission.
 - **Protocol self-service.** Let protocols claim their entry, read their factor breakdown, and
   challenge a threshold through a defined process — without ever being able to buy a better number.
-- **Premium tiers.** Paid *visibility* (a clearly-labeled, visually-separate "Spotlight" section),
-  *speed* (faster refresh), and *private tooling* — never a paid score. The real registry stays free,
+- **Premium tiers.** Paid _visibility_ (a clearly-labeled, visually-separate "Spotlight" section),
+  _speed_ (faster refresh), and _private tooling_ — never a paid score. The real registry stays free,
   public, and ranked purely on score. This is the intended business model, kept strictly walled off
   from the number.
-- **AI explanations.** Plain-language summaries of *why* a protocol scores the way it does, generated
+- **AI explanations.** Plain-language summaries of _why_ a protocol scores the way it does, generated
   from the real underlying factor data. AI **only explains** — it never generates an independent risk
   assessment or sets a score.
 - **Methodology v2 candidates** (breaking taxonomy changes, so deliberately not rushed):
-  - **Oracle robustness, not just freshness.** Today `oracleSafety` scores price *age* only. The
-    YieldBlox/Blend ~$10M hack (and the same risk on K2's shared Reflector-family feed) was a *fresh
-    but manipulated* price — which currently scores 100. A TWAP/deviation/oracle-type-aware factor is
+  - **Oracle robustness, not just freshness.** Today `oracleSafety` scores price _age_ only. The
+    YieldBlox/Blend ~$10M hack (and the same risk on K2's shared Reflector-family feed) was a _fresh
+    but manipulated_ price — which currently scores 100. A TWAP/deviation/oracle-type-aware factor is
     a candidate, but it's a new taxonomy member (breaking for every adapter), so it's flagged, not
     invented inline.
   - **Pause / frozen-pool state as a scored signal.** Both adapters already capture pause status in
     raw data (Blend's pool `status`, K2's `is_paused()`), but neither feeds a factor yet. Whether a
     paused pool should take a score hit — and how (new factor? multiplier? display-only flag?) — is a
     taxonomy decision affecting every adapter, so it's not been done ad hoc.
+  - **Beyond lending: a taxonomy per protocol category.** The five `*Safety` factors are
+    lending-specific by design — utilization against a borrow cap and liquidity headroom for
+    withdrawals don't mean anything for an AMM. Scoring other categories means designing a taxonomy
+    that fits how each one actually fails, not stretching the lending model over them:
+    - **DEXs / AMMs** (Soroswap, Phoenix, Aquarius) — liquidity depth against realistic trade size,
+      LP concentration, price divergence from reference markets.
+    - **CDP / stablecoins** (FxDAO) — collateralization ratio, liquidation mechanism health, peg
+      stability.
+    - **Yield vaults** (DeFindex, Wellspring, Hoops Finance) — strategy transparency, underlying
+      protocol exposure (a vault routing into Blend inherits Blend's risk), withdrawal liquidity.
+
+    Each is a v2 project in its own right: a new taxonomy, designed and published to the same
+    standard as the lending one, before any adapter is written. Lending stays the priority until its
+    own methodology is settled — an unvalidated oracle-robustness factor is a bigger problem than an
+    unscored category.
 
 ## Out of scope (for now)
 
@@ -59,18 +74,18 @@ Roughly in priority order, but not committed to dates:
   expanding to read another chain's state (e.g. to score a NEAR-based protocol like Templar) would be
   a category change to the whole trustless-Stellar positioning, not an incremental feature.
 - **TVL tracking.** [DefiLlama](https://defillama.com) already covers TVL for Stellar. Stenion's
-  differentiator is continuous *risk* scoring, not another TVL dashboard.
+  differentiator is continuous _risk_ scoring, not another TVL dashboard.
 - **Any paid mechanism that touches the score.** Not a "not yet" — a permanent no.
 
 ## Protocols investigated and skipped
 
-Confirming a protocol is *not* in scope from its own contracts — before writing scoring logic — is
+Confirming a protocol is _not_ in scope from its own contracts — before writing scoring logic — is
 part of the discipline, not a failure. Two notable cases:
 
 - **YieldBlox.** Not an independent Soroban lending protocol. The YieldBlox DAO adopted Blend as its
-  backbone; what exists today is a community-managed pool *on Blend V2*, using the identical Blend
+  backbone; what exists today is a community-managed pool _on Blend V2_, using the identical Blend
   interface. A "YieldBlox adapter" would just be `BlendAdapter` pointed at a different pool. Could
-  later be represented as a second Blend *pool* via a small multi-pool refactor — tracked, not built.
+  later be represented as a second Blend _pool_ via a small multi-pool refactor — tracked, not built.
 - **Templar.** A NEAR-based, chain-abstraction ("Cypher Lending") protocol. Its lending market state
   — reserves, supply/borrow, utilization, collateral positions — lives on **NEAR**, read via NEAR
   RPC. Stellar is only a wallet/collateral entry point via NEAR MPC. The only native-Soroban contract
