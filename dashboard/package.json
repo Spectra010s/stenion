@@ -13,6 +13,7 @@
   "dependencies": {
     "@stenion/db": "workspace:*",
     "@stenion/indexer": "workspace:*",
+    "@vercel/analytics": "^2.0.1",
     "clsx": "^2.1.1",
     "framer-motion": "^11.18.0",
     "geist": "^1.3.1",
