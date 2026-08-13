@@ -121,9 +121,21 @@ separate services. Everything runs from the single Next.js app:
   The route is secret-gated (`Authorization: Bearer <CRON_SECRET>`, compared with
   `crypto.timingSafeEqual`); if `CRON_SECRET` is unset it refuses to run, so it's never open. No
   CORS on this route.
-- **Scheduling is external** — a GitHub Actions workflow `curl`s the cron route every ~5 minutes.
-  Vercel's Hobby-tier Cron is capped at once per day, too slow for live scoring; GitHub Actions is
-  free and flexible.
+- **Scheduling is external** — a [cron-job.org](https://cron-job.org) job POSTs to the cron route
+  every 5 minutes with `Authorization: Bearer <CRON_SECRET>`. The route itself is stateless about
+  cadence: it runs exactly one cycle per request, so the interval is entirely the caller's.
+
+  **The schedule is not in version control.** It lives in the cron-job.org dashboard — there is no
+  workflow file, no `vercel.json` `crons` entry, and no other scheduling config in this repo.
+  Changing the cadence, pausing indexing, or rotating the target URL is done in that service's UI,
+  not in a PR. If indexing has stopped, check there before looking for a bug in this repo.
+
+  **Why not Vercel Cron:** the Hobby tier caps scheduled functions at **once per day**, which is far
+  too slow for live scoring — 5-minute freshness is the product. Upgrading to Pro for cron alone
+  isn't justified pre-funding, so an external scheduler hits the same secret-gated route instead.
+  This is a deliberate choice, not an oversight: the route is a plain authenticated HTTP endpoint,
+  so swapping cron-job.org for Vercel Cron (or anything else) later is a scheduler change only, with
+  no code change.
 
 **Build wiring:** the dashboard's `build` script compiles the workspace deps (`core` → `db` →
 `adapters` → `indexer`) before `next build`, because those packages resolve via their `dist/`
@@ -167,7 +179,7 @@ removed once a repo-wide sweep confirmed nothing referenced them. Every public A
 version segment; there is no unversioned surface to fall back to.
 
 **The cron trigger is not versioned.** `POST /api/cron/run-indexer` is internal plumbing, not a
-public contract — it's secret-gated, has no CORS, and its only caller is our own GitHub Actions
+public contract — it's secret-gated, has no CORS, and its only caller is our own cron-job.org
 schedule. Versioning it would imply a compatibility promise we don't make. It stays at
 `/api/cron/*`, and a `/api/v1/cron/*` path deliberately does not exist.
 

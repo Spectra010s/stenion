@@ -72,7 +72,9 @@ One Vercel project = the `dashboard`. The API lives as Next.js Route Handlers
 transitional aliases, and the versioning policy lives in `ARCHITECTURE.md`); the dashboard's own
 pages read `@stenion/db`'s `Store`
 in-process (no HTTP hop). The indexer is triggered by a secret-gated cron route
-(`POST /api/cron/run-indexer`) scheduled externally by GitHub Actions. `@stenion/api` is legacy —
+(`POST /api/cron/run-indexer`), which an external cron-job.org job POSTs to every 5 minutes with
+`Authorization: Bearer <CRON_SECRET>`. That schedule lives in the cron-job.org dashboard, **not in
+this repo** — there is no workflow or `vercel.json` `crons` entry to find. `@stenion/api` is legacy —
 kept but not deployed. Env vars: `DATABASE_URL` (Neon pooled), `STENION_RPC_URL`,
 `STENION_HORIZON_URL`, `CRON_SECRET`.
 

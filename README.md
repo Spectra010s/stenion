@@ -84,6 +84,12 @@ real scores at `http://localhost:3000`. The public API is served by the dashboar
 `/api/v1/protocols` and `/api/v1/protocol/:id` — versioned, with the policy in
 [`ARCHITECTURE.md`](ARCHITECTURE.md#api-versioning).
 
+Locally you run scoring cycles by hand (step 4). In production nothing in this repo schedules them:
+`POST /api/cron/run-indexer` runs exactly one cycle per request, and an external cron-job.org job
+calls it every 5 minutes with `Authorization: Bearer <CRON_SECRET>`. **That schedule is configured
+in cron-job.org's dashboard, not in version control** — there's no workflow or `vercel.json` `crons`
+entry here to find. See [`ARCHITECTURE.md`](ARCHITECTURE.md#deploy-architecture) for why.
+
 > **Note:** the public RPC (`mainnet.sorobanrpc.com`) is shared and rate-limited — fine for trying
 > it out, but use your own endpoint for anything sustained.
 

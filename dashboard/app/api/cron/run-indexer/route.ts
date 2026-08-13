@@ -2,10 +2,14 @@
 //
 // The indexer is NOT a long-running deployed process on Vercel (serverless has no
 // always-on scheduler, and Hobby-tier Vercel Cron is capped at once-per-day). Instead
-// this route runs a single scoring cycle when hit; an EXTERNAL GitHub Actions
-// workflow curls it every ~5 minutes (that schedule is wired up separately, outside
-// this repo's runtime). The scoring logic itself is unchanged — this calls the same
-// runIndexerCycle() the standalone indexer uses.
+// this route runs a single scoring cycle when hit, and an EXTERNAL scheduler —
+// cron-job.org — POSTs to it every 5 minutes with `Authorization: Bearer <CRON_SECRET>`.
+// The scoring logic itself is unchanged — this calls the same runIndexerCycle() the
+// standalone indexer uses.
+//
+// THE SCHEDULE IS NOT IN THIS REPO. It lives in the cron-job.org dashboard, so there is
+// no workflow file, vercel.json `crons` entry, or any other scheduling config to find in
+// version control — changing the cadence means logging into that service.
 //
 // PROTECTION: this endpoint writes to the DB and hits RPC/Horizon, so it must not be
 // publicly spam-triggerable. It requires `Authorization: Bearer <CRON_SECRET>`,
