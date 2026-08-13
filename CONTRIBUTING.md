@@ -174,6 +174,7 @@ before merge — do the same and note it in your PR.
 Before opening a PR, from the repo root:
 
 ```bash
+pnpm format        # prettier, writes in place — run this first
 pnpm build         # all packages compile
 pnpm lint          # eslint clean
 pnpm typecheck     # tsc clean
@@ -182,6 +183,32 @@ pnpm typecheck     # tsc clean
 > **Local hazard:** never run `next build`/`next start`/a second `next dev` against the same
 > checkout while a dev server is up — they share one `.next` and corrupt each other. Vercel builds
 > in isolation, so this is a local-only issue.
+
+## Formatting
+
+**Formatting is enforced, not reviewed.** Prettier owns it, CI checks it, and a PR with unformatted
+code fails before anyone reads it — so nobody spends review time on whitespace, and you never get a
+comment about a line break.
+
+```bash
+pnpm format        # format the whole repo in place — run before you push
+pnpm format:check  # what CI runs; fails without writing anything
+```
+
+Both run from the repo root and cover **every** package — there is one config,
+[`prettier.config.js`](prettier.config.js), and no per-package overrides. Don't add one.
+
+It's Prettier's defaults except for two settings, both of which just ratify what the codebase
+already did: `singleQuote: true` and `printWidth: 100`. If you disagree with a formatting choice,
+open an issue about the config — don't hand-format around it, and don't add
+`// prettier-ignore` to win an argument with the formatter.
+
+The division of labour with ESLint is strict: **Prettier decides how code looks, ESLint decides
+whether it's correct.** `eslint-config-prettier` is wired in last in `eslint.config.js` to turn off
+any ESLint rule that would have an opinion about formatting, so the two can never disagree.
+
+Editor setup is optional but recommended — install your editor's Prettier plugin and enable
+format-on-save, and `pnpm format` becomes a no-op you never think about.
 
 ## Adding a dependency
 
@@ -214,7 +241,7 @@ Your PR should:
 - Confirm every on-chain method/field name against the protocol's audited source or SDK — say so,
   and link it.
 - Include the live-mainnet verification (what you ran, what the output was, why it's plausible).
-- Pass `pnpm build`, `pnpm lint`, `pnpm typecheck` from the repo root.
+- Pass `pnpm format:check`, `pnpm build`, `pnpm lint`, `pnpm typecheck` from the repo root.
 - Update `METHODOLOGY.md` in the same PR if — and only if — you introduced a per-protocol anchoring
   fact (like K2's `OPTIMAL_UTILIZATION_RATE`).
 
