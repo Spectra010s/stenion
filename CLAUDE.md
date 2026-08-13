@@ -1,6 +1,6 @@
 # Stenion — Working notes for Claude Code
 
-This is the internal index for working *in* this codebase. It holds the rules and conventions that
+This is the internal index for working _in_ this codebase. It holds the rules and conventions that
 must not be broken, and points to the public docs for everything else. **Don't duplicate substance
 here** — each public doc owns its content:
 
@@ -38,7 +38,7 @@ These override any default behavior and are enforced in code and review:
 - Fixed shared taxonomy, defined once in the `RiskFactorType` enum in
   [`core/src/types.ts`](core/src/types.ts) — five factors, every adapter populates all five
   (`collateralSafety`, `oracleSafety`, `adminKeySafety`, `liquiditySafety`, `utilizationSafety`).
-  *How* a factor is computed can differ per protocol; the names/scale/thresholds do not. New factors
+  _How_ a factor is computed can differ per protocol; the names/scale/thresholds do not. New factors
   are added to `core` for everyone — never invented per-adapter (a breaking change to the taxonomy).
 - Formulas, weights, and per-protocol anchoring facts live in [`METHODOLOGY.md`](METHODOLOGY.md) —
   the public rulebook. Don't restate them here.
@@ -72,7 +72,9 @@ One Vercel project = the `dashboard`. The API lives as Next.js Route Handlers
 transitional aliases, and the versioning policy lives in `ARCHITECTURE.md`); the dashboard's own
 pages read `@stenion/db`'s `Store`
 in-process (no HTTP hop). The indexer is triggered by a secret-gated cron route
-(`POST /api/cron/run-indexer`) scheduled externally by GitHub Actions. `@stenion/api` is legacy —
+(`POST /api/cron/run-indexer`), which an external cron-job.org job POSTs to every 5 minutes with
+`Authorization: Bearer <CRON_SECRET>`. That schedule lives in the cron-job.org dashboard, **not in
+this repo** — there is no workflow or `vercel.json` `crons` entry to find. `@stenion/api` is legacy —
 kept but not deployed. Env vars: `DATABASE_URL` (Neon pooled), `STENION_RPC_URL`,
 `STENION_HORIZON_URL`, `CRON_SECRET`.
 
@@ -82,7 +84,7 @@ kept but not deployed. Env vars: `DATABASE_URL` (Neon pooled), `STENION_RPC_URL`
 
 ## Open questions
 
-The unresolved taxonomy questions (oracle *manipulation* vs staleness; scoring pause/frozen-pool
+The unresolved taxonomy questions (oracle _manipulation_ vs staleness; scoring pause/frozen-pool
 state) are tracked as "Methodology v2 candidates" in [`ROADMAP.md`](ROADMAP.md). Both are breaking
 taxonomy changes, so they're flagged, not resolved ad hoc.
 
@@ -100,7 +102,7 @@ taxonomy changes, so they're flagged, not resolved ad hoc.
 ## Keeping the docs current
 
 **Update the docs yourself at the end of a session — don't wait to be asked.** When something
-changes, update the doc that *owns* that content, not this file:
+changes, update the doc that _owns_ that content, not this file:
 
 - A new/changed formula, threshold, or weight → [`METHODOLOGY.md`](METHODOLOGY.md) (and the adapter
   code, in the same change).

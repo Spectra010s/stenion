@@ -1,6 +1,6 @@
 name: New protocol adapter
 description: Propose or claim an adapter for a Stellar/Soroban protocol
-labels: ["adapter"]
+labels: ['adapter']
 body:
   - type: markdown
     attributes:

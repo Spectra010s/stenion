@@ -280,13 +280,13 @@ async function fetchAdmin(horizonUrl: string, address: string): Promise<BlendAdm
   const windowDays = 30;
   const acctResp = await fetch(`${horizonUrl}/accounts/${address}`);
   if (!acctResp.ok) {
-    throw new Error(`Blend: Horizon account fetch for admin ${address} failed (${acctResp.status})`);
+    throw new Error(
+      `Blend: Horizon account fetch for admin ${address} failed (${acctResp.status})`,
+    );
   }
   const acct = (await acctResp.json()) as HorizonAccount;
 
-  const opsResp = await fetch(
-    `${horizonUrl}/accounts/${address}/operations?order=desc&limit=200`,
-  );
+  const opsResp = await fetch(`${horizonUrl}/accounts/${address}/operations?order=desc&limit=200`);
   if (!opsResp.ok) {
     throw new Error(`Blend: Horizon ops fetch for admin ${address} failed (${opsResp.status})`);
   }
@@ -430,7 +430,11 @@ export class BlendAdapter implements Adapter<BlendRawData> {
       .filter((v): v is number => v !== null && v > 0);
 
     if (values.length === 0) {
-      return { value: 0, weight, detail: 'no priced supplied value available to assess concentration' };
+      return {
+        value: 0,
+        weight,
+        detail: 'no priced supplied value available to assess concentration',
+      };
     }
     const n = values.length;
     if (n === 1) {
@@ -457,9 +461,7 @@ export class BlendAdapter implements Adapter<BlendRawData> {
     const fresh = 10 * 60;
     const dead = 60 * 60;
 
-    const ages = raw.reserves.map((r) =>
-      r.price ? raw.fetchedAt - r.price.timestamp : null,
-    );
+    const ages = raw.reserves.map((r) => (r.price ? raw.fetchedAt - r.price.timestamp : null));
     if (ages.some((a) => a === null)) {
       return { value: 0, weight, detail: 'at least one reserve has no oracle price' };
     }

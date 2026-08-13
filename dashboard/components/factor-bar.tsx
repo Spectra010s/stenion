@@ -46,9 +46,7 @@ export function FactorCard({
             weight {Math.round(factor.weight * 100)}%
           </span>
         </span>
-        <span className={`tnum text-lg font-semibold ${bandTextClass(band)}`}>
-          {factor.value}
-        </span>
+        <span className={`tnum text-lg font-semibold ${bandTextClass(band)}`}>{factor.value}</span>
       </div>
 
       <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-line-soft">

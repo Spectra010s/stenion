@@ -84,11 +84,28 @@ real scores at `http://localhost:3000`. The public API is served by the dashboar
 `/api/v1/protocols` and `/api/v1/protocol/:id` — versioned, with the policy in
 [`ARCHITECTURE.md`](ARCHITECTURE.md#api-versioning).
 
+Locally you run scoring cycles by hand (step 4). In production nothing in this repo schedules them:
+`POST /api/cron/run-indexer` runs exactly one cycle per request, and an external cron-job.org job
+calls it every 5 minutes with `Authorization: Bearer <CRON_SECRET>`. **That schedule is configured
+in cron-job.org's dashboard, not in version control** — there's no workflow or `vercel.json` `crons`
+entry here to find. See [`ARCHITECTURE.md`](ARCHITECTURE.md#deploy-architecture) for why.
+
 > **Note:** the public RPC (`mainnet.sorobanrpc.com`) is shared and rate-limited — fine for trying
 > it out, but use your own endpoint for anything sustained.
 
 See [`.env.example`](.env.example) for every variable and [`ARCHITECTURE.md`](ARCHITECTURE.md) for
 what each package does and how data flows through the system.
+
+**One-time git setup.** Formatting is enforced by Prettier, and the repo was reformatted in a
+single bulk commit. Point git at the ignore list so `git blame` skips it and attributes each line
+to the commit that actually wrote it:
+
+```bash
+git config blame.ignoreRevsFile .git-blame-ignore-revs
+```
+
+(GitHub's blame view applies [`.git-blame-ignore-revs`](.git-blame-ignore-revs) automatically; this
+is only needed for local blame. Formatting workflow is in [`CONTRIBUTING.md`](CONTRIBUTING.md#formatting).)
 
 ## Contributing an adapter
 

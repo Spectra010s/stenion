@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { Analytics } from '@vercel/analytics/next';
 import { GeistSans } from 'geist/font/sans';
 import { GeistMono } from 'geist/font/mono';
 import { Space_Grotesk } from 'next/font/google';
@@ -27,14 +28,16 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html
-      lang="en"
-      className={`${GeistSans.variable} ${GeistMono.variable} ${display.variable}`}
-    >
+    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable} ${display.variable}`}>
       <body className="min-h-screen bg-bg text-ink antialiased">
         <Nav />
         <main>{children}</main>
         <Footer />
+        {/* Vercel Analytics — client component that injects the pageview script.
+            Renders no markup, so it sits last and can't affect layout. Pageviews
+            only: no props, no custom events, and nothing protocol- or score-related
+            is ever passed to it. */}
+        <Analytics />
       </body>
     </html>
   );

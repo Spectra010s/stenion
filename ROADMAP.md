@@ -16,7 +16,7 @@ commitment — priorities shift as protocols launch and as the project finds fun
   control, liquidity depth, utilization headroom — with a fully public, challengeable rulebook in
   [`METHODOLOGY.md`](METHODOLOGY.md).
 - **The full stack:** on-chain adapters → indexer → Postgres → API → dashboard, deployed as a single
-  Vercel project with external (GitHub Actions) scheduling. See [`ARCHITECTURE.md`](ARCHITECTURE.md).
+  Vercel project with external (cron-job.org) scheduling. See [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## Planned
 

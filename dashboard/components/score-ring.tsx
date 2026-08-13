@@ -90,9 +90,7 @@ export function ScoreRing({
             {score === null ? '—' : Math.round(display)}
           </div>
           {label && (
-            <div className="mt-1 text-[0.7rem] uppercase tracking-wider text-faint">
-              {label}
-            </div>
+            <div className="mt-1 text-[0.7rem] uppercase tracking-wider text-faint">{label}</div>
           )}
         </div>
       </div>

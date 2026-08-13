@@ -1,4 +1,4 @@
-// Public read-only API 
+// Public read-only API
 //
 // Two endpoints, both served straight from the Postgres tables step 5 wrote
 // (via @stenion/db). Nothing is recomputed here — the indexer owns scoring on

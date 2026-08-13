@@ -10,8 +10,8 @@ export function Footer() {
           <div className="max-w-sm">
             <div className="font-display text-base font-semibold text-ink">Stenion</div>
             <p className="mt-2 text-sm leading-relaxed text-muted">
-              Continuous, on-chain-derived risk intelligence for Stellar / Soroban
-              DeFi. The score is public, free, and payment-blind — always.
+              Continuous, on-chain-derived risk intelligence for Stellar / Soroban DeFi. The score
+              is public, free, and payment-blind — always.
             </p>
           </div>
 
@@ -42,8 +42,8 @@ export function Footer() {
         </div>
 
         <div className="mt-10 border-t border-line-soft pt-6 text-xs text-faint">
-          Not audited financial advice. Stenion surfaces on-chain risk signals; it
-          does not custody funds or endorse any protocol.
+          Not audited financial advice. Stenion surfaces on-chain risk signals; it does not custody
+          funds or endorse any protocol.
         </div>
       </div>
     </footer>

@@ -1,13 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import {
-  ArrowRight,
-  Bot,
-  GitPullRequest,
-  Radar,
-  ScanEye,
-  ShieldOff,
-} from 'lucide-react';
+import { ArrowRight, Bot, GitPullRequest, Radar, ScanEye, ShieldOff } from 'lucide-react';
 import { GITHUB_URL } from '../lib/site';
 import { Reveal, RevealGroup, RevealItem } from '../../components/reveal';
 
@@ -29,56 +22,55 @@ export default function AboutPage() {
           Risk you can watch, not just read about
         </h1>
         <p className="mt-4 text-lg leading-relaxed text-muted">
-          Stenion is an open-source, live risk-intelligence platform for Stellar and
-          Soroban DeFi lending protocols. It reads each protocol directly from the chain
-          and continuously scores how safe it is right now — then publishes exactly how it
-          got that number.
+          Stenion is an open-source, live risk-intelligence platform for Stellar and Soroban DeFi
+          lending protocols. It reads each protocol directly from the chain and continuously scores
+          how safe it is right now — then publishes exactly how it got that number.
         </p>
       </Reveal>
 
       <Section title="Why continuous scoring">
         <p>
-          Two things dominate how people currently judge DeFi risk, and both miss the
-          moment that matters:
+          Two things dominate how people currently judge DeFi risk, and both miss the moment that
+          matters:
         </p>
         <ul className="mt-4 space-y-3">
           <li className="flex gap-3">
             <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
             <span>
-              <strong className="text-ink">Static audits</strong> confirm the code was
-              sound on a particular date. They say nothing about the pool becoming 95%
-              concentrated in one asset, or an oracle drifting stale, weeks later.
+              <strong className="text-ink">Static audits</strong> confirm the code was sound on a
+              particular date. They say nothing about the pool becoming 95% concentrated in one
+              asset, or an oracle drifting stale, weeks later.
             </span>
           </li>
           <li className="flex gap-3">
             <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
             <span>
-              <strong className="text-ink">TVL trackers</strong> (DeFiLlama already does
-              this well for Stellar) measure how much is at stake — not how risky the
-              position is. Size is not safety.
+              <strong className="text-ink">TVL trackers</strong> (DeFiLlama already does this well
+              for Stellar) measure how much is at stake — not how risky the position is. Size is not
+              safety.
             </span>
           </li>
         </ul>
         <p className="mt-4">
-          Stenion&apos;s differentiator is the gap between those two: continuous,
-          on-chain-derived risk scoring — collateral concentration, oracle staleness,
-          admin-key control, liquidity depth, and utilization headroom — recomputed on an
-          interval and timestamped so you always know how fresh a number is.
+          Stenion&apos;s differentiator is the gap between those two: continuous, on-chain-derived
+          risk scoring — collateral concentration, oracle staleness, admin-key control, liquidity
+          depth, and utilization headroom — recomputed on an interval and timestamped so you always
+          know how fresh a number is.
         </p>
       </Section>
 
       <Section title="How the score is built">
         <p>
-          Every protocol is graded on the same five factors, each on a 0–100 scale where
-          higher is safer. The overall safety score is a fixed weighted mean of those
-          factors. Wherever possible a factor is anchored to the protocol&apos;s{' '}
-          <em>own</em> on-chain parameters — Stenion grades a pool against the line it set
-          for itself, not against an arbitrary constant.
+          Every protocol is graded on the same five factors, each on a 0–100 scale where higher is
+          safer. The overall safety score is a fixed weighted mean of those factors. Wherever
+          possible a factor is anchored to the protocol&apos;s <em>own</em> on-chain parameters —
+          Stenion grades a pool against the line it set for itself, not against an arbitrary
+          constant.
         </p>
         <p className="mt-4">
-          Adapters read data directly from Soroban RPC and Horizon — official, trustless
-          Stellar infrastructure — so nothing is self-reported by the protocols being
-          scored. The exact formulas are public in the{' '}
+          Adapters read data directly from Soroban RPC and Horizon — official, trustless Stellar
+          infrastructure — so nothing is self-reported by the protocols being scored. The exact
+          formulas are public in the{' '}
           <Link href="/methodology" className="text-accent hover:underline">
             methodology
           </Link>
@@ -129,25 +121,23 @@ export default function AboutPage() {
 
       <Section title="Honest about the limits">
         <p>
-          Stenion measures what it can read trustlessly on-chain, and is explicit about
-          what it can&apos;t. Oracle scoring currently measures price <em>freshness</em>,
-          not manipulation of a fresh price — a real, recorded limitation, not a hidden
-          one. Every threshold is labeled as either anchored to an external/on-chain value
-          or an unvalidated v1 judgment call open to challenge.
+          Stenion measures what it can read trustlessly on-chain, and is explicit about what it
+          can&apos;t. Oracle scoring currently measures price <em>freshness</em>, not manipulation
+          of a fresh price — a real, recorded limitation, not a hidden one. Every threshold is
+          labeled as either anchored to an external/on-chain value or an unvalidated v1 judgment
+          call open to challenge.
         </p>
         <p className="mt-4">
-          It&apos;s built in the open by a solo developer in the Stellar ecosystem. If you
-          think a threshold is wrong — especially if you&apos;re a protocol being scored —
-          the methodology explains how to dispute it.
+          It&apos;s built in the open by a solo developer in the Stellar ecosystem. If you think a
+          threshold is wrong — especially if you&apos;re a protocol being scored — the methodology
+          explains how to dispute it.
         </p>
       </Section>
 
       <Reveal>
         <div className="mt-14 flex flex-col items-start justify-between gap-5 rounded-2xl border border-line bg-gradient-to-br from-surface-2 to-surface p-8 sm:flex-row sm:items-center">
           <div>
-            <h3 className="font-display text-xl font-semibold text-ink">
-              See it working
-            </h3>
+            <h3 className="font-display text-xl font-semibold text-ink">See it working</h3>
             <p className="mt-1 text-sm text-muted">
               Live scores for the protocols Stenion tracks today.
             </p>

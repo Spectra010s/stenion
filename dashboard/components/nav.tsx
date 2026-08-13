@@ -18,8 +18,7 @@ export function Nav() {
   const firstLinkRef = useRef<HTMLAnchorElement>(null);
   const reduceMotion = useReducedMotion();
 
-  const isActive = (href: string) =>
-    href === '/' ? pathname === '/' : pathname.startsWith(href);
+  const isActive = (href: string) => (href === '/' ? pathname === '/' : pathname.startsWith(href));
 
   // Close on Escape / outside-click: return focus to the trigger (keyboard UX).
   const closeToTrigger = useCallback(() => {

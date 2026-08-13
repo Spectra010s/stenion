@@ -28,11 +28,7 @@ export interface RiskFactor {
 // The five *Safety factors, higher = safer. A member may be null if a factor
 // genuinely doesn't apply to a protocol (render "N/A", don't drop it).
 export type RiskFactorKey =
-  | 'collateralSafety'
-  | 'oracleSafety'
-  | 'adminKeySafety'
-  | 'liquiditySafety'
-  | 'utilizationSafety';
+  'collateralSafety' | 'oracleSafety' | 'adminKeySafety' | 'liquiditySafety' | 'utilizationSafety';
 
 export type RiskFactorMap = Record<RiskFactorKey, RiskFactor | null>;
 

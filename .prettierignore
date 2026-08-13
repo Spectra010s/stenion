@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+.next/
+out/
+*.tsbuildinfo
+
+# Generated / machine-owned files — never hand-edited, so never formatted
+pnpm-lock.yaml
+next-env.d.ts
+
+# Legacy indexer run log (raw JSONL append target, not a formatted document)
+runs.jsonl
+
+# Local env files
+.env
+.env.local

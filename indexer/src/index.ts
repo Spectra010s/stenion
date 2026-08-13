@@ -146,7 +146,7 @@ async function prepare(config: IndexerConfig): Promise<{ targets: IndexTarget[];
 /**
  * Run exactly one scoring cycle and return a summary. This is the entry point the
  * dashboard's cron route (app/api/cron/run-indexer) calls: external scheduling
- * (GitHub Actions every 5 min) triggers the route, the route calls this, one
+ * (a cron-job.org job, every 5 min) triggers the route, the route calls this, one
  * cycle writes to Postgres. Deliberately does NOT close the pool — under
  * serverless the pg Pool is reused across warm invocations; the Neon pooler owns
  * connection lifecycle. Config comes from validated env (loadConfig); a bad env

@@ -1,0 +1,9 @@
+# Line endings. This repo is developed on Windows with `core.autocrlf=true`,
+# which left the working tree mixed (`.ts` files LF, `README.md` CRLF). Prettier
+# normalizes to LF (its default, and what git stores anyway), so without this
+# `pnpm format:check` fails on Windows checkouts for line endings alone.
+# Normalizing here keeps the working tree and the formatter in agreement.
+* text=auto eol=lf
+
+# Binary — never line-ending-converted, never diffed as text.
+*.jpg binary

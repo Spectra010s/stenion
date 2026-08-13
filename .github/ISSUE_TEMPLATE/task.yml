@@ -13,7 +13,7 @@ body:
     attributes:
       label: Context
       description: What currently exists, and why this needs doing. Link to the relevant file/section.
-      placeholder: "`core/src/adapter.ts` splits scoring into three methods so `score()` is testable without RPC, but there are no tests covering it."
+      placeholder: '`core/src/adapter.ts` splits scoring into three methods so `score()` is testable without RPC, but there are no tests covering it.'
     validations:
       required: true
 

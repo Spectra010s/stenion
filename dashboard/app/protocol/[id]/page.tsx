@@ -15,11 +15,7 @@ import { Reveal, RevealGroup, RevealItem } from '../../../components/reveal';
 
 export const dynamic = 'force-dynamic';
 
-export async function generateMetadata({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const detail = await getProtocolDetail(id).catch(() => null);
   // An unknown id makes the page component below throw notFound(), which renders
@@ -33,11 +29,7 @@ export async function generateMetadata({
   };
 }
 
-export default async function ProtocolDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+export default async function ProtocolDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const detail = await getProtocolDetail(id);
   // Real 404 status, not just the 404 UI. This only works because there is NO
@@ -65,9 +57,7 @@ export default async function ProtocolDetailPage({
         <Reveal>
           <div className="flex items-center gap-2">
             <Boxes className="h-4 w-4 text-accent" />
-            <h2 className="font-display text-xl font-semibold text-ink">
-              Factor breakdown
-            </h2>
+            <h2 className="font-display text-xl font-semibold text-ink">Factor breakdown</h2>
           </div>
           <p className="mt-1 text-sm text-muted">
             Why the score is what it is — each factor on a 0–100 scale, higher is safer.
@@ -142,26 +132,20 @@ function History({ history }: { history: HistoryEntry[] }) {
       <Reveal>
         <h2 className="font-display text-xl font-semibold text-ink">Recent runs</h2>
         <p className="mt-1 text-sm text-muted">
-          The last {history.length} scoring {history.length === 1 ? 'run' : 'runs'},
-          newest first.
+          The last {history.length} scoring {history.length === 1 ? 'run' : 'runs'}, newest first.
         </p>
       </Reveal>
 
       <Reveal delay={0.05} className="mt-5 overflow-hidden rounded-xl border border-line">
         <ul className="divide-y divide-line-soft">
           {history.map((h, i) => (
-            <li
-              key={i}
-              className="flex items-center gap-3 bg-surface/40 px-4 py-3 text-sm"
-            >
+            <li key={i} className="flex items-center gap-3 bg-surface/40 px-4 py-3 text-sm">
               <span
                 className={`h-2 w-2 shrink-0 rounded-full ${
                   h.status === 'ok' ? 'bg-safe' : 'bg-danger'
                 }`}
               />
-              <span className="tnum w-40 shrink-0 text-muted">
-                {formatTimestamp(h.runAt)}
-              </span>
+              <span className="tnum w-40 shrink-0 text-muted">{formatTimestamp(h.runAt)}</span>
               {h.status === 'ok' ? (
                 <span className="text-ink">
                   scored <span className="tnum font-semibold">{h.safetyScore}</span>
