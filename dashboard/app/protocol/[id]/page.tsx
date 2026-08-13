@@ -22,7 +22,10 @@ export async function generateMetadata({
 }) {
   const { id } = await params;
   const detail = await getProtocolDetail(id).catch(() => null);
-  if (!detail) return { title: 'Protocol not found' };
+  // An unknown id makes the page component below throw notFound(), which renders
+  // app/not-found.tsx — and that file supplies its own title. Anything returned
+  // here for a missing protocol is discarded, so don't pretend to set one.
+  if (!detail) return {};
   const score = detail.safetyScore ?? '—';
   return {
     title: `${detail.name} — safety ${score}`,
@@ -37,6 +40,12 @@ export default async function ProtocolDetailPage({
 }) {
   const { id } = await params;
   const detail = await getProtocolDetail(id);
+  // Real 404 status, not just the 404 UI. This only works because there is NO
+  // Suspense boundary above this route — no loading.tsx here, and the homepage's
+  // one is scoped to the (home) route group. Any enclosing boundary lets Next
+  // flush the 200 shell before this throws, which renders the not-found page
+  // under a 200 (a soft-404 that search engines index as a real page).
+  // DO NOT add a loading.tsx to this route without re-checking the status code.
   if (!detail) notFound();
 
   return (
