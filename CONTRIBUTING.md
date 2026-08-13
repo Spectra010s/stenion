@@ -20,15 +20,15 @@ An adapter that breaks any of these will not be merged, regardless of how good t
    invent a plausible-looking value.
 3. **Anchor thresholds to the protocol's real parameters — don't invent new ones.** The formulas,
    scales, and thresholds are fixed in `METHODOLOGY.md` and identical across protocols. What
-   legitimately differs per adapter is only *where you read the raw inputs on-chain*. If your
+   legitimately differs per adapter is only _where you read the raw inputs on-chain_. If your
    protocol has a different on-chain parameter that a continuous factor should anchor to (e.g. Blend
    reads a per-reserve `max_util`; K2 has none and anchors to `OPTIMAL_UTILIZATION_RATE`), that's a
    documented per-protocol fact you add to `METHODOLOGY.md` — **not** a new threshold you invent
    inline. See [Changing a formula or threshold](#changing-a-formula-or-threshold).
 4. **Confirm the actual on-chain structure — don't assume it mirrors Blend or K2.** Every
    method/field name in the shipped adapters was confirmed against the protocol's audited source or
-   SDK, none guessed. Do the same. And confirm the protocol is actually an *independently scoreable
-   native-Soroban lending protocol* before you write scoring logic — see
+   SDK, none guessed. Do the same. And confirm the protocol is actually an _independently scoreable
+   native-Soroban lending protocol_ before you write scoring logic — see
    [Is this protocol even in scope?](#is-this-protocol-even-in-scope).
 5. **Payment never affects the score.** This isn't something your code touches directly, but it's
    why the rules above are strict: the number has to be defensible as purely data-derived.
@@ -41,13 +41,13 @@ it stays internal to your adapter.
 
 ```ts
 export interface Adapter<TRawData = unknown> {
-  readonly metadata: ProtocolMetadata;          // { id: slug, name, chain: 'stellar' }
+  readonly metadata: ProtocolMetadata; // { id: slug, name, chain: 'stellar' }
 
-  fetchRawData(): Promise<TRawData>;             // pull raw on-chain state (RPC + Horizon)
+  fetchRawData(): Promise<TRawData>; // pull raw on-chain state (RPC + Horizon)
 
-  computeRiskFactors(rawData: TRawData): Promise<RiskFactorMap>;  // → the five *Safety factors
+  computeRiskFactors(rawData: TRawData): Promise<RiskFactorMap>; // → the five *Safety factors
 
-  score(factors: RiskFactorMap): RiskScoreResult;                 // → weighted safetyScore
+  score(factors: RiskFactorMap): RiskScoreResult; // → weighted safetyScore
 }
 ```
 
@@ -73,7 +73,7 @@ riskFactors: {
 Conventions you must not break:
 
 - **Scale: 0–100, higher = safer**, for both the overall score and every factor — same direction
-  throughout. A `collateralSafety` of 70 means *well-diversified* (safe), not "70% concentrated."
+  throughout. A `collateralSafety` of 70 means _well-diversified_ (safe), not "70% concentrated."
 - **Names end in `*Safety`** so a name never disagrees with its number. Don't add a factor whose
   name implies "higher = riskier."
 - **Every key must be present.** Use `null` (not omission) for a factor that genuinely doesn't
@@ -110,23 +110,23 @@ The error model is deliberately simple and lives in the indexer, not duplicated 
   partial factor map with guessed numbers.
 - **The indexer wraps each run in try/catch** and records a failed/stale run for that protocol,
   without aborting the cycle or crashing the process. One protocol failing never affects another.
-- A missing/undecodable oracle price is *not* an error to swallow — per `METHODOLOGY.md` it's a
+- A missing/undecodable oracle price is _not_ an error to swallow — per `METHODOLOGY.md` it's a
   real signal and scores `0` (a missing feed is maximally unsafe). Follow the methodology for what's
   "no data → 0" versus what's "genuinely broken → throw."
 
 ## Is this protocol even in scope?
 
 Before writing scoring logic, confirm the protocol is an **independently-scoreable native-Soroban
-lending protocol**. Two real, significant protocols were investigated and *deliberately skipped*
+lending protocol**. Two real, significant protocols were investigated and _deliberately skipped_
 because they aren't (details in [`ROADMAP.md`](ROADMAP.md)):
 
-- **YieldBlox** — turned out to be a community-managed pool *on Blend V2*, not an independent
+- **YieldBlox** — turned out to be a community-managed pool _on Blend V2_, not an independent
   protocol. An adapter would just be `BlendAdapter` pointed at a different pool.
 - **Templar** — its lending market state lives on **NEAR**, not Stellar; only its price oracle is
   native Soroban. Reading NEAR would break the trustless-Stellar rule.
 
 So: confirm reserves, utilization, liquidity, admin, and oracle are all readable via **Soroban RPC +
-Horizon** from the protocol's *own* contracts (not another chain, not another protocol's pool)
+Horizon** from the protocol's _own_ contracts (not another chain, not another protocol's pool)
 before you commit to an adapter. Confirming this from the contracts first — rather than assuming it
 mirrors Blend/K2 — is the whole point.
 
@@ -228,7 +228,7 @@ To propose a change:
 1. **Open an issue** describing the specific threshold/formula and why it's wrong, anchored to
    something external where possible (a protocol's own on-chain parameter, a published risk
    framework, observed data) — not preference.
-2. **Or open a PR** editing `METHODOLOGY.md` *and* the adapter code together, with justification.
+2. **Or open a PR** editing `METHODOLOGY.md` _and_ the adapter code together, with justification.
 3. Adding or removing a factor is a **breaking change to the shared taxonomy** in
    `core/src/types.ts` — it affects every adapter at once and is held to a higher bar again.
 

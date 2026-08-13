@@ -1,8 +1,8 @@
 # Stenion Architecture
 
 The technical shape of the system: how the code is organized, how data flows from the chain to a
-score on the dashboard, and how it's deployed. For *how a score is calculated*, see
-[`METHODOLOGY.md`](METHODOLOGY.md); for *how to add a protocol*, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+score on the dashboard, and how it's deployed. For _how a score is calculated_, see
+[`METHODOLOGY.md`](METHODOLOGY.md); for _how to add a protocol_, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Monorepo layout
 
@@ -62,6 +62,7 @@ behind `require.main === module` so importing it doesn't start the loop.
 
 **`@stenion/dashboard`** — a Next.js 15 (App Router) site, and the actual deployment target. It's
 three things in one Vercel project:
+
 1. The public site (homepage, registry, on-site methodology, about, per-protocol detail pages).
    Data pages are async Server Components that read `@stenion/db`'s `Store` **in-process** — no
    HTTP hop.
@@ -102,8 +103,8 @@ The key invariant: **the dashboard's own pages and the public API routes both go
 what the site renders can't drift apart. Nothing is ever recomputed at read time — the indexer owns
 scoring; readers only shape stored rows.
 
-**Staleness model:** the displayed `safetyScore` is always the latest *ok* run (null if never
-scored); the newest run of *any* status is surfaced separately as `lastRunAt`/`lastRunStatus`. A
+**Staleness model:** the displayed `safetyScore` is always the latest _ok_ run (null if never
+scored); the newest run of _any_ status is surfaced separately as `lastRunAt`/`lastRunStatus`. A
 registry that's honest about freshness beats one with holes on a failed cycle.
 
 ## Deploy architecture
@@ -139,10 +140,10 @@ reads these from a single repo-root `.env` via a walk-up loader.
 
 The public API is versioned in the URL. The documented, canonical paths are:
 
-| Endpoint                  | Returns                                            |
-| ------------------------- | -------------------------------------------------- |
-| `GET /api/v1/protocols`   | The leaderboard: every protocol + its latest score. |
-| `GET /api/v1/protocol/:id`| One protocol's detail, factors, and run history.    |
+| Endpoint                   | Returns                                             |
+| -------------------------- | --------------------------------------------------- |
+| `GET /api/v1/protocols`    | The leaderboard: every protocol + its latest score. |
+| `GET /api/v1/protocol/:id` | One protocol's detail, factors, and run history.    |
 
 **The policy:**
 
@@ -154,10 +155,10 @@ The public API is versioned in the URL. The documented, canonical paths are:
   the documented shape — goes to a new version path, with `v1` left serving its existing contract
   until it's deliberately retired.
 
-Note that a **methodology** change (a formula, threshold, or weight) is *not* an API version
+Note that a **methodology** change (a formula, threshold, or weight) is _not_ an API version
 change: `safetyScore` is still a 0–100 number with the same meaning, so the scores move but the
 contract doesn't. Methodology changes are versioned in [`METHODOLOGY.md`](METHODOLOGY.md), not in
-the URL. A change to the *taxonomy* — a renamed or removed factor — is breaking, and would need a
+the URL. A change to the _taxonomy_ — a renamed or removed factor — is breaking, and would need a
 `v2`.
 
 **No unversioned paths.** The pre-versioning paths `/api/protocols` and `/api/protocol/:id` are

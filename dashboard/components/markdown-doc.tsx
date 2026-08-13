@@ -33,9 +33,7 @@ const components: Components = {
   a: ({ href, children }) => {
     const h = href ?? '';
     if (h.startsWith('#')) return <a href={h}>{children}</a>;
-    const url = /^https?:\/\//.test(h)
-      ? h
-      : `${REPO_BLOB}/${h.replace(/^\.?\//, '')}`;
+    const url = /^https?:\/\//.test(h) ? h : `${REPO_BLOB}/${h.replace(/^\.?\//, '')}`;
     return (
       <a href={url} target="_blank" rel="noreferrer">
         {children}

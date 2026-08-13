@@ -39,10 +39,9 @@ export default async function MethodologyPage() {
           Methodology
         </h1>
         <p className="mt-3 text-muted">
-          Every formula, threshold, and weight Stenion uses — extracted directly from the
-          shipped adapter code. It exists so anyone, including the protocols being scored,
-          can verify and challenge the rules, not just the output. Code and this document
-          are not allowed to drift.
+          Every formula, threshold, and weight Stenion uses — extracted directly from the shipped
+          adapter code. It exists so anyone, including the protocols being scored, can verify and
+          challenge the rules, not just the output. Code and this document are not allowed to drift.
         </p>
         <a
           href={METHODOLOGY_SOURCE_URL}
@@ -64,8 +63,8 @@ export default async function MethodologyPage() {
               Couldn&apos;t load the methodology
             </h2>
             <p className="mx-auto mt-2 max-w-md text-sm text-muted">
-              The rendered copy is temporarily unavailable. You can always read the
-              canonical source on GitHub.
+              The rendered copy is temporarily unavailable. You can always read the canonical source
+              on GitHub.
             </p>
             <a
               href={METHODOLOGY_SOURCE_URL}

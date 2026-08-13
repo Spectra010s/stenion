@@ -342,14 +342,20 @@ export class KineticAdapter implements Adapter<KineticRawData> {
     const instance = await readInstanceStorage(server, this.routerId);
     const adminScv = instance.get(ADMIN_KEY);
     const oracleScv = instance.get(ORACLE_KEY);
-    if (!adminScv) throw new Error(`Kinetic: router ${this.routerId} has no ${ADMIN_KEY} in instance storage`);
-    if (!oracleScv) throw new Error(`Kinetic: router ${this.routerId} has no ${ORACLE_KEY} in instance storage`);
+    if (!adminScv)
+      throw new Error(`Kinetic: router ${this.routerId} has no ${ADMIN_KEY} in instance storage`);
+    if (!oracleScv)
+      throw new Error(`Kinetic: router ${this.routerId} has no ${ORACLE_KEY} in instance storage`);
     const adminAddress = scValToNative(adminScv) as string;
     const oracleId = scValToNative(oracleScv) as string;
 
     const paused = Boolean(await readContract(server, this.routerId, 'is_paused'));
 
-    const reserveList = (await readContract(server, this.routerId, 'get_reserves_list')) as string[];
+    const reserveList = (await readContract(
+      server,
+      this.routerId,
+      'get_reserves_list',
+    )) as string[];
     if (!Array.isArray(reserveList) || reserveList.length === 0) {
       throw new Error(`Kinetic: router ${this.routerId} returned an empty reserve list`);
     }
@@ -409,7 +415,11 @@ export class KineticAdapter implements Adapter<KineticRawData> {
       .filter((v): v is number => v !== null && v > 0);
 
     if (values.length === 0) {
-      return { value: 0, weight, detail: 'no priced supplied value available to assess concentration' };
+      return {
+        value: 0,
+        weight,
+        detail: 'no priced supplied value available to assess concentration',
+      };
     }
     const n = values.length;
     if (n === 1) {

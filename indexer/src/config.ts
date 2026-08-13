@@ -138,8 +138,7 @@ export function loadConfig(cwd: string = process.cwd()): IndexerConfig {
     horizonUrl: requiredUrl('STENION_HORIZON_URL'),
     intervalMs: optionalPositiveInt('STENION_INTERVAL_MS', 5 * 60 * 1000),
     databaseUrl: requiredPostgresUrl('DATABASE_URL'),
-    runOnce:
-      process.argv.includes('--once') || optionalBool('STENION_RUN_ONCE', false),
+    runOnce: process.argv.includes('--once') || optionalBool('STENION_RUN_ONCE', false),
   };
 
   if (problems.length > 0) throw new ConfigError([...problems]);

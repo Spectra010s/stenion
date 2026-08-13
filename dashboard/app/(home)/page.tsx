@@ -40,8 +40,7 @@ export default async function HomePage() {
         <div
           className="pointer-events-none absolute -top-40 left-1/2 h-[420px] w-[820px] -translate-x-1/2 rounded-full opacity-25 blur-3xl"
           style={{
-            background:
-              'radial-gradient(closest-side, var(--color-accent), transparent 70%)',
+            background: 'radial-gradient(closest-side, var(--color-accent), transparent 70%)',
           }}
         />
         <div className="relative mx-auto max-w-6xl px-5 pb-20 pt-20 sm:pt-28">
@@ -63,9 +62,9 @@ export default async function HomePage() {
 
           <Reveal delay={0.12}>
             <p className="mt-6 max-w-xl text-lg leading-relaxed text-muted">
-              Stenion reads lending protocols straight from the chain and scores their
-              safety continuously — collateral concentration, oracle staleness, admin-key
-              control, liquidity and utilization. Then it shows its work.
+              Stenion reads lending protocols straight from the chain and scores their safety
+              continuously — collateral concentration, oracle staleness, admin-key control,
+              liquidity and utilization. Then it shows its work.
             </p>
           </Reveal>
 
@@ -155,9 +154,9 @@ export default async function HomePage() {
             A one-time audit can&apos;t see today&apos;s risk
           </h2>
           <p className="mt-3 max-w-2xl text-muted">
-            TVL dashboards tell you how much is at stake. Audits tell you the code was
-            sound on a date. Neither tells you the pool is 95% concentrated in one asset,
-            or that an oracle went stale six hours ago. Stenion does — continuously.
+            TVL dashboards tell you how much is at stake. Audits tell you the code was sound on a
+            date. Neither tells you the pool is 95% concentrated in one asset, or that an oracle
+            went stale six hours ago. Stenion does — continuously.
           </p>
         </Reveal>
 
@@ -203,8 +202,8 @@ export default async function HomePage() {
                 </h2>
                 <p className="mt-2 max-w-xl text-sm text-muted">
                   Every protocol is graded on the same five dimensions, each 0–100 and
-                  higher-is-safer, anchored to the protocol&apos;s own on-chain parameters
-                  wherever they exist. The exact thresholds are public and challengeable.
+                  higher-is-safer, anchored to the protocol&apos;s own on-chain parameters wherever
+                  they exist. The exact thresholds are public and challengeable.
                 </p>
               </div>
               <Link
@@ -243,8 +242,8 @@ export default async function HomePage() {
             Rules that can&apos;t be bought
           </h2>
           <p className="mt-3 max-w-2xl text-muted">
-            The score only reflects real, on-chain data. These are non-negotiable and
-            written into the methodology.
+            The score only reflects real, on-chain data. These are non-negotiable and written into
+            the methodology.
           </p>
         </Reveal>
 

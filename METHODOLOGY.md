@@ -9,9 +9,9 @@ the rulebook the adapters must implement.
 
 **One formula, per-protocol data sources.** Every factor's formula, scale, and thresholds
 are fixed here and identical across protocols. What legitimately differs per adapter is only
-*where the raw inputs are read on-chain* — e.g. Blend reads a per-reserve `max_util` cap,
+_where the raw inputs are read on-chain_ — e.g. Blend reads a per-reserve `max_util` cap,
 while Kinetic (K2), being Aave-V3-style, has no such cap and instead anchors the same
-utilization formula to its own `OPTIMAL_UTILIZATION_RATE` (see §5). The *anchoring pattern*
+utilization formula to its own `OPTIMAL_UTILIZATION_RATE` (see §5). The _anchoring pattern_
 ("grade against the protocol's own on-chain parameter") is the invariant; the specific
 parameter that pattern resolves to is a documented per-protocol fact, not a new threshold.
 
@@ -27,10 +27,10 @@ If the code and this document ever disagree, that is a bug — open an issue (se
    per adapter, or per anything else.
 2. **Payment never changes a threshold or a formula.** Protocols can pay for visibility,
    speed, or private tooling — never for a better number. A paid tier cannot move a
-   threshold, reweight a factor, or alter a curve. The *only* thing that changes a
+   threshold, reweight a factor, or alter a curve. The _only_ thing that changes a
    protocol's output is its own real, on-chain data.
 3. **Different protocols can and should score differently.** That is the point. What must
-   never differ is the *rule* being applied. Blend scoring 54 and a hypothetical protocol
+   never differ is the _rule_ being applied. Blend scoring 54 and a hypothetical protocol
    scoring 80 is a result of their data, not of two different rulebooks.
 4. **No fabricated numbers.** Where real data genuinely isn't available for a factor, the
    score uses a clearly-flagged neutral baseline (called out explicitly below) — never an
@@ -56,13 +56,13 @@ If the code and this document ever disagree, that is a bug — open an issue (se
 
 ### Factor weights
 
-| Factor              | Weight |
-|---------------------|--------|
-| `oracleSafety`      | 0.25   |
-| `collateralSafety`  | 0.20   |
-| `adminKeySafety`    | 0.20   |
-| `utilizationSafety` | 0.20   |
-| `liquiditySafety`   | 0.15   |
+| Factor              | Weight   |
+| ------------------- | -------- |
+| `oracleSafety`      | 0.25     |
+| `collateralSafety`  | 0.20     |
+| `adminKeySafety`    | 0.20     |
+| `utilizationSafety` | 0.20     |
+| `liquiditySafety`   | 0.15     |
 | **Total**           | **1.00** |
 
 **Worked example (live Blend Fixed V2 pool, 2026-08-10):**
@@ -104,6 +104,7 @@ pool whose value sits in one asset is far more exposed to a single de-peg or liq
 cascade than a balanced one.
 
 **Raw on-chain data (Soroban RPC, no third party):**
+
 - Per reserve, from the pool contract's persistent storage:
   - `ResData` entry → `b_supply`, `b_rate`
   - `ResConfig` entry → `decimals`
@@ -127,11 +128,11 @@ Edge cases: **0 priced reserves → 0** (can't assess, treated as unsafe rather 
 guessed); **exactly 1 priced reserve → 0** (fully concentrated by definition).
 
 **Why HHI / why these anchors:** HHI is the standard, widely-published concentration
-measure (used by competition regulators and in portfolio analysis) — an *external*
+measure (used by competition regulators and in portfolio analysis) — an _external_
 framework rather than a Stenion invention. The anchoring points are not arbitrary either:
 `1/n` (a perfectly even split) is the mathematically safest achievable state for `n`
 reserves and maps to 100; `1` (everything in one asset) is the worst and maps to 0.
-Normalizing by `1/n` means the score grades a pool against the best *it* could do given how
+Normalizing by `1/n` means the score grades a pool against the best _it_ could do given how
 many reserves it has, not against an arbitrary constant.
 
 ---
@@ -143,6 +144,7 @@ what lets bad debt accrue undetected, so we take the **worst (oldest) reserve**,
 average.
 
 **Raw on-chain data (Soroban RPC):**
+
 - Per reserve: `lastprice(Asset::Stellar(address))` on the oracle contract → `timestamp`
   (unix seconds, the oracle's own publish time).
 - `fetchedAt`: the adapter's read time (unix seconds).
@@ -164,7 +166,7 @@ oracle price at all → **0** (a missing feed is treated as maximally unsafe, no
 **Why 10 min / 60 min:** these are an **unvalidated v1 judgment call**, flagged as such. 10
 minutes is a conservative "fresh enough for a lending pool" heuristic; 60 minutes is where
 we consider a feed effectively dead for risk purposes. The honest correct anchor would be
-each oracle's *own* configured resolution/heartbeat (Blend's oracle publishes on an
+each oracle's _own_ configured resolution/heartbeat (Blend's oracle publishes on an
 interval), and moving to read that per-oracle value is the intended v2 — at which point
 these constants get replaced by an on-chain anchor. Until then: judgment call, not fact.
 
@@ -177,6 +179,7 @@ lone hot key that can reconfigure the pool is the sharpest centralization risk; 
 and inactivity are safer.
 
 **Raw on-chain data:**
+
 - The admin **address** comes from the pool contract's instance storage (`Admin`, or
   `Config.admin`) via Soroban RPC.
 - If the admin is a **keypair account** (`G…`), signer structure and activity come from
@@ -192,12 +195,12 @@ and inactivity are safer.
 This factor is deliberately **tiered**, not a continuous function, because signer structure
 is categorical. The base value is chosen by tier:
 
-| Tier | Base | Detected by |
-|------|------|-------------|
-| Contract-governed admin | **60** | admin address starts with `C…` (flagged neutral baseline — see below) |
-| Single master key | **40** | keypair account, not multisig |
-| N-of-M multisig (N ≥ 2) | **90** | `signerCount > 1` **AND** `high_threshold > 1` |
-| Multisig + timelock | **100** | *RESERVED — see note* |
+| Tier                    | Base    | Detected by                                                           |
+| ----------------------- | ------- | --------------------------------------------------------------------- |
+| Contract-governed admin | **60**  | admin address starts with `C…` (flagged neutral baseline — see below) |
+| Single master key       | **40**  | keypair account, not multisig                                         |
+| N-of-M multisig (N ≥ 2) | **90**  | `signerCount > 1` **AND** `high_threshold > 1`                        |
+| Multisig + timelock     | **100** | _RESERVED — see note_                                                 |
 
 Then a continuous activity penalty is subtracted:
 
@@ -219,7 +222,8 @@ baseline of 60 and say so in the factor's `detail` string. This is honest ignora
 score.
 
 **Why these numbers (v1 judgment calls, partially anchored):**
-- The single-key (40) vs multisig (90) *split* is anchored to a real, hard security fact: a
+
+- The single-key (40) vs multisig (90) _split_ is anchored to a real, hard security fact: a
   1-of-1 key is a single point of unilateral compromise; an N-of-M multisig with
   `high_threshold > 1` provably requires more than one party to reconfigure the pool. The
   detection condition (`signerCount > 1 AND high_threshold > 1`) reads Stellar's actual
@@ -235,7 +239,7 @@ score.
 
 **What it measures:** the absolute withdrawal/liquidation cushion — how much value could
 leave before the pool is drained. Distinct from `utilizationSafety`, which measures
-proximity to the *configured cap* rather than absolute headroom.
+proximity to the _configured cap_ rather than absolute headroom.
 
 **Raw on-chain data (Soroban RPC):** per reserve, `ResData` (`b_supply`, `b_rate`,
 `d_supply`, `d_rate`) and `ResConfig` (`decimals`), used to compute `supplied` and
@@ -251,7 +255,7 @@ liquiditySafety = min(free) across all such reserves     # worst reserve wins
 ```
 
 **Why this shape / this anchor:** `(supplied − borrowed) / supplied` is `1 − utilization`,
-i.e. the fraction of supplied value that is actually withdrawable *right now*. That is a
+i.e. the fraction of supplied value that is actually withdrawable _right now_. That is a
 direct on-chain quantity, not a modeled one — the anchor is the pool's own balances. Taking
 the **worst reserve** rather than a pool-wide average is deliberate: liquidity crises happen
 in the single most-drained reserve, and averaging would hide it. The mapping (free % → score
@@ -279,10 +283,10 @@ utilizationSafety = min(headroom) across all such reserves    # worst reserve wi
 **`cap` is per-protocol — it is always the protocol's own on-chain utilization parameter,
 never a Stenion constant.** Which parameter that resolves to:
 
-| Protocol | `cap` source | Meaning of the line |
-|----------|--------------|---------------------|
-| **Blend** | per-reserve `max_util` (`ResData`/`ResConfig`, 7-dec fixed point → `max_util / SCALAR_7`) | a **hard throttle** — Blend throttles and eventually pauses borrowing as utilization nears `max_util` |
-| **Kinetic (K2)** | `OPTIMAL_UTILIZATION_RATE` = **0.80** (`contracts/shared/src/constants.rs`) | the interest-rate **kink** — past 80% util, K2's Aave-V3 rate curve steepens sharply to discourage further borrowing |
+| Protocol         | `cap` source                                                                              | Meaning of the line                                                                                                  |
+| ---------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| **Blend**        | per-reserve `max_util` (`ResData`/`ResConfig`, 7-dec fixed point → `max_util / SCALAR_7`) | a **hard throttle** — Blend throttles and eventually pauses borrowing as utilization nears `max_util`                |
+| **Kinetic (K2)** | `OPTIMAL_UTILIZATION_RATE` = **0.80** (`contracts/shared/src/constants.rs`)               | the interest-rate **kink** — past 80% util, K2's Aave-V3 rate curve steepens sharply to discourage further borrowing |
 
 **Why this anchor (the strongest in the set):** the threshold is **not a Stenion constant at
 all — it is the protocol's own on-chain parameter.** The formula grades each reserve against
@@ -292,6 +296,7 @@ deliberate for the same reason as liquidity — the binding constraint is the si
 closest to its line.
 
 > **⚠️ Two honest caveats on the K2 anchor (flagged, not hidden):**
+>
 > 1. K2's kink is a **rate inflection, not a hard pause** — past 80% util K2 keeps lending
 >    (just expensively), whereas Blend's `max_util` is an actual throttle. The two lines mean
 >    slightly different things; the formula treats "distance to the protocol's declared
@@ -322,6 +327,6 @@ you are a protocol being scored):
    change — not merged on preference, and never merged because a scored party requested it.
    Per the ground rules above, **no change is ever accepted in exchange for payment.**
 
-Changes that alter what a factor *means* (e.g. adding or removing a factor) are breaking
+Changes that alter what a factor _means_ (e.g. adding or removing a factor) are breaking
 changes to the shared taxonomy in `core/src/types.ts` and are held to a higher bar again —
 they affect every adapter at once.

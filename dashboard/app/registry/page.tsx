@@ -34,9 +34,9 @@ export default async function RegistryPage() {
           Protocol registry
         </h1>
         <p className="mt-3 max-w-2xl text-muted">
-          Every protocol Stenion tracks, ordered by its live safety score — higher is
-          safer. Ranking is derived purely from on-chain data; no protocol can pay to move
-          up. Open a protocol to see the full factor breakdown behind its number.
+          Every protocol Stenion tracks, ordered by its live safety score — higher is safer. Ranking
+          is derived purely from on-chain data; no protocol can pay to move up. Open a protocol to
+          see the full factor breakdown behind its number.
         </p>
       </Reveal>
 
@@ -77,9 +77,7 @@ function ProtocolRow({ entry, rank }: { entry: LeaderboardEntry; rank: number })
       href={`/protocol/${entry.id}`}
       className="group grid grid-cols-1 gap-3 px-4 py-5 transition-colors hover:bg-surface/50 md:grid-cols-[3rem_1fr_8rem_10rem_9rem] md:items-center md:gap-4"
     >
-      <div className="tnum hidden text-sm text-faint md:block">
-        {String(rank).padStart(2, '0')}
-      </div>
+      <div className="tnum hidden text-sm text-faint md:block">{String(rank).padStart(2, '0')}</div>
 
       <div className="flex items-center gap-2">
         <span className="tnum mr-1 text-sm text-faint md:hidden">
@@ -90,9 +88,7 @@ function ProtocolRow({ entry, rank }: { entry: LeaderboardEntry; rank: number })
       </div>
 
       <div className="text-sm text-muted">
-        <span className="text-xs uppercase tracking-wider text-faint md:hidden">
-          Chain:{' '}
-        </span>
+        <span className="text-xs uppercase tracking-wider text-faint md:hidden">Chain: </span>
         {entry.chain}
       </div>
 
@@ -112,13 +108,8 @@ function ProtocolRow({ entry, rank }: { entry: LeaderboardEntry; rank: number })
       </div>
 
       <div className="flex items-center gap-2">
-        <StatusPill
-          lastRunStatus={entry.lastRunStatus}
-          hasScore={entry.safetyScore !== null}
-        />
-        <span className="text-xs text-faint md:hidden">
-          {formatTimestamp(entry.lastRunAt)}
-        </span>
+        <StatusPill lastRunStatus={entry.lastRunStatus} hasScore={entry.safetyScore !== null} />
+        <span className="text-xs text-faint md:hidden">{formatTimestamp(entry.lastRunAt)}</span>
       </div>
     </Link>
   );
@@ -128,12 +119,10 @@ function EmptyState() {
   return (
     <div className="mt-10 rounded-xl border border-line surface-lit p-10 text-center">
       <ShieldCheck className="mx-auto h-8 w-8 text-faint" />
-      <h2 className="mt-4 font-display text-lg font-semibold text-ink">
-        No protocols scored yet
-      </h2>
+      <h2 className="mt-4 font-display text-lg font-semibold text-ink">No protocols scored yet</h2>
       <p className="mx-auto mt-2 max-w-md text-sm text-muted">
-        The indexer hasn&apos;t published a run yet. Once it does, protocols will appear
-        here ranked by safety score.
+        The indexer hasn&apos;t published a run yet. Once it does, protocols will appear here ranked
+        by safety score.
       </p>
     </div>
   );
@@ -147,8 +136,8 @@ function ErrorState() {
         Couldn&apos;t reach the Stenion API
       </h2>
       <p className="mx-auto mt-2 max-w-md text-sm text-muted">
-        The registry is served from the Stenion API, which appears to be unavailable right
-        now. This is a data-availability issue, not a scoring change — try again shortly.
+        The registry is served from the Stenion API, which appears to be unavailable right now. This
+        is a data-availability issue, not a scoring change — try again shortly.
       </p>
     </div>
   );
