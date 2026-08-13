@@ -90,6 +90,17 @@ real scores at `http://localhost:3000`. The public API is served by the dashboar
 See [`.env.example`](.env.example) for every variable and [`ARCHITECTURE.md`](ARCHITECTURE.md) for
 what each package does and how data flows through the system.
 
+**One-time git setup.** Formatting is enforced by Prettier, and the repo was reformatted in a
+single bulk commit. Point git at the ignore list so `git blame` skips it and attributes each line
+to the commit that actually wrote it:
+
+```bash
+git config blame.ignoreRevsFile .git-blame-ignore-revs
+```
+
+(GitHub's blame view applies [`.git-blame-ignore-revs`](.git-blame-ignore-revs) automatically; this
+is only needed for local blame. Formatting workflow is in [`CONTRIBUTING.md`](CONTRIBUTING.md#formatting).)
+
 ## Contributing an adapter
 
 The main way to contribute is to **write an adapter for a new protocol** — DeFiLlama-style, one
