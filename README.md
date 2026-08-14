@@ -84,6 +84,16 @@ real scores at `http://localhost:3000`. The public API is served by the dashboar
 `/api/v1/protocols` and `/api/v1/protocol/:id` — versioned, with the policy in
 [`ARCHITECTURE.md`](ARCHITECTURE.md#api-versioning).
 
+To smoke-test the deployed 404 behaviour for an unknown protocol id, run:
+
+```bash
+pnpm smoke:protocol-404 -- https://stenion.com
+```
+
+The smoke test calls `/api/v1/protocol/:id` with a known-bad id and expects status `404` with
+`{ "error": "Protocol not found", "id": "<id>" }`. It is a manual production check, not part of CI,
+because it intentionally hits the deployed dashboard URL.
+
 Locally you run scoring cycles by hand (step 4). In production nothing in this repo schedules them:
 `POST /api/cron/run-indexer` runs exactly one cycle per request, and an external cron-job.org job
 calls it every 5 minutes with `Authorization: Bearer <CRON_SECRET>`. **That schedule is configured
