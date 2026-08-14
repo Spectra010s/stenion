@@ -9,6 +9,8 @@ body:
         [CONTRIBUTING.md](../CONTRIBUTING.md) and [METHODOLOGY.md](../METHODOLOGY.md) first —
         thresholds must be anchored to the protocol's own on-chain parameters, never invented.
 
+        Any PR that comes out of this should target the `dev` branch, not `main`.
+
   - type: input
     id: protocol
     attributes:
