@@ -26,6 +26,46 @@ export interface ProtocolNote {
 export const PROTOCOL_NOTES: Record<string, ProtocolNote[]> = {
   kinetic: [
     {
+      title: "The price feed is older than K2's own staleness threshold in most observed runs",
+      body: [
+        'Between 2026-08-11 18:16 and 2026-08-14 11:45 UTC, Stenion recorded 267 scored ' +
+          "runs against K2. In 243 of them — 91% — the worst-priced reserve's price was " +
+          'older than 3600 seconds, which is price_staleness_threshold: K2’s own ' +
+          'on-chain limit, not a Stenion constant. The oldest price observed in that ' +
+          'window was 43,147 seconds (11h 59m), within a minute of the per-asset max_age ' +
+          'of 43,200 seconds.',
+        'It is not a continuous outage. The feed refreshes to an age of a few hundred ' +
+          'seconds, climbs back past the threshold over roughly an hour, and then sits ' +
+          'there for hours before refreshing again. That cycle is what makes the overall ' +
+          'score oscillate, and it is visible as a repeating sawtooth in the score ' +
+          'history above — the oscillation is the price ageing out and being renewed, ' +
+          'not the pool’s risk genuinely changing every few minutes.',
+        'This spans a methodology change, and the comparison survives it. The v1 and v2 ' +
+          'rulebooks score price freshness differently, but both take 3600 seconds as ' +
+          'the point where a price is worthless, so "older than the protocol’s own ' +
+          'staleness threshold" means the same thing on either side of the break.',
+        'What is not being claimed: the circuit breaker was scored 100 throughout, so ' +
+          'the bound on a single-step price move is armed — this is purely about ' +
+          'freshness. And a price past a staleness threshold does not by itself mean the ' +
+          'protocol acts on it. K2’s own code may reject the stale price and revert ' +
+          'whatever operation depended on it. What is observable from outside is the age ' +
+          'of the price the oracle serves, not which of those two follows. Both matter ' +
+          'to a depositor — one means positions can be valued on an hours-old price, the ' +
+          'other means borrowing or liquidation may be unavailable for long stretches — ' +
+          'but separating them needs a call path we cannot observe.',
+        'Recorded here as well as scored because a factor value shows the state right ' +
+          'now. An oracleSafety of 0 in this instant and an oracleSafety that has been 0 ' +
+          'for most of three days are different facts, and only the second one is a ' +
+          'pattern.',
+      ],
+      verify:
+        'Read ORACLE from the kinetic_router instance storage ' +
+        '(CCTUJZLY…AWNXOJIV6J7) via Soroban RPC, then call get_asset_prices_vec_fresh on ' +
+        'that oracle and compare each PriceData.timestamp against the current ledger ' +
+        'close time. Read the thresholds from the same contract: get_oracle_config for ' +
+        'price_staleness_threshold, and get_asset_config per asset for max_age.',
+    },
+    {
       title: 'The deployed price oracle is a superset of its audited version',
       body: [
         "K2's price oracle contract (CCHRZE2K…) exports 44 functions. Thirty-five of " +

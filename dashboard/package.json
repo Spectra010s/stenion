@@ -8,6 +8,7 @@
     "build:next": "next build",
     "start": "next start",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test \"app/**/*.test.ts\"",
     "lint": "next lint"
   },
   "dependencies": {

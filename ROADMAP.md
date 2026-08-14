@@ -20,6 +20,11 @@ commitment — priorities shift as protocols launch and as the project finds fun
   the protocol's own on-chain config. Freshness is anchored to each oracle's real resolution and
   max-age rather than to Stenion constants. Runs are stamped with the methodology version that
   produced them, so the discontinuity at the change is visible rather than silent.
+- **Score history on the protocol page.** The append-only run history rendered as a chart of
+  `safetyScore` over time — the visible form of the "continuous, not static" pitch. Plotted on a
+  real time axis and a fixed 0–100 axis, and the line **breaks** rather than being drawn through
+  anything unknown: a failed run, an indexing gap, or a methodology change. Hand-rolled SVG, no
+  charting dependency.
 - **The full stack:** on-chain adapters → indexer → Postgres → API → dashboard, deployed as a single
   Vercel project with external (cron-job.org) scheduling. See [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
@@ -34,6 +39,19 @@ Roughly in priority order, but not committed to dates:
     live on Stellar mainnet. Not built yet, and won't be until we can confirm from its own contracts
     that it's an independently-scoreable native-Soroban lending protocol (reserves/utilization/oracle
     readable via Soroban RPC + Horizon) rather than another Blend pool or another-chain deployment.
+- **A longer history window (raising the 50-row detail cap).** `GET /api/v1/protocol/:id` returns
+  the newest 50 runs, which at the current 5-minute cadence is about four hours. That is enough to
+  show _an_ event and not enough to show a _pattern_, and the difference is load-bearing: K2's
+  oracle freshness cycle produced two "fresh" episodes in 65 hours of observation, 9.3 hours apart,
+  so a four-hour window usually renders a flat line and at best catches one excursion that reads as
+  a one-off. Roughly 24 hours (~290 rows) is where a repeating cycle becomes legible as repeating.
+  Wanted, but it is a payload-size and query-cost decision on free tiers, not a UI tweak — likely a
+  separate downsampled endpoint or a `?window=` parameter rather than simply raising the cap, since
+  the detail response is already the largest thing the API serves.
+- **Per-factor history.** `risk_scores` stores the full factor map on every row, so the data is
+  already there, but the API exposes only `safetyScore` per history point. Charting a single
+  factor over time — watching `oracleSafety` sawtooth on its own axis — is deliberately deferred
+  until the window question above is settled, because it multiplies the same payload by five.
 - **Scam / fake-asset warning API.** A real-time, queryable warning layer for wallets, built on top
   of [StellarExpert](https://stellar.expert)'s existing scam directory. A secondary feature, not the
   core pitch — but a natural fit for the "read the chain, warn users" mission.

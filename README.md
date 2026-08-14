@@ -18,7 +18,8 @@ The thing Stenion measures that a TVL dashboard and a one-time audit both miss i
 moves every block**:
 
 - **Collateral concentration** — is the pool's value spread across assets, or all in one?
-- **Oracle staleness** — how old is the worst price feed the protocol is trading on?
+- **Oracle trustworthiness** — how old is the worst price feed the protocol is trading on, _and_
+  does the pool's price path bound how far a single update can move it?
 - **Admin-key control** — single hot key, or a multisig? How active is it?
 - **Liquidity depth** — how much could be withdrawn before a reserve is drained?
 - **Utilization headroom** — how close is borrowing to the protocol's own stress line?
@@ -50,6 +51,10 @@ wrong, that document tells you how to dispute it.
 [corepack](https://nodejs.org/api/corepack.html) — the version is pinned in the root
 `package.json`). A Postgres database — the project uses [Neon](https://neon.tech)'s free tier, but
 any Postgres works.
+
+> `pnpm test` needs a newer Node than the app itself does: the tests are `*.test.ts` files run by
+> Node's built-in runner on **native TypeScript type stripping** (Node 22.18+ / 24 — developed and
+> verified on 24), which is what keeps the suite at zero dependencies. Everything else runs on 20+.
 
 ```bash
 # 1. Install (pnpm workspaces — installs every package)
