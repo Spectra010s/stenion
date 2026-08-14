@@ -92,12 +92,16 @@ real scores at `http://localhost:3000`. The public API is served by the dashboar
 To smoke-test the deployed 404 behaviour for an unknown protocol id, run:
 
 ```bash
-pnpm smoke:protocol-404 -- https://stenion.com
+pnpm smoke:protocol-404 https://stenion.vercel.app
 ```
 
 The smoke test calls `/api/v1/protocol/:id` with a known-bad id and expects status `404` with
 `{ "error": "Protocol not found", "id": "<id>" }`. It is a manual production check, not part of CI,
-because it intentionally hits the deployed dashboard URL.
+because it intentionally hits the deployed dashboard URL. Pass any deployed base URL — a preview
+deployment works as well as production — or set `STENION_SMOKE_BASE_URL` instead of the argument.
+
+Point it at a deployment, not `next dev`: in dev mode that route answers `200` rather than `404`,
+which is Next.js behaviour we document rather than fight.
 
 Locally you run scoring cycles by hand (step 4). In production nothing in this repo schedules them:
 `POST /api/cron/run-indexer` runs exactly one cycle per request, and an external cron-job.org job
