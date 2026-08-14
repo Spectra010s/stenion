@@ -1,18 +1,21 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, Boxes, Search } from 'lucide-react';
+import { ActivitySquare, ArrowLeft, Boxes, Search } from 'lucide-react';
 import { notesFor, type ProtocolNote } from '../../lib/protocol-notes';
 import {
   FACTOR_ORDER,
   getProtocolDetail,
   type HistoryEntry,
   type ProtocolDetail,
+  type RiskFactorKey,
+  type RiskFactorMap,
 } from '../../lib/api';
 import { formatTimestamp } from '../../lib/format';
 import { ScoreRing } from '../../../components/score-ring';
 import { StatusPill } from '../../../components/status-pill';
 import { FactorCard } from '../../../components/factor-bar';
 import { Reveal, RevealGroup, RevealItem } from '../../../components/reveal';
+import { ScoreHistoryChart } from '../../../components/score-history-chart';
 
 export const dynamic = 'force-dynamic';
 
@@ -70,19 +73,63 @@ export default async function ProtocolDetailPage({ params }: { params: Promise<{
             No factor breakdown yet — this protocol has no successful score run.
           </div>
         ) : (
-          <RevealGroup className="mt-6 grid gap-3 sm:grid-cols-2" stagger={0.06}>
-            {FACTOR_ORDER.map(({ key, label }, i) => (
-              <RevealItem key={key}>
-                <FactorCard label={label} factor={detail.factors![key]} index={i} />
-              </RevealItem>
-            ))}
-          </RevealGroup>
+          <FactorBreakdown factors={detail.factors} />
         )}
       </section>
 
       <Findings notes={notesFor(detail.id)} name={detail.name} />
 
+      <ScoreHistory history={detail.history} />
+
       <History history={detail.history} />
+    </div>
+  );
+}
+
+/**
+ * The five factors, laid out by how much each one actually has to say.
+ *
+ * A factor that publishes a `components` breakdown carries several times the
+ * content of one that doesn't — today `oracleSafety` is the only one, with three
+ * sub-signals and roughly six times the text of any other factor. In a uniform
+ * two-column grid that forced its row partner to stretch to match, leaving a
+ * tall empty gap beside it (and, with five cards in two columns, an orphan on
+ * the last row). Factors with a breakdown get the full width instead; the rest
+ * fill an even grid.
+ *
+ * This is a presentation choice, not a ranking one — the registry still ranks
+ * purely on `safetyScore`, and giving a factor more room says nothing about its
+ * value. It's keyed off having a breakdown rather than hardcoding `oracleSafety`
+ * so a factor that gains components later is laid out correctly without a change
+ * here. Note it does reorder the display: featured factors lead, and the rest
+ * follow in FACTOR_ORDER.
+ */
+function FactorBreakdown({ factors }: { factors: RiskFactorMap }) {
+  const hasBreakdown = (key: RiskFactorKey) => (factors[key]?.components?.length ?? 0) > 0;
+  const featured = FACTOR_ORDER.filter((f) => hasBreakdown(f.key));
+  const compact = FACTOR_ORDER.filter((f) => !hasBreakdown(f.key));
+
+  return (
+    <div className="mt-6 space-y-3">
+      {featured.length > 0 && (
+        <RevealGroup className="space-y-3" stagger={0.06}>
+          {featured.map(({ key, label }, i) => (
+            <RevealItem key={key}>
+              <FactorCard label={label} factor={factors[key]} index={i} featured />
+            </RevealItem>
+          ))}
+        </RevealGroup>
+      )}
+
+      {compact.length > 0 && (
+        <RevealGroup className="grid gap-3 sm:grid-cols-2" stagger={0.06}>
+          {compact.map(({ key, label }, i) => (
+            <RevealItem key={key} className="h-full">
+              <FactorCard label={label} factor={factors[key]} index={featured.length + i} />
+            </RevealItem>
+          ))}
+        </RevealGroup>
+      )}
     </div>
   );
 }
@@ -168,6 +215,32 @@ function Hero({ detail }: { detail: ProtocolDetail }) {
         </div>
       </div>
     </Reveal>
+  );
+}
+
+/**
+ * The score over time — the visible form of the "continuous, not static" pitch.
+ * The chart is the reading; the run list below it is the receipts.
+ */
+function ScoreHistory({ history }: { history: HistoryEntry[] }) {
+  return (
+    <section className="mt-14">
+      <Reveal>
+        <div className="flex items-center gap-2">
+          <ActivitySquare className="h-4 w-4 text-accent" />
+          <h2 className="font-display text-xl font-semibold text-ink">Score history</h2>
+        </div>
+        <p className="mt-1 text-sm text-muted">
+          Every indexer run, on a fixed 0–100 axis and a real time axis. The line breaks wherever
+          the score is unknown — a failed run, an indexing gap, or a methodology change — rather
+          than drawing through it.
+        </p>
+      </Reveal>
+
+      <Reveal delay={0.05} className="mt-5">
+        <ScoreHistoryChart history={history} />
+      </Reveal>
+    </section>
   );
 }
 

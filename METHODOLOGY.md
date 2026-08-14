@@ -20,6 +20,74 @@ If the code and this document ever disagree, that is a bug — open an issue (se
 
 ---
 
+## Current version
+
+**Methodology v2**, effective **2026-08-14 11:25 UTC**. Everything in this document describes v2
+unless a section says otherwise.
+
+**The boundary in stored data is exact.** The indexer stamps
+`risk_scores.methodology_version` at write time, and the cutover happened between two indexer
+cycles, so there is no overlap and no ambiguous row:
+
+|                               |                           |
+| ----------------------------- | ------------------------- |
+| Last run scored under **v1**  | `2026-08-14 11:20:05 UTC` |
+| First run scored under **v2** | `2026-08-14 11:25:02 UTC` |
+
+Every row with `run_at` at or after the v2 timestamp carries `methodology_version = 2`; every
+earlier row carries `1`. To check which rulebook produced any stored score, read that column —
+don't infer it from the date. It is also returned on every history point and on the protocol
+detail from `GET /api/v1/protocol/:id`.
+
+### What changed in v2
+
+Both changes are to `oracleSafety` (§2). No other factor, and no weight, was touched.
+
+1. **The price-deviation bound is now scored, alongside freshness.** `oracleSafety` is
+   `min(priceFreshness, deviationBound)` — the binding constraint of the two. `deviationBound`
+   reads whether the pool's own price path bounds how far a single update can move the price
+   **and whether that bound is actually armed** (for K2, a configured bound with no stored
+   baseline is inert, so the baseline is checked too). Under v1 this signal did not exist.
+2. **Freshness is anchored to the protocol's own parameters, not to fixed constants.**
+   `priceFreshness` now grades against each oracle's own publish/refresh resolution and its own
+   declared maximum acceptable age, with a single capped ceiling
+   (`STALE_CEILING_SECONDS = 3600`) so a protocol cannot score better merely by tolerating
+   staler prices. Under v1 the thresholds were Stenion constants.
+
+### Why it changed
+
+**v1 scored price age and nothing else, so a fresh but manipulated price scored 100.** That is
+precisely the configuration behind the February 2026 YieldBlox/Blend incident: the manipulated
+price was perfectly current, and the deviation check that would have rejected it was disabled
+(`max_dev: 0`). A factor that would have given the exploited pool full marks on the axis that
+actually failed is not a weak signal — it is a misleading one. v2 separates the two pools on
+that axis; the worked comparison is in
+[§2, "What this factor would have said on 2026-02-22"](#what-this-factor-would-have-said-on-2026-02-22),
+including its honest limits.
+
+### Scores across the boundary are not comparable
+
+A v1 score and a v2 score are different measurements and must not be read as a trend. **This
+discontinuity is marked, never smoothed over:** the score-history chart on each protocol page
+breaks the line at the version change rather than drawing through it, and the run list labels
+it. History is **not backfilled, and cannot be** — `risk_scores` stores only outputs (the score
+and the factor map), never the raw on-chain inputs a run was computed from, so no one, including
+us, can recompute an old row under new rules. See
+[Methodology versions](#methodology-versions).
+
+### What bumps the version, going forward
+
+**Bump when a change alters what a number means** — a factor starting or stopping measuring
+something (v2's deviation bound), a threshold's anchor changing (v2 re-anchoring freshness to
+each protocol's own parameters), a re-weighting, or any formula change that moves scores for
+unchanged on-chain state. **Don't bump** for a fix that makes the implementation match the rule
+already documented here (the stored scores were wrong, not scored under a different rulebook —
+say so in the changelog instead), for adding a protocol or an adapter, or for wording,
+disclosure, and presentation changes. The test is simple: if comparing an old score to a new one
+would mislead, bump; if the old score was just incorrect under this same rulebook, don't.
+
+---
+
 ## Ground rules (non-negotiable)
 
 1. **The same formula applies to every protocol, with no exceptions.** A factor's formula
@@ -65,12 +133,16 @@ not support (see §2c). A null component is never missing data.
 Every scored run is stamped with the rulebook version that produced it
 (`risk_scores.methodology_version`, from `METHODOLOGY_VERSION` in
 [`core/src/types.ts`](core/src/types.ts)), and it is surfaced on the API's protocol detail
-and on each history point.
+and on each history point. The changelog:
 
-| Version | Change                                                                                                                                                       |
-| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1       | Initial five-factor model.                                                                                                                                   |
-| 2       | `oracleSafety` extended from price age alone to age **and** manipulation resistance; freshness re-anchored to each oracle's own resolution and max-age (§2). |
+| Version | Effective (UTC)    | Change                                                                                                                                                       |
+| ------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1       | initial            | Initial five-factor model. `oracleSafety` scored price age only.                                                                                             |
+| **2**   | `2026-08-14 11:25` | `oracleSafety` extended from price age alone to age **and** manipulation resistance; freshness re-anchored to each oracle's own resolution and max-age (§2). |
+
+The current version, the exact v1/v2 boundary in stored data, why it changed, and what does and
+doesn't warrant a bump are all at the top of this document — see
+[Current version](#current-version).
 
 **History is not backfilled across a version bump, and cannot be.** `risk_scores` stores
 only outputs — the score and the factor map — never the raw on-chain inputs a run was
