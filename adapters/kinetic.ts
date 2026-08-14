@@ -38,10 +38,18 @@ import {
 //       configuration { data_low, data_high }, ... }
 //   - router.is_paused() -> bool
 //   - aToken/debtToken.total_supply() -> i128  (underlying units, index applied)
-//   - price_oracle.get_asset_price_data(Asset::Stellar(addr)) -> PriceData
+//   - price_oracle.get_asset_prices_vec_fresh(Vec<Asset>) -> Vec<PriceData>
 //       { price: u128 (PRICE_PRECISION = 14 dp), timestamp: u64 }
 // The oracle address and admin address are read live from the router's instance
 // storage (keys "ORACLE" / "PADMIN"), not hardcoded — trustless.
+//
+// Why `get_asset_prices_vec_fresh` and not `get_asset_price_data`: the deployed
+// kinetic_router does not call `get_asset_price_data` at all. Scanning the live
+// router's wasm for the oracle method symbols it references shows
+// `get_asset_prices_vec_fresh` present and `get_asset_price_data` absent, so the
+// latter is a code path K2 never prices off. We read the method the protocol
+// actually uses, so `oracleSafety` measures the prices the pool's own risk logic
+// sees rather than a sibling method that merely happens to agree today.
 // ---------------------------------------------------------------------------
 
 const NETWORK_PASSPHRASE = Networks.PUBLIC;
@@ -205,32 +213,62 @@ function stellarAssetArg(asset: string): xdr.ScVal {
   return xdr.ScVal.scvVec([xdr.ScVal.scvSymbol('Stellar'), new Address(asset).toScVal()]);
 }
 
-async function readOraclePrice(
-  server: rpc.Server,
-  oracleId: string,
-  asset: string,
-): Promise<KineticReserveRaw['price']> {
-  // get_asset_price_data returns Result<PriceData, OracleError>; a stale price
-  // trips the in-contract PriceTooOld check and an unconfigured asset also
-  // errors. Either way the simulation fails — we treat that as "no usable
-  // price" (null), which oracleSafety scores as maximally unsafe, rather than
-  // aborting the whole reserve read.
-  let native: PriceDataNative | null;
-  try {
-    native = (await readContract(
-      server,
-      oracleId,
-      'get_asset_price_data',
-      stellarAssetArg(asset),
-    )) as PriceDataNative | null;
-  } catch {
-    return null;
-  }
+function toPrice(native: PriceDataNative | null | undefined): KineticReserveRaw['price'] {
   if (!native || native.price === undefined) return null;
   return {
     value: BigInt(native.price),
     timestamp: Number(native.timestamp),
   };
+}
+
+/**
+ * Price every reserve through the oracle method the router itself calls.
+ *
+ * `get_asset_prices_vec_fresh` returns Result<Vec<PriceData>, OracleError> for
+ * the whole batch, so one unpriceable asset fails the entire call (a stale price
+ * trips the in-contract PriceTooOld check; an unconfigured asset errors too). We
+ * don't want a single bad reserve to cost us the protocol's whole score, so on a
+ * batch failure we re-read each asset as a one-element batch — same method, same
+ * code path — to isolate which reserves have no usable price. Those become null,
+ * which oracleSafety scores as maximally unsafe, rather than aborting the run.
+ */
+async function readOraclePrices(
+  server: rpc.Server,
+  oracleId: string,
+  assets: string[],
+): Promise<KineticReserveRaw['price'][]> {
+  const batchArg = xdr.ScVal.scvVec(assets.map(stellarAssetArg));
+  try {
+    const natives = (await readContract(
+      server,
+      oracleId,
+      'get_asset_prices_vec_fresh',
+      batchArg,
+    )) as (PriceDataNative | null)[];
+    if (Array.isArray(natives) && natives.length === assets.length) {
+      return natives.map(toPrice);
+    }
+    // Length mismatch means we can't align prices to reserves; fall through to
+    // the per-asset path rather than risk mispricing a reserve.
+  } catch {
+    // fall through
+  }
+
+  const out: KineticReserveRaw['price'][] = [];
+  for (const asset of assets) {
+    try {
+      const natives = (await readContract(
+        server,
+        oracleId,
+        'get_asset_prices_vec_fresh',
+        xdr.ScVal.scvVec([stellarAssetArg(asset)]),
+      )) as (PriceDataNative | null)[];
+      out.push(Array.isArray(natives) ? toPrice(natives[0]) : null);
+    } catch {
+      out.push(null);
+    }
+  }
+  return out;
 }
 
 async function fetchAdmin(horizonUrl: string, address: string): Promise<KineticAdminRaw> {
@@ -360,7 +398,10 @@ export class KineticAdapter implements Adapter<KineticRawData> {
       throw new Error(`Kinetic: router ${this.routerId} returned an empty reserve list`);
     }
 
-    const reserves: KineticReserveRaw[] = [];
+    // Balances first, then one batched oracle read for every reserve at once —
+    // the batch is the shape the router uses, and it keeps all prices on the
+    // same oracle invocation rather than N independently-cached ones.
+    const balances: Omit<KineticReserveRaw, 'price'>[] = [];
     for (const asset of reserveList) {
       const rd = (await readContract(
         server,
@@ -377,9 +418,11 @@ export class KineticAdapter implements Adapter<KineticRawData> {
       const borrowedRaw = BigInt(
         (await readContract(server, rd.debt_token_address, 'total_supply')) as number | bigint,
       );
-      const price = await readOraclePrice(server, oracleId, asset);
-      reserves.push({ asset, decimals, suppliedRaw, borrowedRaw, price });
+      balances.push({ asset, decimals, suppliedRaw, borrowedRaw });
     }
+
+    const prices = await readOraclePrices(server, oracleId, reserveList);
+    const reserves: KineticReserveRaw[] = balances.map((b, i) => ({ ...b, price: prices[i] }));
 
     const admin = await fetchAdmin(this.horizonUrl, adminAddress);
 
