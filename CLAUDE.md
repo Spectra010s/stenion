@@ -28,7 +28,16 @@ These override any default behavior and are enforced in code and review:
 - **No fabricated numbers.** When real data isn't available for a factor, use a clearly-flagged
   neutral baseline (e.g. `adminKeySafety`'s contract-admin `60`) — never an invented value.
 - **Code and `METHODOLOGY.md` are not allowed to drift.** Any change to a formula/threshold/weight
-  changes both together, at the same review bar.
+  changes both together, at the same review bar. Shared rulebook logic that two adapters would
+  otherwise duplicate lives in [`core/src/scoring.ts`](core/src/scoring.ts), so it can't drift
+  between them.
+- **A scoring change that makes old scores non-comparable bumps `METHODOLOGY_VERSION`**
+  (`core/src/types.ts`), stamped onto every run by the indexer. History is never backfilled —
+  `risk_scores` stores only outputs, not the raw inputs — so the discontinuity is labeled, not
+  hidden.
+- **Findings are not scores.** Verifiable observations we can't or won't grade go in the protocol
+  page's Findings section (`dashboard/app/lib/protocol-notes.ts`), never into a factor. Nothing
+  there is read by any scoring path.
 
 ## Score conventions & taxonomy
 
@@ -58,6 +67,10 @@ These override any default behavior and are enforced in code and review:
   so a heterogeneous adapter list shares one typed run loop. `core/src/adapter.ts` carries
   `ADAPTER_INTERFACE_VERSION` — bump it for future breaking interface changes rather than rewriting
   every adapter at once.
+- **Tests are `node --test`, zero dependencies.** `*.test.ts` files run on Node's built-in runner
+  via native type stripping (`pnpm test`); test files import with an explicit `.ts` extension, app
+  code doesn't. Test pure logic whose important cases live data can't reach — not for coverage.
+  Full rationale in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 - **No new dependencies without flagging.** This is solo and pre-funding, on free tiers. If a change
   needs a package, call it out explicitly with the justification — don't add it quietly. (The
   dashboard's UI stack — Tailwind v4, framer-motion, etc. — is a deliberate, already-decided
@@ -68,9 +81,9 @@ These override any default behavior and are enforced in code and review:
 ## Deploy architecture (summary — full detail in `ARCHITECTURE.md`)
 
 One Vercel project = the `dashboard`. The API lives as Next.js Route Handlers
-(`/api/v1/protocols`, `/api/v1/protocol/[id]` — versioned; unversioned paths remain as
-transitional aliases, and the versioning policy lives in `ARCHITECTURE.md`); the dashboard's own
-pages read `@stenion/db`'s `Store`
+(`/api/v1/protocols`, `/api/v1/protocol/[id]` — versioned; there are **no** unversioned paths, the
+former transitional aliases were removed and now 404, and the versioning policy lives in
+`ARCHITECTURE.md`); the dashboard's own pages read `@stenion/db`'s `Store`
 in-process (no HTTP hop). The indexer is triggered by a secret-gated cron route
 (`POST /api/cron/run-indexer`), which an external cron-job.org job POSTs to every 5 minutes with
 `Authorization: Bearer <CRON_SECRET>`. That schedule lives in the cron-job.org dashboard, **not in
@@ -84,9 +97,14 @@ kept but not deployed. Env vars: `DATABASE_URL` (Neon pooled), `STENION_RPC_URL`
 
 ## Open questions
 
-The unresolved taxonomy questions (oracle _manipulation_ vs staleness; scoring pause/frozen-pool
-state) are tracked as "Methodology v2 candidates" in [`ROADMAP.md`](ROADMAP.md). Both are breaking
-taxonomy changes, so they're flagged, not resolved ad hoc.
+Oracle _manipulation_ vs staleness is **resolved and shipped** — `oracleSafety` now scores both, as
+methodology v2 (effective 2026-08-14 11:25 UTC; see [`METHODOLOGY.md`](METHODOLOGY.md) §2 and its
+"Current version" section). It was done by extending an existing factor rather than adding a sixth,
+so the five-factor taxonomy in `core/src/types.ts` is unchanged.
+
+Still open, and tracked in [`ROADMAP.md`](ROADMAP.md): scoring pause/frozen-pool state, and
+market-depth-aware oracle scoring. Both are breaking taxonomy changes, so they're flagged, not
+resolved ad hoc.
 
 ## Working style
 

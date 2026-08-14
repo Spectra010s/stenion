@@ -48,8 +48,21 @@ loading, and the persisted `RunRecord` type. Two tables:
   indexer startup from adapter metadata.
 - `risk_scores` — append-only history. `safety_score` is promoted to its own `numeric` column
   (it's what the registry ranks on); the five factors live in one `jsonb` column (displayed, not
-  ranked, and growing the taxonomy then needs no migration). A DB-level CHECK enforces the
-  `ok`/`failed` discriminated union.
+  ranked, and growing the taxonomy then needs no migration). `methodology_version` records which
+  rulebook produced the score — see below. A DB-level CHECK enforces the `ok`/`failed`
+  discriminated union.
+
+**Methodology versioning.** The rulebook is currently at **v2**, effective 2026-08-14 11:25 UTC —
+what changed, the exact v1/v2 boundary in stored rows, and what does and doesn't warrant a bump
+are all in [`METHODOLOGY.md`](METHODOLOGY.md#current-version). Mechanically: a scoring change that
+makes old scores non-comparable bumps
+`METHODOLOGY_VERSION` in `@stenion/core`; the indexer stamps it onto every run. History is
+**never backfilled** — `risk_scores` keeps only outputs (score + factor map), never the raw
+on-chain inputs, so an old row genuinely cannot be recomputed under new rules. The version is
+surfaced on the protocol detail and on each history point so the dashboard marks the break
+rather than rendering an unexplained step change. Migrations that add such a column must stay
+writable by the _currently deployed_ indexer: `main` keeps running the old code until it's
+promoted, and both share one Neon database.
 
 Migrations are raw `.sql` files plus a ~40-line runner (`db/src/migrate.ts`) — no ORM.
 
@@ -66,6 +79,16 @@ three things in one Vercel project:
 1. The public site (homepage, registry, on-site methodology, about, per-protocol detail pages).
    Data pages are async Server Components that read `@stenion/db`'s `Store` **in-process** — no
    HTTP hop.
+
+   The protocol page's **score-history chart** is a client component drawing hand-rolled SVG (no
+   charting library) over the `history` array the detail response already carries — it adds no
+   endpoint and no query. All of its judgment about what counts as a discontinuity lives in the
+   pure, framework-free `app/lib/score-series.ts` so it can be tested against fixtures; the
+   component only draws what that returns. The rule it enforces is that a break in the line means
+   _the score is unknown here_ — a failed run, an indexing gap wider than 3× the measured cadence,
+   or a methodology-version change. None of the three is ever drawn through, and a failed run is
+   never rendered as a zero.
+
 2. The public API, as Route Handlers: `GET /api/v1/protocols`, `GET /api/v1/protocol/:id`.
 3. A secret-gated cron-trigger route (`POST /api/cron/run-indexer`) that runs one indexer cycle.
 
@@ -143,6 +166,13 @@ output. `next.config.mjs` marks `pg` and `@stellar/stellar-sdk` as `serverExtern
 as runtime requires, not webpack-bundled) and pins `outputFileTracingRoot` to the repo root so
 workspace-dep tracing is correct. On Vercel: Root Directory = `dashboard`, Build Command =
 `pnpm run build`.
+
+**Tests:** `pnpm test` at the root, fanning out to whichever packages define one. There is **no
+test framework dependency** — tests are `*.test.ts` files run by Node's built-in test runner
+(`node --test`) against Node 24's native TypeScript stripping. Coverage is deliberately narrow:
+pure logic whose important cases live data can't reach. The score-history series builder is the
+current example — as of 2026-08-14 `risk_scores` held 527 rows and not one failed run, so the
+failed-run path had to be proven against fixtures rather than by looking at the page.
 
 **Environment variables** (all on the one Vercel project, Production + Preview): `DATABASE_URL`
 (Neon pooled), `STENION_RPC_URL`, `STENION_HORIZON_URL`, `CRON_SECRET`. Locally, every package

@@ -1,8 +1,9 @@
 'use client';
 
 import { motion, useReducedMotion } from 'framer-motion';
+import { cn } from '../app/lib/cn';
 import { bandColor, bandTextClass, scoreBand } from '../app/lib/format';
-import type { RiskFactor } from '../app/lib/contract';
+import type { RiskFactor, RiskFactorComponent } from '../app/lib/contract';
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 
@@ -10,21 +11,28 @@ const EASE = [0.16, 1, 0.3, 1] as const;
  * One factor row on the detail page: name + weight, the value, the animated
  * fill bar (grades against the 0–100 safety scale), and — the actual product —
  * the real `detail` string explaining why the number is what it is.
+ *
+ * `featured` is for a factor that publishes a `components` breakdown. Those
+ * carry several times the content of a bare factor, so the detail page gives
+ * them the full page width and lays their sub-signals out side by side rather
+ * than as one tall stack. See FactorBreakdown in the protocol page.
  */
 export function FactorCard({
   label,
   factor,
   index = 0,
+  featured = false,
 }: {
   label: string;
   factor: RiskFactor | null;
   index?: number;
+  featured?: boolean;
 }) {
   const reduce = useReducedMotion();
 
   if (factor === null) {
     return (
-      <div className="surface-lit rounded-xl border border-line-soft p-5">
+      <div className="surface-lit h-full rounded-xl border border-line-soft p-5">
         <div className="flex items-baseline justify-between gap-4">
           <span className="font-medium text-ink">{label}</span>
           <span className="tnum text-sm text-faint">N/A</span>
@@ -38,7 +46,7 @@ export function FactorCard({
   const pct = Math.max(0, Math.min(100, factor.value));
 
   return (
-    <div className="surface-lit rounded-xl border border-line p-5 transition-colors hover:border-line/80">
+    <div className="surface-lit h-full rounded-xl border border-line p-5 transition-colors hover:border-line/80">
       <div className="flex items-baseline justify-between gap-4">
         <span className="font-medium text-ink">
           {label}
@@ -61,6 +69,84 @@ export function FactorCard({
       </div>
 
       <p className="mt-3 text-sm leading-relaxed text-muted">{factor.detail}</p>
+
+      {factor.components && factor.components.length > 0 && (
+        <FactorComponents components={factor.components} featured={featured} />
+      )}
     </div>
+  );
+}
+
+/**
+ * A factor's sub-signals, split the way METHODOLOGY.md §2c splits them: the
+ * scored components the value was computed from, then the disclosures
+ * (`value: null`) that are published but deliberately not graded. Rendering
+ * them as one flat list made a disclosure look like a component that had simply
+ * failed to produce a number, which is the opposite of what a null means here.
+ */
+function FactorComponents({
+  components,
+  featured,
+}: {
+  components: RiskFactorComponent[];
+  featured: boolean;
+}) {
+  const scored = components.filter((c) => c.value !== null);
+  const disclosures = components.filter((c) => c.value === null);
+
+  return (
+    <div className="mt-4 border-t border-line-soft pt-3.5">
+      {scored.length > 0 && (
+        <ul
+          className={cn(
+            'space-y-2.5',
+            // Side by side only when featured (full page width) and there's more
+            // than one — two short sub-signals in a narrow card would wrap badly.
+            featured && scored.length > 1 && 'grid gap-x-8 gap-y-3 space-y-0 sm:grid-cols-2',
+          )}
+        >
+          {scored.map((c) => (
+            <ComponentRow key={c.id} component={c} />
+          ))}
+        </ul>
+      )}
+
+      {disclosures.length > 0 && (
+        <ul
+          className={cn(
+            'space-y-2.5',
+            scored.length > 0 && 'mt-3.5 border-t border-line-soft pt-3.5',
+          )}
+        >
+          {disclosures.map((c) => (
+            <ComponentRow key={c.id} component={c} />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function ComponentRow({ component: c }: { component: RiskFactorComponent }) {
+  return (
+    <li>
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-xs font-medium text-muted">{c.label}</span>
+        {c.value === null ? (
+          // A null component is a deliberate disclosure, not missing data —
+          // say so rather than rendering a bare dash the reader must guess at.
+          <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-faint">
+            not scored
+          </span>
+        ) : (
+          <span
+            className={`tnum shrink-0 text-sm font-semibold ${bandTextClass(scoreBand(c.value))}`}
+          >
+            {c.value}
+          </span>
+        )}
+      </div>
+      <p className="mt-1 text-xs leading-relaxed text-faint">{c.detail}</p>
+    </li>
   );
 }

@@ -63,7 +63,7 @@ Every adapter must populate the same fixed five factors from `RiskFactorType`
 ```ts
 riskFactors: {
   collateralSafety,    // collateral concentration (diversification)  — weight 0.20
-  oracleSafety,        // oracle price-feed freshness                  — weight 0.25
+  oracleSafety,        // price freshness + manipulation resistance   — weight 0.25
   adminKeySafety,      // admin signer structure + activity            — weight 0.20
   liquiditySafety,     // free-liquidity depth (withdrawal cushion)    — weight 0.15
   utilizationSafety,   // headroom below the configured utilization cap — weight 0.20
@@ -189,6 +189,28 @@ mainnet first; it's promoted to `main` deliberately, not per-PR. GitHub defaults
 > **Local hazard:** never run `next build`/`next start`/a second `next dev` against the same
 > checkout while a dev server is up — they share one `.next` and corrupt each other. Vercel builds
 > in isolation, so this is a local-only issue.
+
+## Tests
+
+```bash
+pnpm test          # from the repo root; fans out to packages that define one
+```
+
+There is **no test framework** — `*.test.ts` files are run by Node's built-in runner (`node --test`)
+on Node 24's native TypeScript stripping, so testing costs zero dependencies. Note the one wrinkle
+this imposes: a test file must import with an explicit `.ts` extension, because Node's ESM resolver
+needs it (`import { x } from './thing.ts'`). Application code keeps its extensionless imports.
+
+**What to test:** pure logic whose important cases live data can't reach. This is not a coverage
+target — most of this codebase is better verified against mainnet than against a mock. The bar is
+whether a real behaviour would otherwise ship unproven. The worked example is
+`dashboard/app/lib/score-series.ts`: the score-history chart must break its line for a failed run
+rather than plot a zero, but the production table has never recorded a failed run, so rendering the
+page proves nothing about that path. Fixtures do.
+
+If you find yourself wanting to assert against live chain data, that's a sign the logic and the I/O
+need separating first — keep the computation pure and pass it data, the way an adapter's
+`computeRiskFactors` is separate from its `fetchRawData`.
 
 ## Formatting
 

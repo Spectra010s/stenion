@@ -30,6 +30,10 @@ const components: Components = {
   h1: ({ children }) => <h1 id={slug(toText(children))}>{children}</h1>,
   h2: ({ children }) => <h2 id={slug(toText(children))}>{children}</h2>,
   h3: ({ children }) => <h3 id={slug(toText(children))}>{children}</h3>,
+  // h4 too: METHODOLOGY.md's per-factor sub-sections are h4s and are linked to
+  // from elsewhere in the doc. Without an id those anchors work on GitHub and
+  // silently dead-end on the site.
+  h4: ({ children }) => <h4 id={slug(toText(children))}>{children}</h4>,
   a: ({ href, children }) => {
     const h = href ?? '';
     if (h.startsWith('#')) return <a href={h}>{children}</a>;

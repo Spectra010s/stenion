@@ -16,6 +16,10 @@
     "allowJs": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
+    // Lets the *.test.ts files import with an explicit .ts extension, which
+    // Node's built-in test runner requires under native type stripping. Safe
+    // only because `noEmit` is set — nothing here is compiled by tsc.
+    "allowImportingTsExtensions": true,
     "incremental": true,
     "plugins": [{ "name": "next" }],
     "paths": {
