@@ -8,12 +8,14 @@ body:
         Thanks for contributing to Stenion. Before opening, please check
         [CONTRIBUTING.md](../CONTRIBUTING.md) and [METHODOLOGY.md](../METHODOLOGY.md).
 
+        Any PR that comes out of this should target the `dev` branch, not `main`.
+
   - type: textarea
     id: context
     attributes:
       label: Context
       description: What currently exists, and why this needs doing. Link to the relevant file/section.
-      placeholder: "`core/src/adapter.ts` splits scoring into three methods so `score()` is testable without RPC, but there are no tests covering it."
+      placeholder: '`core/src/adapter.ts` splits scoring into three methods so `score()` is testable without RPC, but there are no tests covering it.'
     validations:
       required: true
 

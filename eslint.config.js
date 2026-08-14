@@ -1,6 +1,7 @@
 // @ts-check
 const js = require('@eslint/js');
 const tseslint = require('typescript-eslint');
+const eslintConfigPrettier = require('eslint-config-prettier/flat');
 
 module.exports = tseslint.config(
   {
@@ -17,7 +18,9 @@ module.exports = tseslint.config(
     },
   },
   {
-    files: ['eslint.config.js'],
+    // Root tooling configs are CommonJS (no `"type": "module"` in the root
+    // package.json), unlike everything else in the workspace.
+    files: ['eslint.config.js', 'prettier.config.js'],
     languageOptions: {
       sourceType: 'commonjs',
       globals: { require: 'readonly', module: 'writable' },
@@ -26,4 +29,11 @@ module.exports = tseslint.config(
       '@typescript-eslint/no-require-imports': 'off',
     },
   },
+  // Must stay LAST — it only turns rules off. Prettier owns formatting, ESLint
+  // owns code quality, and this guarantees the two can never disagree about the
+  // same line. The overlap today is small — `js.configs.recommended` contributes
+  // exactly one conflicting rule (`no-unexpected-multiline`) and the
+  // typescript-eslint presets contribute none — but keeping this wired means the
+  // guarantee holds if either preset adds formatting rules later.
+  eslintConfigPrettier,
 );

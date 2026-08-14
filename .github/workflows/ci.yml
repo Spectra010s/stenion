@@ -18,6 +18,9 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Formatting first: it's the fastest check and the cheapest failure to fix
+      # (`pnpm format`), so don't spend a build on a PR that only needs a reformat.
+      - run: pnpm run format:check
       - run: pnpm run lint
       - run: pnpm -r build
       - run: pnpm run typecheck

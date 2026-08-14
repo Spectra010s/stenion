@@ -1,8 +1,8 @@
 # Stenion Architecture
 
 The technical shape of the system: how the code is organized, how data flows from the chain to a
-score on the dashboard, and how it's deployed. For *how a score is calculated*, see
-[`METHODOLOGY.md`](METHODOLOGY.md); for *how to add a protocol*, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+score on the dashboard, and how it's deployed. For _how a score is calculated_, see
+[`METHODOLOGY.md`](METHODOLOGY.md); for _how to add a protocol_, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Monorepo layout
 
@@ -48,8 +48,21 @@ loading, and the persisted `RunRecord` type. Two tables:
   indexer startup from adapter metadata.
 - `risk_scores` — append-only history. `safety_score` is promoted to its own `numeric` column
   (it's what the registry ranks on); the five factors live in one `jsonb` column (displayed, not
-  ranked, and growing the taxonomy then needs no migration). A DB-level CHECK enforces the
-  `ok`/`failed` discriminated union.
+  ranked, and growing the taxonomy then needs no migration). `methodology_version` records which
+  rulebook produced the score — see below. A DB-level CHECK enforces the `ok`/`failed`
+  discriminated union.
+
+**Methodology versioning.** The rulebook is currently at **v2**, effective 2026-08-14 11:25 UTC —
+what changed, the exact v1/v2 boundary in stored rows, and what does and doesn't warrant a bump
+are all in [`METHODOLOGY.md`](METHODOLOGY.md#current-version). Mechanically: a scoring change that
+makes old scores non-comparable bumps
+`METHODOLOGY_VERSION` in `@stenion/core`; the indexer stamps it onto every run. History is
+**never backfilled** — `risk_scores` keeps only outputs (score + factor map), never the raw
+on-chain inputs, so an old row genuinely cannot be recomputed under new rules. The version is
+surfaced on the protocol detail and on each history point so the dashboard marks the break
+rather than rendering an unexplained step change. Migrations that add such a column must stay
+writable by the _currently deployed_ indexer: `main` keeps running the old code until it's
+promoted, and both share one Neon database.
 
 Migrations are raw `.sql` files plus a ~40-line runner (`db/src/migrate.ts`) — no ORM.
 
@@ -62,10 +75,21 @@ behind `require.main === module` so importing it doesn't start the loop.
 
 **`@stenion/dashboard`** — a Next.js 15 (App Router) site, and the actual deployment target. It's
 three things in one Vercel project:
+
 1. The public site (homepage, registry, on-site methodology, about, per-protocol detail pages).
    Data pages are async Server Components that read `@stenion/db`'s `Store` **in-process** — no
    HTTP hop.
-2. The public API, as Route Handlers: `GET /api/protocols`, `GET /api/protocol/:id`.
+
+   The protocol page's **score-history chart** is a client component drawing hand-rolled SVG (no
+   charting library) over the `history` array the detail response already carries — it adds no
+   endpoint and no query. All of its judgment about what counts as a discontinuity lives in the
+   pure, framework-free `app/lib/score-series.ts` so it can be tested against fixtures; the
+   component only draws what that returns. The rule it enforces is that a break in the line means
+   _the score is unknown here_ — a failed run, an indexing gap wider than 3× the measured cadence,
+   or a methodology-version change. None of the three is ever drawn through, and a failed run is
+   never rendered as a zero.
+
+2. The public API, as Route Handlers: `GET /api/v1/protocols`, `GET /api/v1/protocol/:id`.
 3. A secret-gated cron-trigger route (`POST /api/cron/run-indexer`) that runs one indexer cycle.
 
 **`@stenion/api`** — a standalone `node:http` REST server. **Not deployed** — see below.
@@ -93,7 +117,7 @@ three things in one Vercel project:
           ├──────────────┐
           ▼              ▼
    Dashboard pages   API routes      dashboard reads the Store in-process;
-   (Server           (/api/*)        routes read the same Store for external
+   (Server         (/api/v1/*)       routes read the same Store for external
     Components)                       consumers (wallets, third parties)
 ```
 
@@ -102,8 +126,8 @@ The key invariant: **the dashboard's own pages and the public API routes both go
 what the site renders can't drift apart. Nothing is ever recomputed at read time — the indexer owns
 scoring; readers only shape stored rows.
 
-**Staleness model:** the displayed `safetyScore` is always the latest *ok* run (null if never
-scored); the newest run of *any* status is surfaced separately as `lastRunAt`/`lastRunStatus`. A
+**Staleness model:** the displayed `safetyScore` is always the latest _ok_ run (null if never
+scored); the newest run of _any_ status is surfaced separately as `lastRunAt`/`lastRunStatus`. A
 registry that's honest about freshness beats one with holes on a failed cycle.
 
 ## Deploy architecture
@@ -111,17 +135,30 @@ registry that's honest about freshness beats one with holes on a failed cycle.
 **One Vercel project = the `dashboard`.** The indexer and the standalone API are not deployed as
 separate services. Everything runs from the single Next.js app:
 
-- **API** → Next.js Route Handlers inside the dashboard (`app/api/protocols`,
-  `app/api/protocol/[id]`). Same `Store` methods, same JSON as the original standalone API — a
+- **API** → Next.js Route Handlers inside the dashboard (`app/api/v1/protocols`,
+  `app/api/v1/protocol/[id]`). Same `Store` methods, same JSON as the original standalone API — a
   transport change, not a rewrite. CORS (`access-control-allow-origin: *`) is set on these two
   routes only, for future browser/wallet/third-party clients reading public, payment-blind data.
+  `/api/v1/*` is the only public API surface — see "API versioning" below.
 - **Indexer** → triggered by `POST /api/cron/run-indexer`, which calls `runIndexerCycle()` once.
   The route is secret-gated (`Authorization: Bearer <CRON_SECRET>`, compared with
   `crypto.timingSafeEqual`); if `CRON_SECRET` is unset it refuses to run, so it's never open. No
   CORS on this route.
-- **Scheduling is external** — a GitHub Actions workflow `curl`s the cron route every ~5 minutes.
-  Vercel's Hobby-tier Cron is capped at once per day, too slow for live scoring; GitHub Actions is
-  free and flexible.
+- **Scheduling is external** — a [cron-job.org](https://cron-job.org) job POSTs to the cron route
+  every 5 minutes with `Authorization: Bearer <CRON_SECRET>`. The route itself is stateless about
+  cadence: it runs exactly one cycle per request, so the interval is entirely the caller's.
+
+  **The schedule is not in version control.** It lives in the cron-job.org dashboard — there is no
+  workflow file, no `vercel.json` `crons` entry, and no other scheduling config in this repo.
+  Changing the cadence, pausing indexing, or rotating the target URL is done in that service's UI,
+  not in a PR. If indexing has stopped, check there before looking for a bug in this repo.
+
+  **Why not Vercel Cron:** the Hobby tier caps scheduled functions at **once per day**, which is far
+  too slow for live scoring — 5-minute freshness is the product. Upgrading to Pro for cron alone
+  isn't justified pre-funding, so an external scheduler hits the same secret-gated route instead.
+  This is a deliberate choice, not an oversight: the route is a plain authenticated HTTP endpoint,
+  so swapping cron-job.org for Vercel Cron (or anything else) later is a scheduler change only, with
+  no code change.
 
 **Build wiring:** the dashboard's `build` script compiles the workspace deps (`core` → `db` →
 `adapters` → `indexer`) before `next build`, because those packages resolve via their `dist/`
@@ -130,9 +167,51 @@ as runtime requires, not webpack-bundled) and pins `outputFileTracingRoot` to th
 workspace-dep tracing is correct. On Vercel: Root Directory = `dashboard`, Build Command =
 `pnpm run build`.
 
+**Tests:** `pnpm test` at the root, fanning out to whichever packages define one. There is **no
+test framework dependency** — tests are `*.test.ts` files run by Node's built-in test runner
+(`node --test`) against Node 24's native TypeScript stripping. Coverage is deliberately narrow:
+pure logic whose important cases live data can't reach. The score-history series builder is the
+current example — as of 2026-08-14 `risk_scores` held 527 rows and not one failed run, so the
+failed-run path had to be proven against fixtures rather than by looking at the page.
+
 **Environment variables** (all on the one Vercel project, Production + Preview): `DATABASE_URL`
 (Neon pooled), `STENION_RPC_URL`, `STENION_HORIZON_URL`, `CRON_SECRET`. Locally, every package
 reads these from a single repo-root `.env` via a walk-up loader.
+
+### API versioning
+
+The public API is versioned in the URL. The documented, canonical paths are:
+
+| Endpoint                   | Returns                                             |
+| -------------------------- | --------------------------------------------------- |
+| `GET /api/v1/protocols`    | The leaderboard: every protocol + its latest score. |
+| `GET /api/v1/protocol/:id` | One protocol's detail, factors, and run history.    |
+
+**The policy:**
+
+- **Additive changes stay on `v1`.** A new field in the response — a sixth `*Safety` factor, an
+  extra piece of metadata — does not break a client that ignores fields it doesn't know about, so
+  it ships on `v1`. Consumers should parse defensively and tolerate unknown fields.
+- **Breaking changes get a `v2`.** Renaming a field, removing one, changing a type or the meaning
+  of an existing value, or restructuring the envelope — anything that can break a client reading
+  the documented shape — goes to a new version path, with `v1` left serving its existing contract
+  until it's deliberately retired.
+
+Note that a **methodology** change (a formula, threshold, or weight) is _not_ an API version
+change: `safetyScore` is still a 0–100 number with the same meaning, so the scores move but the
+contract doesn't. Methodology changes are versioned in [`METHODOLOGY.md`](METHODOLOGY.md), not in
+the URL. A change to the _taxonomy_ — a renamed or removed factor — is breaking, and would need a
+`v2`.
+
+**No unversioned paths.** The pre-versioning paths `/api/protocols` and `/api/protocol/:id` are
+gone — they 404. They existed briefly as transitional aliases during the `/v1` move and were
+removed once a repo-wide sweep confirmed nothing referenced them. Every public API path carries a
+version segment; there is no unversioned surface to fall back to.
+
+**The cron trigger is not versioned.** `POST /api/cron/run-indexer` is internal plumbing, not a
+public contract — it's secret-gated, has no CORS, and its only caller is our own cron-job.org
+schedule. Versioning it would imply a compatibility promise we don't make. It stays at
+`/api/cron/*`, and a `/api/v1/cron/*` path deliberately does not exist.
 
 ### Why `@stenion/api` exists but isn't deployed
 

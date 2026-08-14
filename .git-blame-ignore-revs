@@ -1,0 +1,13 @@
+# Revisions to skip when running `git blame`.
+#
+# Only bulk, mechanical, no-behaviour-change commits belong here — a commit in
+# this file becomes invisible in blame, so anything that changed real content
+# must never be added.
+#
+# Enable locally (once per clone):
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# GitHub applies this file automatically in its blame view.
+
+# Apply Prettier to the whole repo
+c107166a5e4c76fee403eb620a4859935c97a45a

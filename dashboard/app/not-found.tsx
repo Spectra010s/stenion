@@ -1,5 +1,14 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Compass } from 'lucide-react';
+
+// Without this the 404 falls back to the root layout's `default` title, which
+// reads as if the page loaded fine. Renders through the layout's '%s · Stenion'
+// template. This covers every notFound() — an unknown /protocol/:id as well as
+// an unrouted path — so it stays generic rather than protocol-specific.
+export const metadata: Metadata = {
+  title: 'Not found',
+};
 
 export default function NotFound() {
   return (
@@ -7,12 +16,8 @@ export default function NotFound() {
       <div className="grid h-14 w-14 place-items-center rounded-2xl bg-accent/10 ring-1 ring-inset ring-accent/20">
         <Compass className="h-7 w-7 text-accent" />
       </div>
-      <h1 className="mt-6 font-display text-5xl font-semibold tracking-tight text-ink">
-        404
-      </h1>
-      <p className="mt-3 text-muted">
-        That page — or protocol — isn&apos;t part of the registry.
-      </p>
+      <h1 className="mt-6 font-display text-5xl font-semibold tracking-tight text-ink">404</h1>
+      <p className="mt-3 text-muted">That page — or protocol — isn&apos;t part of the registry.</p>
       <div className="mt-8 flex gap-3">
         <Link
           href="/"

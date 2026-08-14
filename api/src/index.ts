@@ -1,16 +1,22 @@
-// Public read-only API 
+// Public read-only API
 //
 // Two endpoints, both served straight from the Postgres tables step 5 wrote
 // (via @stenion/db). Nothing is recomputed here — the indexer owns scoring on
 // its interval; this process only reads and shapes the stored rows into the
 // agreed JSON contract:
 //
-//   GET /protocols      — leaderboard: every protocol with its latest-ok
-//                         safetyScore + computedAt, ranked by score desc, plus
-//                         lastRunAt/lastRunStatus so a stale score is visible.
-//   GET /protocol/:id   — one protocol's detail: latest-ok safetyScore, the
-//                         five *Safety factors ({value,weight,detail}), staleness
-//                         fields, and recent run history (newest first).
+//   GET /v1/protocols     — leaderboard: every protocol with its latest-ok
+//                           safetyScore + computedAt, ranked by score desc, plus
+//                           lastRunAt/lastRunStatus so a stale score is visible.
+//   GET /v1/protocol/:id  — one protocol's detail: latest-ok safetyScore, the
+//                           five *Safety factors ({value,weight,detail}), staleness
+//                           fields, and recent run history (newest first).
+//
+// The paths are versioned to match what the live dashboard routes serve
+// (/api/v1/* there; this standalone server has no /api mount prefix). This
+// package is dormant — see ARCHITECTURE.md "Why @stenion/api exists but isn't
+// deployed" — but if it's ever spun back up it must not serve paths that
+// contradict the documented versioning policy.
 //
 // Deliberately minimal per step 6: no auth, no rate limiting, no pagination —
 // those are separate concerns, not built speculatively. The leaderboard ranks
@@ -75,14 +81,14 @@ async function handle(req: IncomingMessage, res: ServerResponse, store: Store): 
   // Parse the path; the host is irrelevant (a dummy base satisfies the URL API).
   const { pathname } = new URL(req.url ?? '/', 'http://localhost');
 
-  if (pathname === '/protocols') {
+  if (pathname === '/v1/protocols') {
     const protocols = await store.listProtocolsWithLatestScore();
     sendJson(res, 200, { protocols });
     return;
   }
 
-  // GET /protocol/:id — match and extract the id segment.
-  const detailMatch = /^\/protocol\/([^/]+)$/.exec(pathname);
+  // GET /v1/protocol/:id — match and extract the id segment.
+  const detailMatch = /^\/v1\/protocol\/([^/]+)$/.exec(pathname);
   if (detailMatch) {
     const id = decodeURIComponent(detailMatch[1]);
     const detail = await store.getProtocolDetail(id);

@@ -2,7 +2,7 @@
 
 **Live, on-chain risk intelligence for Stellar/Soroban DeFi.**
 
-[stenion.com](https://stenion.com) · [Methodology](METHODOLOGY.md) · [Architecture](ARCHITECTURE.md) · [Contributing](CONTRIBUTING.md) · [Roadmap](ROADMAP.md)
+[stenion.vercel.app](https://stenion.vercel.app) · [Methodology](METHODOLOGY.md) · [Architecture](ARCHITECTURE.md) · [Contributing](CONTRIBUTING.md) · [Roadmap](ROADMAP.md)
 
 ---
 
@@ -18,7 +18,8 @@ The thing Stenion measures that a TVL dashboard and a one-time audit both miss i
 moves every block**:
 
 - **Collateral concentration** — is the pool's value spread across assets, or all in one?
-- **Oracle staleness** — how old is the worst price feed the protocol is trading on?
+- **Oracle trustworthiness** — how old is the worst price feed the protocol is trading on, _and_
+  does the pool's price path bound how far a single update can move it?
 - **Admin-key control** — single hot key, or a multisig? How active is it?
 - **Liquidity depth** — how much could be withdrawn before a reserve is drained?
 - **Utilization headroom** — how close is borrowing to the protocol's own stress line?
@@ -51,6 +52,10 @@ wrong, that document tells you how to dispute it.
 `package.json`). A Postgres database — the project uses [Neon](https://neon.tech)'s free tier, but
 any Postgres works.
 
+> `pnpm test` needs a newer Node than the app itself does: the tests are `*.test.ts` files run by
+> Node's built-in runner on **native TypeScript type stripping** (Node 22.18+ / 24 — developed and
+> verified on 24), which is what keeps the suite at zero dependencies. Everything else runs on 20+.
+
 ```bash
 # 1. Install (pnpm workspaces — installs every package)
 corepack enable
@@ -81,13 +86,31 @@ pnpm --filter @stenion/dashboard dev             # http://localhost:3000
 
 The dashboard reads Postgres in-process, so once step 4 has landed at least one row you'll see
 real scores at `http://localhost:3000`. The public API is served by the dashboard at
-`/api/protocols` and `/api/protocol/:id`.
+`/api/v1/protocols` and `/api/v1/protocol/:id` — versioned, with the policy in
+[`ARCHITECTURE.md`](ARCHITECTURE.md#api-versioning).
+
+Locally you run scoring cycles by hand (step 4). In production nothing in this repo schedules them:
+`POST /api/cron/run-indexer` runs exactly one cycle per request, and an external cron-job.org job
+calls it every 5 minutes with `Authorization: Bearer <CRON_SECRET>`. **That schedule is configured
+in cron-job.org's dashboard, not in version control** — there's no workflow or `vercel.json` `crons`
+entry here to find. See [`ARCHITECTURE.md`](ARCHITECTURE.md#deploy-architecture) for why.
 
 > **Note:** the public RPC (`mainnet.sorobanrpc.com`) is shared and rate-limited — fine for trying
 > it out, but use your own endpoint for anything sustained.
 
 See [`.env.example`](.env.example) for every variable and [`ARCHITECTURE.md`](ARCHITECTURE.md) for
 what each package does and how data flows through the system.
+
+**One-time git setup.** Formatting is enforced by Prettier, and the repo was reformatted in a
+single bulk commit. Point git at the ignore list so `git blame` skips it and attributes each line
+to the commit that actually wrote it:
+
+```bash
+git config blame.ignoreRevsFile .git-blame-ignore-revs
+```
+
+(GitHub's blame view applies [`.git-blame-ignore-revs`](.git-blame-ignore-revs) automatically; this
+is only needed for local blame. Formatting workflow is in [`CONTRIBUTING.md`](CONTRIBUTING.md#formatting).)
 
 ## Contributing an adapter
 

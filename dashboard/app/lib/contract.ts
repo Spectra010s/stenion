@@ -19,25 +19,44 @@ export interface LeaderboardEntry {
   lastRunStatus: RunStatus | null;
 }
 
+/**
+ * A named sub-signal inside a factor. A numeric `value` is a scored component
+ * that fed the parent factor; `value: null` is a DISCLOSURE — a real on-chain
+ * quantity published deliberately without a score, because grading it would
+ * invent comparability the data doesn't support (METHODOLOGY.md §2c). Null is
+ * never "missing data" here.
+ */
+export interface RiskFactorComponent {
+  id: string;
+  label: string;
+  value: number | null;
+  detail: string;
+}
+
 export interface RiskFactor {
   value: number;
   weight: number;
   detail: string;
+  /** optional breakdown of the sub-signals behind `value` */
+  components?: RiskFactorComponent[];
 }
 
 // The five *Safety factors, higher = safer. A member may be null if a factor
 // genuinely doesn't apply to a protocol (render "N/A", don't drop it).
 export type RiskFactorKey =
-  | 'collateralSafety'
-  | 'oracleSafety'
-  | 'adminKeySafety'
-  | 'liquiditySafety'
-  | 'utilizationSafety';
+  'collateralSafety' | 'oracleSafety' | 'adminKeySafety' | 'liquiditySafety' | 'utilizationSafety';
 
 export type RiskFactorMap = Record<RiskFactorKey, RiskFactor | null>;
 
 export type HistoryEntry =
-  | { status: 'ok'; safetyScore: number; computedAt: string; runAt: string }
+  | {
+      status: 'ok';
+      safetyScore: number;
+      /** rulebook version this point was scored under; scores across versions aren't comparable */
+      methodologyVersion: number;
+      computedAt: string;
+      runAt: string;
+    }
   | { status: 'failed'; error: string; runAt: string };
 
 export interface ProtocolDetail {
@@ -48,6 +67,8 @@ export interface ProtocolDetail {
   safetyScore: number | null;
   computedAt: string | null;
   factors: RiskFactorMap | null;
+  /** rulebook version behind the current score (null if never scored) */
+  methodologyVersion: number | null;
   lastRunAt: string | null;
   lastRunStatus: RunStatus | null;
   history: HistoryEntry[];

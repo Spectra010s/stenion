@@ -17,6 +17,13 @@ export type RunRecord =
       status: 'ok';
       safetyScore: number;
       factors: RiskFactorMap;
+      /**
+       * The METHODOLOGY_VERSION this score was computed under. Stamped by the
+       * indexer from @stenion/core, not chosen per adapter — one rulebook
+       * applies to every protocol. Scores with different versions are not
+       * comparable; see migration 0002.
+       */
+      methodologyVersion: number;
       computedAt: string;
       runAt: string;
     }
@@ -28,7 +35,7 @@ export type RunRecord =
     };
 
 /**
- * One protocol on the leaderboard (GET /protocols). `safetyScore`/`computedAt`
+ * One protocol on the leaderboard (GET /api/v1/protocols). `safetyScore`/`computedAt`
  * come from the latest *ok* run (null if the protocol has never scored
  * successfully); `lastRunAt`/`lastRunStatus` describe the most recent run of any
  * status, so a stale score (last run failed) is visible without another call.
@@ -44,18 +51,25 @@ export interface LeaderboardEntry {
 }
 
 /**
- * One row of a protocol's recent score history (GET /protocol/:id). A
+ * One row of a protocol's recent score history (GET /api/v1/protocol/:id). A
  * discriminated union on `status` mirroring the persisted RunRecord: `ok` rows
  * carry the score + timestamps, `failed` rows carry the error. Factors are
  * deliberately omitted here (they live on the detail's top-level current score);
  * they remain in the risk_scores jsonb and can be surfaced later if needed.
  */
 export type HistoryEntry =
-  | { status: 'ok'; safetyScore: number; computedAt: string; runAt: string }
+  | {
+      status: 'ok';
+      safetyScore: number;
+      /** methodology version this point was scored under — see migration 0002 */
+      methodologyVersion: number;
+      computedAt: string;
+      runAt: string;
+    }
   | { status: 'failed'; error: string; runAt: string };
 
 /**
- * Full detail for one protocol (GET /protocol/:id). Top-level
+ * Full detail for one protocol (GET /api/v1/protocol/:id). Top-level
  * `safetyScore`/`computedAt`/`factors` describe the latest *ok* run (all null if
  * never scored); `lastRunAt`/`lastRunStatus` describe the newest run of any
  * status; `history` is the recent run rows, newest first.
@@ -68,12 +82,18 @@ export interface ProtocolDetail {
   safetyScore: number | null;
   computedAt: string | null;
   factors: RiskFactorMap | null;
+  /**
+   * Methodology version behind the current score (null if never scored). History
+   * points carry their own, so a client can see where the rules changed rather
+   * than reading a step change as a real move in risk.
+   */
+  methodologyVersion: number | null;
   lastRunAt: string | null;
   lastRunStatus: 'ok' | 'failed' | null;
   history: HistoryEntry[];
 }
 
-/** How many recent history rows GET /protocol/:id returns. */
+/** How many recent history rows GET /api/v1/protocol/:id returns. */
 export const DETAIL_HISTORY_LIMIT = 50;
 
 export interface Store {
@@ -126,13 +146,14 @@ export function createStore(pool: Pool): Store {
               null,
               record.computedAt,
               record.runAt,
+              record.methodologyVersion,
             ]
-          : [record.protocolId, 'failed', null, null, record.error, null, record.runAt];
+          : [record.protocolId, 'failed', null, null, record.error, null, record.runAt, null];
 
       await pool.query(
         `INSERT INTO risk_scores
-           (protocol_id, status, safety_score, factors, error, computed_at, run_at)
-         VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7)`,
+           (protocol_id, status, safety_score, factors, error, computed_at, run_at, methodology_version)
+         VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8)`,
         values,
       );
     },
@@ -194,15 +215,16 @@ export function createStore(pool: Pool): Store {
         safety_score: string | null;
         computed_at: Date | null;
         factors: RiskFactorMap | null;
+        methodology_version: number | null;
         last_run_at: Date | null;
         last_run_status: 'ok' | 'failed' | null;
       }>(
         `SELECT p.id, p.name, p.chain, p.adapter,
-                ok.safety_score, ok.computed_at, ok.factors,
+                ok.safety_score, ok.computed_at, ok.factors, ok.methodology_version,
                 latest.run_at AS last_run_at, latest.status AS last_run_status
            FROM protocols p
            LEFT JOIN LATERAL (
-             SELECT safety_score, computed_at, factors
+             SELECT safety_score, computed_at, factors, methodology_version
                FROM risk_scores
               WHERE protocol_id = p.id AND status = 'ok'
               ORDER BY run_at DESC
@@ -228,8 +250,9 @@ export function createStore(pool: Pool): Store {
         error: string | null;
         computed_at: Date | null;
         run_at: Date;
+        methodology_version: number | null;
       }>(
-        `SELECT status, safety_score, error, computed_at, run_at
+        `SELECT status, safety_score, error, computed_at, run_at, methodology_version
            FROM risk_scores
           WHERE protocol_id = $1
           ORDER BY run_at DESC
@@ -243,6 +266,8 @@ export function createStore(pool: Pool): Store {
               status: 'ok',
               // non-null on ok rows by the risk_scores_shape CHECK
               safetyScore: toNumber(h.safety_score) as number,
+              // non-null on ok rows by risk_scores_methodology_version_shape
+              methodologyVersion: h.methodology_version as number,
               computedAt: toIso(h.computed_at) as string,
               runAt: h.run_at.toISOString(),
             }
@@ -261,6 +286,7 @@ export function createStore(pool: Pool): Store {
         safetyScore: toNumber(row.safety_score),
         computedAt: toIso(row.computed_at),
         factors: row.factors,
+        methodologyVersion: row.methodology_version,
         lastRunAt: toIso(row.last_run_at),
         lastRunStatus: row.last_run_status,
         history,

@@ -1,4 +1,13 @@
-import { Skeleton } from '../components/skeleton';
+// Homepage loading skeleton. It lives in the (home) route group — which does not
+// affect the URL, this is still `/` — rather than at app/loading.tsx, because a
+// root loading.tsx wraps EVERY route in a Suspense boundary. That boundary made
+// /protocol/<unknown-id> return a soft-404 (correct not-found UI, but HTTP 200,
+// because the shell flushes before the page can call notFound()). Scoping it to
+// the group keeps this skeleton for the homepage without imposing a boundary on
+// the protocol detail route. It was also homepage-shaped anyway, so /about and
+// /methodology were showing a hero-and-cards skeleton that never matched them.
+
+import { Skeleton } from '../../components/skeleton';
 
 export default function HomeLoading() {
   return (

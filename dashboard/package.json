@@ -8,11 +8,13 @@
     "build:next": "next build",
     "start": "next start",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test \"app/**/*.test.ts\"",
     "lint": "next lint"
   },
   "dependencies": {
     "@stenion/db": "workspace:*",
     "@stenion/indexer": "workspace:*",
+    "@vercel/analytics": "^2.0.1",
     "clsx": "^2.1.1",
     "framer-motion": "^11.18.0",
     "geist": "^1.3.1",
