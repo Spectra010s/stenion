@@ -17,6 +17,7 @@ import {
   RiskFactorMap,
   RiskFactorType,
   RiskScoreResult,
+  freshnessWindow,
 } from '@stenion/core';
 
 // ---------------------------------------------------------------------------
@@ -71,6 +72,45 @@ export interface BlendReserveRaw {
     value: bigint; // fixed point, `oracleDecimals` places
     timestamp: number; // unix seconds
   } | null;
+  /**
+   * This asset's entry in the oracle aggregator's own `asset_configs()`, or
+   * null if the aggregator has no entry for it (in which case it cannot be
+   * priced at all — `price` will also be null).
+   */
+  priceConfig: {
+    /** the upstream asset the aggregator maps this reserve to, e.g. "Other:XLM" */
+    upstreamAsset: string;
+    /** index into BlendRawData.oracleConfig.oracles */
+    oracleIndex: number;
+    /**
+     * Max single-step price deviation the aggregator will accept for this
+     * asset, as a whole percent. 0 (or >= 100) disables the check entirely —
+     * see `oracleSafety` and METHODOLOGY.md §2.
+     */
+    maxDev: number;
+  } | null;
+}
+
+/** The oracle aggregator's own published configuration (all public reads). */
+export interface BlendOracleConfigRaw {
+  /** `max_age()` — seconds; a price older than this is refused outright */
+  maxAge: number;
+  /**
+   * Assets the aggregator prices as the unit of account: its `Base` plus any
+   * `BaseAssets`. `lastprice` short-circuits these to exactly 1.0 at the current
+   * ledger time without consulting any upstream feed (see the contract's
+   * `lastprice`), so they have no oracle price to grade — `oracleSafety`
+   * excludes them rather than scoring them as unbounded.
+   */
+  baseAssets: string[];
+  /** `oracles()` — the upstream feeds the aggregator reads */
+  oracles: {
+    index: number;
+    address: string;
+    /** upstream publish interval in seconds */
+    resolution: number;
+    decimals: number;
+  }[];
 }
 
 export interface BlendAdminRaw {
@@ -95,6 +135,7 @@ export interface BlendRawData {
   /** pool status: 0 active, higher = increasingly frozen (see Blend docs) */
   status: number;
   admin: BlendAdminRaw;
+  oracleConfig: BlendOracleConfigRaw;
   reserves: BlendReserveRaw[];
   fetchedAt: number; // unix seconds, from chain-adjacent clock
 }
@@ -123,6 +164,19 @@ interface PoolConfigNative {
 interface PriceDataNative {
   price: number | bigint;
   timestamp: number | bigint;
+}
+/** oracle-aggregator `OracleConfig` (its struct, not the pool's PoolConfig). */
+interface OracleConfigNative {
+  address: string;
+  index: number | bigint;
+  resolution: number | bigint;
+  decimals: number | bigint;
+}
+/** oracle-aggregator `AssetConfig`; `asset` decodes to ['Stellar'|'Other', value]. */
+interface AssetConfigNative {
+  asset: unknown;
+  oracle_index: number | bigint;
+  max_dev: number | bigint;
 }
 interface HorizonAccount {
   thresholds?: { high_threshold?: number };
@@ -177,7 +231,7 @@ async function readReserve(
   server: rpc.Server,
   poolId: string,
   asset: string,
-): Promise<Omit<BlendReserveRaw, 'price'>> {
+): Promise<Omit<BlendReserveRaw, 'price' | 'priceConfig'>> {
   const configKey = persistentContractDataKey(
     poolId,
     xdr.ScVal.scvVec([xdr.ScVal.scvSymbol('ResConfig'), new Address(asset).toScVal()]),
@@ -217,6 +271,32 @@ async function readReserve(
       dSupply: BigInt(data.d_supply),
     },
   };
+}
+
+/** Simulate a read-only contract call and return the raw ScVal result. */
+async function readContractScv(
+  server: rpc.Server,
+  contractId: string,
+  method: string,
+  ...args: xdr.ScVal[]
+): Promise<xdr.ScVal> {
+  // Simulation is side-effect-free and unsigned; a throwaway source account is fine.
+  const source = new Account(Keypair.random().publicKey(), '0');
+  const tx = new TransactionBuilder(source, {
+    fee: BASE_FEE,
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
+    .addOperation(new Contract(contractId).call(method, ...args))
+    .setTimeout(30)
+    .build();
+
+  const sim = await server.simulateTransaction(tx);
+  if (rpc.Api.isSimulationError(sim)) {
+    throw new Error(`Blend: simulation of ${method} on ${contractId} failed: ${sim.error}`);
+  }
+  const retval = sim.result?.retval;
+  if (!retval) throw new Error(`Blend: ${method} on ${contractId} returned no value`);
+  return retval;
 }
 
 /** Simulate a read-only contract call and return the decoded native result. */
@@ -267,6 +347,82 @@ async function readOraclePrice(
     value: BigInt(native.price),
     timestamp: Number(native.timestamp),
   };
+}
+
+/**
+ * Read the oracle aggregator's own published config: the upstream feeds it
+ * reads (`oracles()`) and the age beyond which it refuses a price (`max_age()`).
+ *
+ * These are the anchors `oracleSafety` grades freshness against — the
+ * aggregator's numbers, not Stenion constants.
+ */
+async function readOracleConfig(
+  server: rpc.Server,
+  oracleId: string,
+): Promise<BlendOracleConfigRaw> {
+  const maxAge = Number((await readContract(server, oracleId, 'max_age')) as number | bigint);
+  const oracles = (await readContract(server, oracleId, 'oracles')) as OracleConfigNative[];
+  if (!Array.isArray(oracles) || oracles.length === 0) {
+    throw new Error(`Blend: oracle ${oracleId} returned an empty oracles() list`);
+  }
+
+  // `base()` is a public read; the `BaseAssets` list has no getter, so it comes
+  // from instance storage. Older aggregator deployments have no BaseAssets key
+  // at all — the contract treats that as an empty list, and so do we.
+  const baseAssets = new Set<string>();
+  const base = (await readContract(server, oracleId, 'base')) as unknown;
+  if (Array.isArray(base) && base[0] === 'Stellar' && typeof base[1] === 'string') {
+    baseAssets.add(base[1]);
+  }
+  const instance = await readInstanceStorage(server, oracleId);
+  const baseAssetsScv = instance.get('BaseAssets');
+  if (baseAssetsScv) {
+    for (const entry of (scValToNative(baseAssetsScv) as unknown[]) ?? []) {
+      if (Array.isArray(entry) && entry[0] === 'Stellar' && typeof entry[1] === 'string') {
+        baseAssets.add(entry[1]);
+      }
+    }
+  }
+
+  return {
+    maxAge,
+    baseAssets: [...baseAssets],
+    oracles: oracles.map((o) => ({
+      index: Number(o.index),
+      address: o.address,
+      resolution: Number(o.resolution),
+      decimals: Number(o.decimals),
+    })),
+  };
+}
+
+/**
+ * Read `asset_configs()` keyed by reserve address.
+ *
+ * Decoded from the raw ScVal map rather than via `scValToNative` on the whole
+ * value: the map's keys are `Asset` enum vecs, and letting the SDK coerce those
+ * into JS object keys would make us depend on its stringification of a
+ * non-string key. Decoding each key on its own keeps the mapping explicit.
+ */
+async function readAssetConfigs(
+  server: rpc.Server,
+  oracleId: string,
+): Promise<Map<string, NonNullable<BlendReserveRaw['priceConfig']>>> {
+  const scv = await readContractScv(server, oracleId, 'asset_configs');
+  const out = new Map<string, NonNullable<BlendReserveRaw['priceConfig']>>();
+  for (const entry of scv.map() ?? []) {
+    const key = scValToNative(entry.key()) as unknown;
+    // Reserve keys are Asset::Stellar(Address) -> ['Stellar', 'C…'].
+    if (!Array.isArray(key) || key[0] !== 'Stellar' || typeof key[1] !== 'string') continue;
+    const cfg = scValToNative(entry.val()) as AssetConfigNative;
+    const upstream = cfg.asset;
+    out.set(key[1], {
+      upstreamAsset: Array.isArray(upstream) ? `${upstream[0]}:${upstream[1]}` : 'unknown',
+      oracleIndex: Number(cfg.oracle_index),
+      maxDev: Number(cfg.max_dev),
+    });
+  }
+  return out;
 }
 
 async function fetchAdmin(horizonUrl: string, address: string): Promise<BlendAdminRaw> {
@@ -330,6 +486,38 @@ function reserveTotals(r: BlendReserveRaw): { supplied: number; borrowed: number
   return { supplied, borrowed };
 }
 
+/** First 6 chars of a contract address, for detail strings. */
+const shortAsset = (a: string): string => `${a.slice(0, 6)}…`;
+
+/**
+ * Is the aggregator's deviation check actually active for this asset?
+ *
+ * Mirrors the contract's own condition in oracle-aggregator/src/price_data.rs:
+ * `if config.max_dev > 0 && config.max_dev < 100`. Outside that range the check
+ * is skipped entirely and the aggregator just returns the latest price, however
+ * far it moved.
+ */
+const deviationBounded = (maxDevPercent: number): boolean =>
+  maxDevPercent > 0 && maxDevPercent < 100;
+
+/**
+ * Score every reserve on one sub-signal and keep the worst.
+ *
+ * Worst-reserve selection is the house convention across factors: the binding
+ * constraint is the single weakest reserve, and averaging would hide it.
+ */
+function worstBy(
+  reserves: BlendReserveRaw[],
+  score: (r: BlendReserveRaw) => { score: number; note: string },
+): { score: number; note: string; asset: string } {
+  let worst = { score: Number.POSITIVE_INFINITY, note: 'no reserves', asset: '' };
+  for (const r of reserves) {
+    const s = score(r);
+    if (s.score <= worst.score) worst = { ...s, asset: r.asset };
+  }
+  return Number.isFinite(worst.score) ? worst : { score: 0, note: 'no reserves', asset: '' };
+}
+
 /** USD value of supplied liquidity for a reserve, or null if no price. */
 function suppliedUsd(r: BlendReserveRaw, oracleDecimals: number): number | null {
   if (!r.price) return null;
@@ -387,12 +575,14 @@ export class BlendAdapter implements Adapter<BlendRawData> {
     }
 
     const oracleDecimals = Number(await readContract(server, oracleId, 'decimals'));
+    const oracleConfig = await readOracleConfig(server, oracleId);
+    const assetConfigs = await readAssetConfigs(server, oracleId);
 
     const reserves: BlendReserveRaw[] = [];
     for (const asset of reserveList) {
       const base = await readReserve(server, this.poolId, asset);
       const price = await readOraclePrice(server, oracleId, asset);
-      reserves.push({ ...base, price });
+      reserves.push({ ...base, price, priceConfig: assetConfigs.get(asset) ?? null });
     }
 
     const admin = await fetchAdmin(this.horizonUrl, adminAddress);
@@ -403,6 +593,7 @@ export class BlendAdapter implements Adapter<BlendRawData> {
       oracleDecimals,
       status,
       admin,
+      oracleConfig,
       reserves,
       fetchedAt: Math.floor(Date.now() / 1000),
     };
@@ -452,25 +643,101 @@ export class BlendAdapter implements Adapter<BlendRawData> {
     };
   }
 
-  // Worst-case oracle staleness across reserves. Blend prices carry a publish
-  // timestamp; a stale price is what lets bad debt accrue undetected. Fresh
-  // (< 10 min) → 100, degrading linearly to 0 at 60 min. Thresholds are a
-  // conservative v1 heuristic; ideally we'd read the oracle's own resolution.
+  // Can this pool's prices be trusted? Two things must both hold: the price is
+  // current, AND a single update can't move it arbitrarily far. Price age alone
+  // (the v1 factor) scored a fresh-but-manipulated price 100 — exactly the
+  // YieldBlox failure mode. See METHODOLOGY.md §2.
+  //
+  // Both sub-signals take the worst reserve, and the factor takes the binding
+  // constraint (the lower of the two) — a bounded stale price and a fresh
+  // unbounded price are both untrustworthy, for different reasons.
   private oracleSafety(raw: BlendRawData): RiskFactor {
     const weight = 0.25;
-    const fresh = 10 * 60;
-    const dead = 60 * 60;
 
-    const ages = raw.reserves.map((r) => (r.price ? raw.fetchedAt - r.price.timestamp : null));
-    if (ages.some((a) => a === null)) {
-      return { value: 0, weight, detail: 'at least one reserve has no oracle price' };
+    // Base assets are the aggregator's unit of account: `lastprice` returns a
+    // hardcoded 1.0 at the current ledger time for them, never reading an
+    // upstream feed. There is no oracle price to grade, so they are excluded
+    // from both sub-signals — scoring them 0 for "no deviation bound" would be
+    // measuring the absence of a mechanism that doesn't apply. (Their peg
+    // holding is a real risk, but it is a collateral/peg question, not an
+    // oracle-robustness one — see METHODOLOGY.md §2.)
+    const baseAssets = new Set(raw.oracleConfig.baseAssets);
+    const graded = raw.reserves.filter((r) => !baseAssets.has(r.asset));
+    const excluded = raw.reserves.length - graded.length;
+    if (graded.length === 0) {
+      return {
+        value: 0,
+        weight,
+        detail: 'every reserve is an oracle base asset — no oracle-derived price to assess',
+      };
     }
-    const worst = Math.max(...(ages as number[]));
-    const value = lerp01(worst, dead, fresh); // dead→0, fresh→100
+
+    // Freshness anchors are the aggregator's own: `resolution` is how often the
+    // upstream feed publishes (a price younger than that is as fresh as the feed
+    // can be), `max_age` is the age at which the aggregator itself refuses the
+    // price. The STALE_CEILING cap is the one retained v1 judgment call.
+    const worstFresh = worstBy(graded, (r) => {
+      if (!r.price) return { score: 0, note: 'no oracle price' };
+      const age = Math.max(0, raw.fetchedAt - r.price.timestamp);
+      const resolution = raw.oracleConfig.oracles[r.priceConfig?.oracleIndex ?? 0]?.resolution ?? 0;
+      const { fresh, dead } = freshnessWindow(resolution, raw.oracleConfig.maxAge);
+      return {
+        score: lerp01(age, dead, fresh),
+        note: `${age}s old (fresh<${fresh}s, dead>${dead}s)`,
+      };
+    });
+
+    // The deviation bound is scored as a binary: is a bound configured at all?
+    // `max_dev` of 0 (or >= 100) disables the aggregator's check outright — see
+    // oracle-aggregator/src/price_data.rs — which is what permits an unbounded
+    // single-step move. Its *tightness* is disclosed below but deliberately not
+    // graded; see METHODOLOGY.md §2 on why.
+    const worstBound = worstBy(graded, (r) => {
+      const dev = r.priceConfig?.maxDev;
+      if (dev === undefined)
+        return { score: 0, note: 'no aggregator entry — asset cannot be priced' };
+      return deviationBounded(dev)
+        ? {
+            score: 100,
+            note: `bounded at ${dev}% per ${raw.oracleConfig.oracles[r.priceConfig!.oracleIndex]?.resolution ?? '?'}s step`,
+          }
+        : { score: 0, note: `max_dev ${dev} — deviation check disabled` };
+    });
+
+    const value = Math.min(worstFresh.score, worstBound.score);
+    const bounds = graded
+      .map((r) => `${shortAsset(r.asset)} ${r.priceConfig ? `${r.priceConfig.maxDev}%` : 'n/a'}`)
+      .join(', ');
+    const excludedNote =
+      excluded > 0 ? ` ${excluded} base asset(s) excluded — priced 1:1, not oracle-derived.` : '';
+
     return {
       value: Math.round(value),
       weight,
-      detail: `worst oracle price age ${Math.max(0, worst)}s (fresh<${fresh}s, stale>${dead}s)`,
+      detail:
+        worstBound.score === 0
+          ? `worst reserve (${shortAsset(worstBound.asset)}) ${worstBound.note}`
+          : `worst reserve (${shortAsset(worstFresh.asset)}) ${worstFresh.note}; all reserves have a deviation bound`,
+      components: [
+        {
+          id: 'priceFreshness',
+          label: 'Price freshness',
+          value: Math.round(worstFresh.score),
+          detail: `worst reserve (${shortAsset(worstFresh.asset)}) ${worstFresh.note}; anchored to the aggregator's own resolution and max_age (${raw.oracleConfig.maxAge}s)`,
+        },
+        {
+          id: 'deviationBound',
+          label: 'Deviation bound',
+          value: Math.round(worstBound.score),
+          detail: `worst reserve (${shortAsset(worstBound.asset)}) ${worstBound.note}`,
+        },
+        {
+          id: 'deviationTightness',
+          label: 'Bound tightness (not scored)',
+          value: null,
+          detail: `per-reserve max_dev: ${bounds}.${excludedNote} Measured against the previous upstream record, so this bounds movement per publish interval. Reported, not graded — see METHODOLOGY.md §2.`,
+        },
+      ],
     };
   }
 

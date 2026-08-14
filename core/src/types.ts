@@ -1,5 +1,25 @@
 export type Chain = 'stellar';
 
+/**
+ * Version of the scoring rulebook in METHODOLOGY.md that produced a score.
+ *
+ * Bumped whenever a change makes scores non-comparable with earlier stored
+ * rows — a new/changed formula, threshold, or weight. It is *not* an adapter
+ * version and not an API version: every adapter implements one shared rulebook
+ * (METHODOLOGY.md ground rule 1), so this is a single shared constant that the
+ * indexer stamps onto each run, not something an adapter chooses.
+ *
+ * Stored rows can't be recomputed — `risk_scores` keeps only outputs, never the
+ * raw on-chain inputs — so history is not backfilled across a bump. The point of
+ * this field is to make the discontinuity legible rather than silent.
+ *
+ * 1 — initial five-factor model.
+ * 2 — `oracleSafety` extended from price age alone to age + manipulation
+ *     resistance; freshness re-anchored to each oracle's own resolution and
+ *     max-age. See METHODOLOGY.md §2.
+ */
+export const METHODOLOGY_VERSION = 2 as const;
+
 export interface ProtocolMetadata {
   /** unique slug used as the primary key across storage and the API, e.g. "blend" */
   id: string;
@@ -28,6 +48,34 @@ export enum RiskFactorType {
   UtilizationSafety = 'utilizationSafety',
 }
 
+/**
+ * A named sub-signal inside a factor.
+ *
+ * Two distinct uses, deliberately both allowed:
+ *
+ * - **Scored component** (`value` set): a sub-score that feeds its parent
+ *   factor's `value`. The dashboard can show the breakdown so a composite
+ *   factor isn't an opaque single number.
+ * - **Disclosure** (`value` null): a real, readable on-chain quantity we
+ *   publish but deliberately do *not* score, because scoring it would invent
+ *   comparability the underlying data doesn't support. `detail` carries the raw
+ *   figure. See METHODOLOGY.md §2 on why deviation-bound *tightness* is
+ *   disclosed rather than graded.
+ *
+ * A null `value` is therefore never "missing data" — it means "measured, shown,
+ * and intentionally not graded."
+ */
+export interface RiskFactorComponent {
+  /** stable machine-readable key, e.g. "priceFreshness", "deviationBound" */
+  id: string;
+  /** short human label for display, e.g. "Price freshness" */
+  label: string;
+  /** 0-100, higher = safer — or null for a disclosure-only component (see above) */
+  value: number | null;
+  /** what this component measured, including the raw on-chain figure it came from */
+  detail: string;
+}
+
 export interface RiskFactor {
   /** 0-100, higher = safer, same convention as the overall score */
   value: number;
@@ -35,6 +83,14 @@ export interface RiskFactor {
   weight: number;
   /** short, human-readable explanation of what drove this value, e.g. "top 3 depositors hold 78% of collateral" */
   detail: string;
+  /**
+   * Optional breakdown of the sub-signals behind `value`. Additive and
+   * optional: a factor computed from a single signal omits it, and consumers
+   * that don't know about it are unaffected. Where present, the scored
+   * components (those with a non-null `value`) are what `value` was derived
+   * from — this is a view into the calculation, not extra commentary.
+   */
+  components?: RiskFactorComponent[];
 }
 
 /**

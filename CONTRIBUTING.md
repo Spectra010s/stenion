@@ -63,7 +63,7 @@ Every adapter must populate the same fixed five factors from `RiskFactorType`
 ```ts
 riskFactors: {
   collateralSafety,    // collateral concentration (diversification)  — weight 0.20
-  oracleSafety,        // oracle price-feed freshness                  — weight 0.25
+  oracleSafety,        // price freshness + manipulation resistance   — weight 0.25
   adminKeySafety,      // admin signer structure + activity            — weight 0.20
   liquiditySafety,     // free-liquidity depth (withdrawal cushion)    — weight 0.15
   utilizationSafety,   // headroom below the configured utilization cap — weight 0.20

@@ -17,6 +17,7 @@ import {
   RiskFactorMap,
   RiskFactorType,
   RiskScoreResult,
+  freshnessWindow,
 } from '@stenion/core';
 
 // ---------------------------------------------------------------------------
@@ -38,10 +39,18 @@ import {
 //       configuration { data_low, data_high }, ... }
 //   - router.is_paused() -> bool
 //   - aToken/debtToken.total_supply() -> i128  (underlying units, index applied)
-//   - price_oracle.get_asset_price_data(Asset::Stellar(addr)) -> PriceData
+//   - price_oracle.get_asset_prices_vec_fresh(Vec<Asset>) -> Vec<PriceData>
 //       { price: u128 (PRICE_PRECISION = 14 dp), timestamp: u64 }
 // The oracle address and admin address are read live from the router's instance
 // storage (keys "ORACLE" / "PADMIN"), not hardcoded — trustless.
+//
+// Why `get_asset_prices_vec_fresh` and not `get_asset_price_data`: the deployed
+// kinetic_router does not call `get_asset_price_data` at all. Scanning the live
+// router's wasm for the oracle method symbols it references shows
+// `get_asset_prices_vec_fresh` present and `get_asset_price_data` absent, so the
+// latter is a code path K2 never prices off. We read the method the protocol
+// actually uses, so `oracleSafety` measures the prices the pool's own risk logic
+// sees rather than a sibling method that merely happens to agree today.
 // ---------------------------------------------------------------------------
 
 const NETWORK_PASSPHRASE = Networks.PUBLIC;
@@ -58,6 +67,9 @@ const KINETIC_ROUTER = 'CCTUJZLYFAW7ZNQD2SXMUZIHBUUJJICYRKWLZJ6SK6TGNAWNXOJIV6J7
 // Router instance-storage keys (symbol_short!), from kinetic-router/src/storage.rs.
 const ADMIN_KEY = 'PADMIN';
 const ORACLE_KEY = 'ORACLE';
+
+/** Price-oracle instance-storage key holding the price cache TTL (no public getter exists). */
+const PRICE_CACHE_TTL_KEY = 'PriceCacheTtl';
 
 // K2 fixed-point constants (contracts/shared/src/constants.rs).
 /** Oracle price precision: PRICE_PRECISION = 14. The K2 oracle exposes no decimals() call — it's a protocol constant. */
@@ -94,6 +106,36 @@ export interface KineticReserveRaw {
     value: bigint; // fixed point, PRICE_DECIMALS places
     timestamp: number; // unix seconds, the oracle's own publish time
   } | null;
+  /** this asset's entry in the oracle's own `get_asset_config()`, or null if not whitelisted */
+  priceConfig: {
+    enabled: boolean;
+    /** per-asset max acceptable price age, seconds (null when unset) */
+    maxAge: number | null;
+    /** which leg of the oracle's resolution cascade prices this asset */
+    source: 'batchAdapter' | 'customOracle' | 'reflector';
+    /** feed identifier on the upstream batch adapter, e.g. "XLM" */
+    feedId: string | null;
+    /** an admin-set price is currently in force for this asset */
+    manualOverrideActive: boolean;
+    /**
+     * `get_last_price()` — the baseline the circuit breaker compares against.
+     * Null/zero means the breaker has no baseline and, per the contract, lets
+     * any price through (it fails *open*). See `oracleSafety`.
+     */
+    breakerBaseline: bigint | null;
+  } | null;
+}
+
+/** The price oracle's own published configuration. */
+export interface KineticOracleConfigRaw {
+  /** `max_price_change_bps` — circuit breaker bound in basis points; 0 disables it */
+  maxPriceChangeBps: number;
+  /** `price_staleness_threshold` — global max price age, seconds */
+  priceStalenessThreshold: number;
+  /** `PriceCacheTtl` — how long the oracle reuses a price without re-reading, seconds */
+  priceCacheTtl: number;
+  /** `is_paused()` on the oracle itself (distinct from the router's pause) */
+  paused: boolean;
 }
 
 export interface KineticAdminRaw {
@@ -117,6 +159,7 @@ export interface KineticRawData {
   /** router.is_paused() — global pause switch. Captured (like Blend's `status`) but not yet fed into a factor. */
   paused: boolean;
   admin: KineticAdminRaw;
+  oracleConfig: KineticOracleConfigRaw;
   reserves: KineticReserveRaw[];
   fetchedAt: number; // unix seconds
 }
@@ -135,6 +178,21 @@ interface ReserveDataNative {
 interface PriceDataNative {
   price: number | bigint;
   timestamp: number | bigint;
+}
+/** price-oracle `OracleConfig` (only the fields oracleSafety reads). */
+interface OracleConfigNative {
+  max_price_change_bps: number | bigint;
+  price_staleness_threshold: number | bigint;
+}
+/** price-oracle `AssetConfig`. */
+interface AssetConfigNative {
+  enabled?: boolean;
+  max_age?: number | bigint | null;
+  feed_id?: string | null;
+  batch_adapter?: string | null;
+  custom_oracle?: string | null;
+  manual_override_price?: number | bigint | null;
+  override_expiry_timestamp?: number | bigint | null;
 }
 interface HorizonAccount {
   thresholds?: { high_threshold?: number };
@@ -169,7 +227,14 @@ async function readInstanceStorage(
   const out = new Map<string, xdr.ScVal>();
   for (const entry of storage) {
     const name = scValToNative(entry.key());
+    // Keys come in two shapes across K2's contracts: a bare symbol (the router's
+    // `PADMIN`/`ORACLE`, written with symbol_short!) and a single-element enum
+    // vec (the price oracle's `["PriceCacheTtl"]`, from a #[contracttype] key
+    // enum). Index both by the same name so callers don't care which is used.
     if (typeof name === 'string') out.set(name, entry.val());
+    else if (Array.isArray(name) && name.length === 1 && typeof name[0] === 'string') {
+      out.set(name[0], entry.val());
+    }
   }
   return out;
 }
@@ -205,31 +270,152 @@ function stellarAssetArg(asset: string): xdr.ScVal {
   return xdr.ScVal.scvVec([xdr.ScVal.scvSymbol('Stellar'), new Address(asset).toScVal()]);
 }
 
-async function readOraclePrice(
-  server: rpc.Server,
-  oracleId: string,
-  asset: string,
-): Promise<KineticReserveRaw['price']> {
-  // get_asset_price_data returns Result<PriceData, OracleError>; a stale price
-  // trips the in-contract PriceTooOld check and an unconfigured asset also
-  // errors. Either way the simulation fails — we treat that as "no usable
-  // price" (null), which oracleSafety scores as maximally unsafe, rather than
-  // aborting the whole reserve read.
-  let native: PriceDataNative | null;
-  try {
-    native = (await readContract(
-      server,
-      oracleId,
-      'get_asset_price_data',
-      stellarAssetArg(asset),
-    )) as PriceDataNative | null;
-  } catch {
-    return null;
-  }
+function toPrice(native: PriceDataNative | null | undefined): KineticReserveRaw['price'] {
   if (!native || native.price === undefined) return null;
   return {
     value: BigInt(native.price),
     timestamp: Number(native.timestamp),
+  };
+}
+
+/**
+ * Price every reserve through the oracle method the router itself calls.
+ *
+ * `get_asset_prices_vec_fresh` returns Result<Vec<PriceData>, OracleError> for
+ * the whole batch, so one unpriceable asset fails the entire call (a stale price
+ * trips the in-contract PriceTooOld check; an unconfigured asset errors too). We
+ * don't want a single bad reserve to cost us the protocol's whole score, so on a
+ * batch failure we re-read each asset as a one-element batch — same method, same
+ * code path — to isolate which reserves have no usable price. Those become null,
+ * which oracleSafety scores as maximally unsafe, rather than aborting the run.
+ */
+async function readOraclePrices(
+  server: rpc.Server,
+  oracleId: string,
+  assets: string[],
+): Promise<KineticReserveRaw['price'][]> {
+  const batchArg = xdr.ScVal.scvVec(assets.map(stellarAssetArg));
+  try {
+    const natives = (await readContract(
+      server,
+      oracleId,
+      'get_asset_prices_vec_fresh',
+      batchArg,
+    )) as (PriceDataNative | null)[];
+    if (Array.isArray(natives) && natives.length === assets.length) {
+      return natives.map(toPrice);
+    }
+    // Length mismatch means we can't align prices to reserves; fall through to
+    // the per-asset path rather than risk mispricing a reserve.
+  } catch {
+    // fall through
+  }
+
+  const out: KineticReserveRaw['price'][] = [];
+  for (const asset of assets) {
+    try {
+      const natives = (await readContract(
+        server,
+        oracleId,
+        'get_asset_prices_vec_fresh',
+        xdr.ScVal.scvVec([stellarAssetArg(asset)]),
+      )) as (PriceDataNative | null)[];
+      out.push(Array.isArray(natives) ? toPrice(natives[0]) : null);
+    } catch {
+      out.push(null);
+    }
+  }
+  return out;
+}
+
+/**
+ * Read the price oracle's own published config.
+ *
+ * `PriceCacheTtl` has no public getter (the contract exports `set_price_cache_ttl`
+ * but no matching read), so it comes from the oracle's instance storage — the
+ * same way the router's ORACLE/PADMIN are read.
+ */
+async function readOracleConfig(
+  server: rpc.Server,
+  oracleId: string,
+): Promise<KineticOracleConfigRaw> {
+  const cfg = (await readContract(server, oracleId, 'get_oracle_config')) as OracleConfigNative;
+  const paused = Boolean(await readContract(server, oracleId, 'is_paused'));
+
+  let priceCacheTtl = 0;
+  const instance = await readInstanceStorage(server, oracleId);
+  const ttlScv = instance.get(PRICE_CACHE_TTL_KEY);
+  if (ttlScv) priceCacheTtl = Number(scValToNative(ttlScv) as number | bigint);
+
+  return {
+    maxPriceChangeBps: Number(cfg.max_price_change_bps),
+    priceStalenessThreshold: Number(cfg.price_staleness_threshold),
+    priceCacheTtl,
+    paused,
+  };
+}
+
+/**
+ * Read one asset's oracle config plus the circuit-breaker baseline.
+ *
+ * Both are per-asset public reads. `get_last_price` matters as much as the
+ * config: the breaker only bites once a baseline exists, so a whitelisted asset
+ * with no baseline is one the breaker currently lets through unchecked.
+ */
+async function readPriceConfig(
+  server: rpc.Server,
+  oracleId: string,
+  asset: string,
+  fetchedAt: number,
+): Promise<KineticReserveRaw['priceConfig']> {
+  let cfg: AssetConfigNative | null;
+  try {
+    cfg = (await readContract(
+      server,
+      oracleId,
+      'get_asset_config',
+      stellarAssetArg(asset),
+    )) as AssetConfigNative | null;
+  } catch {
+    return null;
+  }
+  if (!cfg) return null;
+
+  let breakerBaseline: bigint | null = null;
+  try {
+    const last = (await readContract(
+      server,
+      oracleId,
+      'get_last_price',
+      stellarAssetArg(asset),
+    )) as number | bigint | null;
+    breakerBaseline = last === null || last === undefined ? null : BigInt(last);
+  } catch {
+    breakerBaseline = null;
+  }
+
+  const expiry = cfg.override_expiry_timestamp;
+  const manualOverrideActive =
+    cfg.manual_override_price !== null &&
+    cfg.manual_override_price !== undefined &&
+    expiry !== null &&
+    expiry !== undefined &&
+    Number(expiry) > fetchedAt;
+
+  const source: NonNullable<KineticReserveRaw['priceConfig']>['source'] =
+    cfg.batch_adapter && cfg.feed_id
+      ? 'batchAdapter'
+      : cfg.custom_oracle
+        ? 'customOracle'
+        : 'reflector';
+
+  return {
+    enabled: cfg.enabled !== false,
+    maxAge: cfg.max_age === null || cfg.max_age === undefined ? null : Number(cfg.max_age),
+    source,
+    feedId: cfg.feed_id ?? null,
+    manualOverrideActive,
+    breakerBaseline,
   };
 }
 
@@ -284,6 +470,25 @@ const clamp = (n: number, lo = 0, hi = 100): number => Math.max(lo, Math.min(hi,
 function lerp01(v: number, a: number, b: number): number {
   if (a === b) return v >= a ? 100 : 0;
   return clamp(((v - a) / (b - a)) * 100);
+}
+
+/** First 6 chars of a contract address, for detail strings. */
+const shortAsset = (a: string): string => `${a.slice(0, 6)}…`;
+
+/**
+ * Score every reserve on one sub-signal and keep the worst. Same convention as
+ * every other factor: the binding constraint is the single weakest reserve.
+ */
+function worstBy(
+  reserves: KineticReserveRaw[],
+  score: (r: KineticReserveRaw) => { score: number; note: string },
+): { score: number; note: string; asset: string } {
+  let worst = { score: Number.POSITIVE_INFINITY, note: 'no reserves', asset: '' };
+  for (const r of reserves) {
+    const s = score(r);
+    if (s.score <= worst.score) worst = { ...s, asset: r.asset };
+  }
+  return Number.isFinite(worst.score) ? worst : { score: 0, note: 'no reserves', asset: '' };
 }
 
 /** Underlying supplied/borrowed for a reserve, in human units (asset decimals applied). */
@@ -360,7 +565,10 @@ export class KineticAdapter implements Adapter<KineticRawData> {
       throw new Error(`Kinetic: router ${this.routerId} returned an empty reserve list`);
     }
 
-    const reserves: KineticReserveRaw[] = [];
+    // Balances first, then one batched oracle read for every reserve at once —
+    // the batch is the shape the router uses, and it keeps all prices on the
+    // same oracle invocation rather than N independently-cached ones.
+    const balances: Omit<KineticReserveRaw, 'price' | 'priceConfig'>[] = [];
     for (const asset of reserveList) {
       const rd = (await readContract(
         server,
@@ -377,9 +585,21 @@ export class KineticAdapter implements Adapter<KineticRawData> {
       const borrowedRaw = BigInt(
         (await readContract(server, rd.debt_token_address, 'total_supply')) as number | bigint,
       );
-      const price = await readOraclePrice(server, oracleId, asset);
-      reserves.push({ asset, decimals, suppliedRaw, borrowedRaw, price });
+      balances.push({ asset, decimals, suppliedRaw, borrowedRaw });
     }
+
+    const fetchedAt = Math.floor(Date.now() / 1000);
+    const prices = await readOraclePrices(server, oracleId, reserveList);
+    const oracleConfig = await readOracleConfig(server, oracleId);
+    const priceConfigs: KineticReserveRaw['priceConfig'][] = [];
+    for (const asset of reserveList) {
+      priceConfigs.push(await readPriceConfig(server, oracleId, asset, fetchedAt));
+    }
+    const reserves: KineticReserveRaw[] = balances.map((b, i) => ({
+      ...b,
+      price: prices[i],
+      priceConfig: priceConfigs[i],
+    }));
 
     const admin = await fetchAdmin(this.horizonUrl, adminAddress);
 
@@ -389,8 +609,9 @@ export class KineticAdapter implements Adapter<KineticRawData> {
       oraclePriceDecimals: PRICE_DECIMALS,
       paused,
       admin,
+      oracleConfig,
       reserves,
-      fetchedAt: Math.floor(Date.now() / 1000),
+      fetchedAt,
     };
   }
 
@@ -437,27 +658,85 @@ export class KineticAdapter implements Adapter<KineticRawData> {
     };
   }
 
-  // Worst-case oracle staleness across reserves. K2's price oracle returns a
-  // PriceData carrying the price's publish `timestamp`, so this is the exact
-  // Blend formula (METHODOLOGY.md §2): fresh (<10min) → 100, decaying linearly
-  // to 0 at 60min. A missing/too-old price (null) → 0. NOTE: this measures price
-  // *age*, not *manipulation* — a fresh but manipulated price still scores 100
-  // (the limitation the YieldBlox oracle hack surfaced; see CLAUDE.md).
+  // Same rule as Blend (METHODOLOGY.md §2): a price is trustworthy only if it is
+  // both current and bounded against a single large move. Worst reserve for each
+  // sub-signal; the factor takes the binding constraint of the two.
+  //
+  // The per-protocol anchors differ because the readable parameters differ —
+  // K2 has no publish-interval getter, so `fresh` anchors to its price cache TTL
+  // (the window inside which K2 itself considers a price current) and `dead` to
+  // the tighter of its per-asset max_age and its global staleness threshold.
   private oracleSafety(raw: KineticRawData): RiskFactor {
     const weight = 0.25;
-    const fresh = 10 * 60;
-    const dead = 60 * 60;
+    const { maxPriceChangeBps, priceStalenessThreshold, priceCacheTtl } = raw.oracleConfig;
 
-    const ages = raw.reserves.map((r) => (r.price ? raw.fetchedAt - r.price.timestamp : null));
-    if (ages.some((a) => a === null)) {
-      return { value: 0, weight, detail: 'at least one reserve has no usable oracle price' };
-    }
-    const worst = Math.max(...(ages as number[]));
-    const value = lerp01(worst, dead, fresh); // dead→0, fresh→100
+    const worstFresh = worstBy(raw.reserves, (r) => {
+      if (!r.price) return { score: 0, note: 'no usable oracle price' };
+      const age = Math.max(0, raw.fetchedAt - r.price.timestamp);
+      // Both are K2's own numbers; taking the tighter of the two is not a
+      // Stenion threshold, it's the binding one of two protocol-declared limits.
+      const declared = Math.min(
+        r.priceConfig?.maxAge ?? priceStalenessThreshold,
+        priceStalenessThreshold,
+      );
+      const { fresh, dead } = freshnessWindow(priceCacheTtl, declared);
+      return {
+        score: lerp01(age, dead, fresh),
+        note: `${age}s old (fresh<${fresh}s, dead>${dead}s)`,
+      };
+    });
+
+    // Binary, as for Blend — but K2's breaker fails *open* where Blend's aggregator
+    // fails closed: `validate_price_change` returns Ok when there is no stored
+    // baseline, so a configured bound with no `get_last_price` is inert. Both
+    // conditions must hold for the bound to count as armed.
+    const worstBound = worstBy(raw.reserves, (r) => {
+      if (maxPriceChangeBps <= 0)
+        return { score: 0, note: 'max_price_change_bps 0 — circuit breaker disabled' };
+      if (!r.priceConfig) return { score: 0, note: 'asset not whitelisted on the oracle' };
+      const baseline = r.priceConfig.breakerBaseline;
+      if (baseline === null || baseline === 0n) {
+        return { score: 0, note: 'no circuit-breaker baseline — breaker passes any price' };
+      }
+      return {
+        score: 100,
+        note: `breaker armed at ${maxPriceChangeBps}bps against a stored baseline`,
+      };
+    });
+
+    const value = Math.min(worstFresh.score, worstBound.score);
+    const overridden = raw.reserves.filter((r) => r.priceConfig?.manualOverrideActive);
+    const sources = raw.reserves
+      .map((r) => `${shortAsset(r.asset)} ${r.priceConfig?.source ?? 'unconfigured'}`)
+      .join(', ');
+
     return {
       value: Math.round(value),
       weight,
-      detail: `worst oracle price age ${Math.max(0, worst)}s (fresh<${fresh}s, stale>${dead}s)`,
+      detail:
+        worstBound.score === 0
+          ? `worst reserve (${shortAsset(worstBound.asset)}) ${worstBound.note}`
+          : `worst reserve (${shortAsset(worstFresh.asset)}) ${worstFresh.note}; circuit breaker armed on all reserves`,
+      components: [
+        {
+          id: 'priceFreshness',
+          label: 'Price freshness',
+          value: Math.round(worstFresh.score),
+          detail: `worst reserve (${shortAsset(worstFresh.asset)}) ${worstFresh.note}; anchored to K2's own cache TTL (${priceCacheTtl}s) and staleness threshold (${priceStalenessThreshold}s)`,
+        },
+        {
+          id: 'deviationBound',
+          label: 'Deviation bound',
+          value: Math.round(worstBound.score),
+          detail: `worst reserve (${shortAsset(worstBound.asset)}) ${worstBound.note}`,
+        },
+        {
+          id: 'deviationTightness',
+          label: 'Bound tightness (not scored)',
+          value: null,
+          detail: `max_price_change_bps ${maxPriceChangeBps} (${maxPriceChangeBps / 100}%), global. Measured against the last price the oracle served, so unlike Blend's per-publish-interval bound this has no fixed time spacing — the two are not comparable as numbers. Reported, not graded — see METHODOLOGY.md §2. Price sources: ${sources}.${overridden.length > 0 ? ` ADMIN PRICE OVERRIDE ACTIVE on ${overridden.map((r) => shortAsset(r.asset)).join(', ')}.` : ''}`,
+        },
+      ],
     };
   }
 

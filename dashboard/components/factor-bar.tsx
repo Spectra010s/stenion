@@ -61,6 +61,34 @@ export function FactorCard({
       </div>
 
       <p className="mt-3 text-sm leading-relaxed text-muted">{factor.detail}</p>
+
+      {factor.components && factor.components.length > 0 && (
+        <ul className="mt-4 space-y-2.5 border-t border-line-soft pt-3.5">
+          {factor.components.map((c) => (
+            <li key={c.id}>
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-xs font-medium text-muted">{c.label}</span>
+                {c.value === null ? (
+                  // A null component is a deliberate disclosure, not missing data —
+                  // say so rather than rendering a bare dash the reader must guess at.
+                  <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-faint">
+                    not scored
+                  </span>
+                ) : (
+                  <span
+                    className={`tnum shrink-0 text-sm font-semibold ${bandTextClass(
+                      scoreBand(c.value),
+                    )}`}
+                  >
+                    {c.value}
+                  </span>
+                )}
+              </div>
+              <p className="mt-1 text-xs leading-relaxed text-faint">{c.detail}</p>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

@@ -54,6 +54,30 @@ If the code and this document ever disagree, that is a bug — open an issue (se
   safetyScore = round( Σ(factor.value × factor.weight) / Σ(factor.weight) )
   ```
 
+A factor may publish a **`components`** breakdown — the sub-signals behind its value.
+Components with a numeric `value` are what the factor was computed from; components with
+a `null` value are **disclosures**: real, readable on-chain quantities we publish but
+deliberately do not grade, because scoring them would invent comparability the data does
+not support (see §2c). A null component is never missing data.
+
+### Methodology versions
+
+Every scored run is stamped with the rulebook version that produced it
+(`risk_scores.methodology_version`, from `METHODOLOGY_VERSION` in
+[`core/src/types.ts`](core/src/types.ts)), and it is surfaced on the API's protocol detail
+and on each history point.
+
+| Version | Change                                                                                                                                                       |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1       | Initial five-factor model.                                                                                                                                   |
+| 2       | `oracleSafety` extended from price age alone to age **and** manipulation resistance; freshness re-anchored to each oracle's own resolution and max-age (§2). |
+
+**History is not backfilled across a version bump, and cannot be.** `risk_scores` stores
+only outputs — the score and the factor map — never the raw on-chain inputs a run was
+computed from, so an old row cannot be recomputed under new rules by us or by anyone. The
+discontinuity is real and permanent; the version stamp exists so it is legible rather than
+appearing as an unexplained step in a chart.
+
 ### Factor weights
 
 | Factor              | Weight   |
@@ -65,14 +89,20 @@ If the code and this document ever disagree, that is a bug — open an issue (se
 | `liquiditySafety`   | 0.15     |
 | **Total**           | **1.00** |
 
-**Worked example (live Blend Fixed V2 pool, 2026-08-10):**
-`70×0.20 + 100×0.25 + 40×0.20 + 24×0.15 + 16×0.20 = 53.8 → 54`.
+**Worked example (live Blend Fixed V2 pool, 2026-08-14, methodology v2):**
+`70×0.20 + 100×0.25 + 40×0.20 + 22×0.15 + 14×0.20 = 53.1 → 53`.
 
-> **Weights are a v1 judgment call, not an external fact.** Oracle freshness carries the
-> most weight because a stale oracle silently poisons every other measurement (collateral
-> value, utilization, liquidity are all priced off it). Liquidity carries the least because
-> it partly overlaps utilization. There is no external framework these exact weights are
-> anchored to yet — they are open to challenge like any threshold below.
+> **Weights are a v1 judgment call, not an external fact.** `oracleSafety` carries the most
+> weight because an untrustworthy price silently poisons every other measurement —
+> collateral value, utilization and liquidity are all priced off it. Liquidity carries the
+> least because it partly overlaps utilization. There is no external framework these exact
+> weights are anchored to yet — they are open to challenge like any threshold below.
+>
+> **The v2 change deliberately did _not_ touch the weights.** Extending `oracleSafety`
+> rather than adding a sixth factor was chosen partly for this reason: a sixth member would
+> have forced a redistribution across all five, layering a second unanchored judgment call
+> on top of one already flagged as unanchored. The taxonomy in
+> [`core/src/types.ts`](core/src/types.ts) is unchanged at five factors.
 
 ---
 
@@ -137,38 +167,200 @@ many reserves it has, not against an arbitrary constant.
 
 ---
 
-### 2. `oracleSafety` — oracle price-feed freshness (weight 0.25)
+### 2. `oracleSafety` — price trustworthiness: freshness _and_ manipulation resistance (weight 0.25)
 
-**What it measures:** how stale the pool's worst oracle price is. A stale price is exactly
-what lets bad debt accrue undetected, so we take the **worst (oldest) reserve**, not the
-average.
+> **Changed in methodology v2.** Through v1 this factor scored price **age only**. A fresh
+> but manipulated price scored 100 — which is precisely the configuration behind the
+> February 2026 YieldBlox/Blend incident. Scores from before the change are stamped
+> `methodology_version = 1` and are not comparable with later ones; see
+> [Methodology versions](#methodology-versions).
 
-**Raw on-chain data (Soroban RPC):**
-
-- Per reserve: `lastprice(Asset::Stellar(address))` on the oracle contract → `timestamp`
-  (unix seconds, the oracle's own publish time).
-- `fetchedAt`: the adapter's read time (unix seconds).
-- `age = fetchedAt − timestamp` per reserve.
-
-**Formula** — linear decay on the worst age:
+**What it measures:** whether the prices this pool actually runs on can be trusted. Two
+things must both hold, and the factor takes **the binding constraint of the two** — a
+bounded stale price and a fresh unbounded price are both untrustworthy, for different
+reasons:
 
 ```
-Let worst = max age across all reserves
-    fresh = 600s   (10 minutes)  → 100
-    dead  = 3600s  (60 minutes)  → 0
-
-oracleSafety = clamp( (worst − dead) / (fresh − dead) × 100 , 0, 100 )
+oracleSafety = min( priceFreshness , deviationBound )
 ```
 
-So `worst ≤ 600s → 100`, `worst ≥ 3600s → 0`, linear in between. If **any** reserve has no
-oracle price at all → **0** (a missing feed is treated as maximally unsafe, not skipped).
+Both sub-signals take the **worst reserve**, the same convention as every other factor:
+the binding constraint is the single weakest reserve, and averaging would hide it. Both
+are published in the factor's `components` array so the composite is never an opaque
+number.
 
-**Why 10 min / 60 min:** these are an **unvalidated v1 judgment call**, flagged as such. 10
-minutes is a conservative "fresh enough for a lending pool" heuristic; 60 minutes is where
-we consider a feed effectively dead for risk purposes. The honest correct anchor would be
-each oracle's _own_ configured resolution/heartbeat (Blend's oracle publishes on an
-interval), and moving to read that per-oracle value is the intended v2 — at which point
-these constants get replaced by an on-chain anchor. Until then: judgment call, not fact.
+#### 2a. `priceFreshness` — how stale the worst price is
+
+**Raw on-chain data (Soroban RPC):** per reserve, the price's publish `timestamp` from
+the method the protocol's own pool calls; `fetchedAt` is the adapter's read time;
+`age = fetchedAt − timestamp`.
+
+```
+fresh = the protocol's own publish/refresh interval        → 100
+dead  = min( protocol's own max acceptable price age, 3600s ) → 0
+
+priceFreshness = clamp( (age − dead) / (fresh − dead) × 100 , 0, 100 )
+```
+
+No usable price for a reserve → **0** (a missing feed is maximally unsafe, not skipped).
+
+**Both anchors are the protocol's own on-chain parameters**, the same anchoring pattern
+`utilizationSafety` uses. Which parameter each resolves to is a documented per-protocol
+fact, not a per-protocol rule:
+
+| Protocol         | `fresh` source                                                                                                                                     | `dead` source                                                                                          |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| **Blend**        | `oracles()[i].resolution` on the pool's oracle aggregator (**300s**)                                                                               | `max_age()` on the same aggregator (**900s**)                                                          |
+| **Kinetic (K2)** | `PriceCacheTtl` on the price oracle (**30s**) — the window inside which K2 itself treats a price as current; K2 exposes no publish-interval getter | the **tighter** of the per-asset `max_age` (43200s) and the global `price_staleness_threshold` (3600s) |
+
+Taking the tighter of two limits a protocol declared is not a Stenion threshold — both
+numbers are K2's, and the binding one is the one that governs.
+
+> **⚠️ The 3600s cap on `dead` is the one Stenion constant left in this factor, and it is
+> an unvalidated v1 judgment call.** Anchoring purely to a protocol's own max age would
+> mean a protocol scores _better_ for tolerating staler prices — K2's per-asset `max_age`
+> is 12 hours, which would make a six-hour-old price score ~50. That is the wrong
+> incentive for a platform protocols are ranked by, so the anchor is capped. There is no
+> external framework fixing the cap at one hour; it is open to challenge like any
+> threshold here. It lives in one place, `STALE_CEILING_SECONDS` in
+> [`core/src/scoring.ts`](core/src/scoring.ts).
+
+#### 2b. `deviationBound` — can a single update move the price arbitrarily far?
+
+**Binary, not a curve:**
+
+```
+deviationBound = 100  if the pool's price path bounds a single-step move, and that bound is armed
+                 0    otherwise
+```
+
+| Protocol         | Bounded when                                                                                                                               |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Blend**        | the aggregator's per-asset `max_dev` satisfies `0 < max_dev < 100` — the contract's own condition in `oracle-aggregator/src/price_data.rs` |
+| **Kinetic (K2)** | `max_price_change_bps > 0` **and** `get_last_price(asset)` returns a present, non-zero baseline                                            |
+
+**Why the extra clause for K2.** The two contracts fail in opposite directions when there
+is no prior price to compare against. Blend's aggregator fails **closed**: with no older
+record it returns `None` and the reserve simply cannot be priced. K2's
+`validate_price_change` fails **open**: with no stored baseline it returns `Ok` and lets
+any price through, so a configured bound with no baseline is inert. Checking the baseline
+is what distinguishes a breaker that is configured from one that is actually armed — and
+the no-baseline case is exactly the newly-listed-thin-asset scenario that the YieldBlox
+incident ran through.
+
+**Why this is anchored, and what it isn't.** The scored quantity is the presence and
+arming of a bound, and it is read from the protocol's own on-chain configuration — the
+same pattern as `utilizationSafety`'s `max_util`. `max_dev = 0` does not mean "a tight
+bound of zero"; the aggregator's own type documentation says _"If this is 0, the oracle
+will just fetch the last price within the resolution time"_ — the check is skipped
+entirely. That is provably the condition that permits an unbounded single-step move.
+
+**Base assets are excluded, not scored 0.** The Blend aggregator's `lastprice`
+short-circuits its `Base` and `BaseAssets` to exactly `1.0` at the current ledger time
+without consulting any upstream feed. Those reserves have no oracle-derived price to
+grade, so they are dropped from both sub-signals and the count of excluded assets is
+disclosed. (Whether such a peg _holds_ is a real risk — but it is a collateral/peg
+question, not an oracle-robustness one, and inventing a number for it here would be the
+kind of fabrication ground rule 4 forbids.)
+
+#### 2c. Bound tightness is disclosed, never scored
+
+The raw bound is published as a **disclosure-only component** (`value: null`) — visible,
+never graded. Grading it would invent comparability the underlying data does not support:
+
+|                     | Blend `max_dev`                                              | K2 `max_price_change_bps`                                 |
+| ------------------- | ------------------------------------------------------------ | --------------------------------------------------------- |
+| Scope               | per asset                                                    | global                                                    |
+| Units               | whole percent (`60` = 60%)                                   | basis points (`2000` = 20%)                               |
+| **Baseline**        | the previous **upstream record**, one `resolution` step back | `get_last_price` — the last price the contract **served** |
+| **Bounds move per** | **publish interval (300s)**                                  | **query** — no fixed time spacing                         |
+
+Both compute `|new − old| / old`, and the unit difference normalizes trivially. The
+baseline difference does not: "20% per arbitrary interval" and "60% per five minutes" are
+different quantities, so the intuitive reading that K2's bound is three times tighter than
+Blend's is unsound. Publishing the numbers side by side without a score is the honest
+treatment.
+
+#### What was considered and deliberately rejected
+
+Recorded so these are not re-proposed as improvements later. Each was investigated against
+the February 2026 YieldBlox incident — the test being whether it would have distinguished
+the manipulated price from a legitimate one **at the time**, since a signal that looks
+sophisticated but would not have caught the actual attack is worse than none: it
+manufactures confidence.
+
+- **A Stenion-computed deviation from the oracle's price history** (calling Reflector's
+  `prices(asset, N)` ourselves and comparing the latest price to a trailing mean).
+  **Rejected — this would have made the platform actively worse.** It is a _coincident_
+  indicator, not a leading one: it can only fire while an attack is in progress, and only
+  if the indexer happens to sample inside the manipulation window. The indexer runs every
+  five minutes, so the overwhelmingly likely outcome is that it reads clean and Stenion
+  publishes a confident `oracleSafety` of 100 _during_ an active exploit. It also measures
+  a code path the pools never consult: neither Blend's aggregator nor K2's oracle exposes
+  price history to the pool at all. A signal that is usually silent during the event it
+  claims to detect, computed over data the protocol does not use, is not a weak signal —
+  it is a misleading one.
+- **TWAP.** Not available: the deployed Reflector contracts (`version() == 6`) expose no
+  `twap` method — the exported interface is `base, assets, decimals, resolution, price,
+prices, lastprice, last_timestamp, history_retention_period, …`. Earlier Reflector
+  versions had one; the live contracts do not. Neither protocol's oracle passes history
+  through either. And on the merits it would not have helped: the attacker held the only
+  trades in the window, so a short TWAP over a dead order book _is_ the manipulated price.
+- **Oracle type / provider identity** ("is it Reflector?"). Zero discriminating power: the
+  exploited pool and the healthy Blend pool both price through Reflector-family feeds via
+  the same `oracle-aggregator` contract family. What differed was configuration, not
+  provider.
+- **Number of upstream sources.** Both pools had exactly one upstream oracle, so it would
+  not have separated them. It is also not comparable across protocols: a count is only
+  readable where a contract happens to publish one (K2's upstream RedStone adapter exposes
+  `unique_signer_threshold() == 3`; Reflector's node consensus is not exposed on-chain at
+  all), so counting would systematically understate feeds that keep their aggregation
+  internal.
+- **SDEX order-book depth via Horizon.** Conceptually the right quantity — thin market
+  depth is what made the manipulation cheap — and mechanically readable. Rejected for now
+  on three grounds: order books are trivially spoofable with walls that are never hit; it
+  only applies to assets priced off the Stellar DEX; and it cannot be validated
+  retroactively, because the exploited market has since been rebuilt. Tracked as a
+  candidate in [`ROADMAP.md`](ROADMAP.md) rather than shipped on intuition.
+
+#### What this factor would have said on 2026-02-22
+
+Running the shipped adapter against the exploited pool and the healthy one today, same
+rulebook, no special-casing:
+
+| Pool                                        | `priceFreshness` | `deviationBound`                                    | `oracleSafety` |
+| ------------------------------------------- | ---------------- | --------------------------------------------------- | -------------- |
+| Blend Fixed V2 (`CAJJZSGM…`)                | 100              | 100 — all reserves bounded (`max_dev` 60/20/20)     | **100**        |
+| YieldBlox (`CCCCIQSD…`, the exploited pool) | 100              | 0 — XLM and AQUA carry `max_dev: 0`, check disabled | **0**          |
+
+Both pools' prices are fresh, so the v1 factor scores both 100. The v2 factor separates
+them, and on the axis that actually failed.
+
+> **⚠️ Two honest limits on that claim, stated rather than glossed:**
+>
+> 1. **The historical `max_dev` is a deduction, not a reading.** Soroban RPC serves no
+>    historical contract state, so the exact value USTRY carried on 2026-02-22 cannot be
+>    read back. What is verifiable: the deployed aggregator skips the deviation check
+>    entirely when `max_dev` is `0` or `≥ 100`, and rejects the price outright otherwise —
+>    so a ~100× single-step move is arithmetically incapable of passing any bound between
+>    1 and 99. USTRY's bound must therefore have been disabled. USTRY today carries
+>    `max_dev: 10`; XLM and AQUA in that same live contract still carry `0`.
+> 2. **Semantics were verified against the public repo, not that binary.** The exploited
+>    pool's aggregator (wasm `8cf43882…`) and Blend Fixed V2's (`41df0489…`) are different
+>    builds. Both export the same eleven functions, and the `max_dev` logic above is read
+>    from [blend-capital/oracle-aggregator](https://github.com/blend-capital/oracle-aggregator);
+>    it has not been decompiled from the exploited pool's specific binary.
+
+> **⚠️ K2's enforcement is an inference, held to the same standard.** `max_price_change_bps`
+> is enforced on every return path of `get_asset_price_data` in K2's audited source
+> (`code-423n4/2026-04-k2`), and the deployed wasm contains both the `max_price_change_bps`
+> and `PriceChangeTooLarge` symbols. But the live `kinetic_router` does not call that
+> method — it calls `get_asset_prices_vec_fresh`, one of nine functions present in the
+> deployed oracle and absent from the audited source, whose source is not public. The
+> audited sibling `get_asset_prices_vec` does enforce the breaker, and all three methods
+> return identical data today. We score it as enforced on that basis. **That is an
+> inference, not a verification**, and it is written up as a finding in its own right —
+> see the Kinetic entry in the registry.
 
 ---
 

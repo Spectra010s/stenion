@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, Boxes } from 'lucide-react';
+import { ArrowLeft, Boxes, Search } from 'lucide-react';
+import { notesFor, type ProtocolNote } from '../../lib/protocol-notes';
 import {
   FACTOR_ORDER,
   getProtocolDetail,
@@ -79,8 +80,53 @@ export default async function ProtocolDetailPage({ params }: { params: Promise<{
         )}
       </section>
 
+      <Findings notes={notesFor(detail.id)} name={detail.name} />
+
       <History history={detail.history} />
     </div>
+  );
+}
+
+/**
+ * Verifiable observations about a protocol's setup that are deliberately NOT
+ * scored. Rendered after the factor breakdown and labelled unmistakably, so it
+ * can never read as part of the number — the registry ranks purely on score.
+ */
+function Findings({ notes, name }: { notes: ProtocolNote[]; name: string }) {
+  if (notes.length === 0) return null;
+  return (
+    <section className="mt-14">
+      <Reveal>
+        <div className="flex items-center gap-2">
+          <Search className="h-4 w-4 text-accent" />
+          <h2 className="font-display text-xl font-semibold text-ink">Findings</h2>
+        </div>
+        <p className="mt-1 text-sm text-muted">
+          What we found reading {name}&rsquo;s contracts that isn&rsquo;t captured by a factor.{' '}
+          <span className="text-faint">
+            These do not affect the score and cannot change the ranking.
+          </span>
+        </p>
+      </Reveal>
+
+      <RevealGroup className="mt-6 space-y-3" stagger={0.06}>
+        {notes.map((note) => (
+          <RevealItem key={note.title}>
+            <article className="surface-lit rounded-xl border border-line p-5">
+              <h3 className="font-medium text-ink">{note.title}</h3>
+              {note.body.map((para, i) => (
+                <p key={i} className="mt-2.5 text-sm leading-relaxed text-muted">
+                  {para}
+                </p>
+              ))}
+              <p className="mt-3.5 border-t border-line-soft pt-3 text-xs leading-relaxed text-faint">
+                <span className="font-medium text-muted">Verify it yourself:</span> {note.verify}
+              </p>
+            </article>
+          </RevealItem>
+        ))}
+      </RevealGroup>
+    </section>
   );
 }
 
@@ -138,23 +184,51 @@ function History({ history }: { history: HistoryEntry[] }) {
 
       <Reveal delay={0.05} className="mt-5 overflow-hidden rounded-xl border border-line">
         <ul className="divide-y divide-line-soft">
-          {history.map((h, i) => (
-            <li key={i} className="flex items-center gap-3 bg-surface/40 px-4 py-3 text-sm">
-              <span
-                className={`h-2 w-2 shrink-0 rounded-full ${
-                  h.status === 'ok' ? 'bg-safe' : 'bg-danger'
-                }`}
-              />
-              <span className="tnum w-40 shrink-0 text-muted">{formatTimestamp(h.runAt)}</span>
-              {h.status === 'ok' ? (
-                <span className="text-ink">
-                  scored <span className="tnum font-semibold">{h.safetyScore}</span>
-                </span>
-              ) : (
-                <span className="truncate text-danger">failed — {h.error}</span>
-              )}
-            </li>
-          ))}
+          {history.map((h, i) => {
+            // History is newest-first, so the row *after* this one is older. When
+            // its methodology version is lower, the rules changed between them —
+            // mark it, so a step in the score doesn't read as a move in risk.
+            const older = history[i + 1];
+            const breakAfter =
+              h.status === 'ok' &&
+              older?.status === 'ok' &&
+              older.methodologyVersion < h.methodologyVersion;
+
+            return (
+              <li key={i}>
+                <div className="flex items-center gap-3 bg-surface/40 px-4 py-3 text-sm">
+                  <span
+                    className={`h-2 w-2 shrink-0 rounded-full ${
+                      h.status === 'ok' ? 'bg-safe' : 'bg-danger'
+                    }`}
+                  />
+                  <span className="tnum w-40 shrink-0 text-muted">{formatTimestamp(h.runAt)}</span>
+                  {h.status === 'ok' ? (
+                    <span className="text-ink">
+                      scored <span className="tnum font-semibold">{h.safetyScore}</span>
+                    </span>
+                  ) : (
+                    <span className="truncate text-danger">failed — {h.error}</span>
+                  )}
+                </div>
+
+                {breakAfter && (
+                  <div className="border-t border-dashed border-line bg-surface-2/60 px-4 py-2.5 text-xs leading-relaxed text-faint">
+                    <span className="font-medium text-muted">
+                      Methodology v{(older as { methodologyVersion: number }).methodologyVersion} →
+                      v{(h as { methodologyVersion: number }).methodologyVersion}.
+                    </span>{' '}
+                    Scoring rules changed here, so scores above and below this line are not
+                    comparable. Earlier runs cannot be recomputed — only scores are stored, not the
+                    on-chain inputs behind them.{' '}
+                    <Link href="/methodology" className="underline hover:text-ink">
+                      What changed
+                    </Link>
+                  </div>
+                )}
+              </li>
+            );
+          })}
         </ul>
       </Reveal>
     </section>
