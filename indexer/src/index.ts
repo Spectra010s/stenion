@@ -15,6 +15,7 @@
 // caught and logged so it can't kill the loop.
 
 import { BlendAdapter, KineticAdapter } from '@stenion/adapters';
+import { METHODOLOGY_VERSION } from '@stenion/core';
 import type { Adapter, ProtocolMetadata, RiskFactorMap } from '@stenion/core';
 import { closePool, createStore, getPool, type RunRecord, type Store } from '@stenion/db';
 
@@ -79,6 +80,9 @@ async function runCycle(targets: IndexTarget[], store: Store): Promise<CycleSumm
         status: 'ok',
         safetyScore,
         factors,
+        // Stamped here, not by the adapter: one rulebook applies to every
+        // protocol, so the version is a property of the run, not of the adapter.
+        methodologyVersion: METHODOLOGY_VERSION,
         computedAt: computedAt.toISOString(),
         runAt,
       };
