@@ -180,6 +180,12 @@ pnpm lint          # eslint clean
 pnpm typecheck     # tsc clean
 ```
 
+**Branch off `dev`, and open your PR against `dev` — not `main`.** `main` is the branch Vercel
+auto-deploys, so anything merged there is live on the public site immediately, with a real number
+next to a real protocol's name. `dev` is where changes get reviewed and verified against live
+mainnet first; it's promoted to `main` deliberately, not per-PR. GitHub defaults the base branch to
+`main`, so check the base before you submit — a PR targeting `main` will be asked to retarget.
+
 > **Local hazard:** never run `next build`/`next start`/a second `next dev` against the same
 > checkout while a dev server is up — they share one `.next` and corrupt each other. Vercel builds
 > in isolation, so this is a local-only issue.
