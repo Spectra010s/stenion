@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* global console, fetch, process */
 
 const DEFAULT_BAD_ID = 'stenion-smoke-missing-protocol';
 const EXPECTED_ERROR = 'Protocol not found';
