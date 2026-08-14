@@ -48,8 +48,18 @@ loading, and the persisted `RunRecord` type. Two tables:
   indexer startup from adapter metadata.
 - `risk_scores` — append-only history. `safety_score` is promoted to its own `numeric` column
   (it's what the registry ranks on); the five factors live in one `jsonb` column (displayed, not
-  ranked, and growing the taxonomy then needs no migration). A DB-level CHECK enforces the
-  `ok`/`failed` discriminated union.
+  ranked, and growing the taxonomy then needs no migration). `methodology_version` records which
+  rulebook produced the score — see below. A DB-level CHECK enforces the `ok`/`failed`
+  discriminated union.
+
+**Methodology versioning.** A scoring change that makes old scores non-comparable bumps
+`METHODOLOGY_VERSION` in `@stenion/core`; the indexer stamps it onto every run. History is
+**never backfilled** — `risk_scores` keeps only outputs (score + factor map), never the raw
+on-chain inputs, so an old row genuinely cannot be recomputed under new rules. The version is
+surfaced on the protocol detail and on each history point so the dashboard marks the break
+rather than rendering an unexplained step change. Migrations that add such a column must stay
+writable by the _currently deployed_ indexer: `main` keeps running the old code until it's
+promoted, and both share one Neon database.
 
 Migrations are raw `.sql` files plus a ~40-line runner (`db/src/migrate.ts`) — no ORM.
 

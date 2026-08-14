@@ -28,7 +28,16 @@ These override any default behavior and are enforced in code and review:
 - **No fabricated numbers.** When real data isn't available for a factor, use a clearly-flagged
   neutral baseline (e.g. `adminKeySafety`'s contract-admin `60`) — never an invented value.
 - **Code and `METHODOLOGY.md` are not allowed to drift.** Any change to a formula/threshold/weight
-  changes both together, at the same review bar.
+  changes both together, at the same review bar. Shared rulebook logic that two adapters would
+  otherwise duplicate lives in [`core/src/scoring.ts`](core/src/scoring.ts), so it can't drift
+  between them.
+- **A scoring change that makes old scores non-comparable bumps `METHODOLOGY_VERSION`**
+  (`core/src/types.ts`), stamped onto every run by the indexer. History is never backfilled —
+  `risk_scores` stores only outputs, not the raw inputs — so the discontinuity is labeled, not
+  hidden.
+- **Findings are not scores.** Verifiable observations we can't or won't grade go in the protocol
+  page's Findings section (`dashboard/app/lib/protocol-notes.ts`), never into a factor. Nothing
+  there is read by any scoring path.
 
 ## Score conventions & taxonomy
 
