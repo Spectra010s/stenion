@@ -18,6 +18,7 @@ import {
   RiskFactorType,
   RiskScoreResult,
   freshnessWindow,
+  scoreFactors,
 } from '@stenion/core';
 
 // ---------------------------------------------------------------------------
@@ -822,18 +823,11 @@ export class KineticAdapter implements Adapter<KineticRawData> {
     };
   }
 
-  // Weighted mean of the factors, renormalizing over whichever are non-null.
-  // Identical to Blend — the shared scoring formula is not per-protocol.
+  // Delegates to the shared rulebook in @stenion/core. The weighted mean is not
+  // per-protocol (METHODOLOGY.md ground rule 1), so it must not be reimplemented
+  // here — this method exists only to satisfy the Adapter interface.
   score(factors: RiskFactorMap): RiskScoreResult {
-    let weighted = 0;
-    let totalWeight = 0;
-    for (const factor of Object.values(factors)) {
-      if (!factor) continue;
-      weighted += factor.value * factor.weight;
-      totalWeight += factor.weight;
-    }
-    const score = totalWeight === 0 ? 0 : Math.round(weighted / totalWeight);
-    return { score, factors, computedAt: new Date() };
+    return scoreFactors(factors);
   }
 }
 

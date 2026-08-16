@@ -18,13 +18,26 @@ package; the adapters import `@stenion/core`'s `Adapter` interface as a real typ
 /dashboard   — @stenion/dashboard   Next.js site + the deployed API routes + the cron-trigger route
 ```
 
-TypeScript is configured in three layers (see [`CLAUDE.md`](CLAUDE.md) for the rationale):
+TypeScript is configured in four layers (see [`CLAUDE.md`](CLAUDE.md) for the rationale):
 
 - `tsconfig.base.json` — shared compiler settings only (target, strict, etc.).
 - `tsconfig.node.json` — extends base, adds `nodeNext` module/resolution. Backend packages
   (`core`, `db`, `indexer`, `api`, `adapters`) extend this.
+- `tsconfig.check.json` — extends the Node config, adds `noEmit` + `allowImportingTsExtensions`.
+  A backend package's own `tsconfig.json` extends **this**, so its sources and its `*.test.ts` are
+  typechecked as one project; the package emits from a sibling `tsconfig.build.json` that excludes
+  tests. Test files import with explicit `.ts` extensions because Node's runner needs them under
+  type stripping, and tsc only permits that when it isn't emitting — hence the split.
+
+  **The direction matters.** Editors resolve a file through the nearest `tsconfig.json`, so that
+  config is the one that must include the tests. Excluding them there (and typechecking via a
+  separately-named config) leaves test files in no project at all: the CLI passes, because it was
+  pointed at the right file explicitly, while the editor falls back to an inferred project and
+  underlines every `.ts` import. Only `core` uses this split so far — the other backend packages
+  adopt it when they get their first test.
+
 - `dashboard` has its own Next.js-generated config (bundler resolution) — it does **not** extend
-  the Node config.
+  the Node config. It needs no split: it's already `noEmit` and sets the flag directly.
 
 ### What each package does
 
@@ -33,6 +46,12 @@ interface (`fetchRawData` → `computeRiskFactors` → `score`), the `RiskFactor
 five-factor `*Safety` taxonomy), and the shared result types. Adding a factor here is a breaking
 change felt by every adapter, so it's deliberately small and stable. Carries
 `ADAPTER_INTERFACE_VERSION` as a seam for future breaking changes.
+
+It also owns the pieces of the rulebook that must not differ between adapters, in
+`core/src/scoring.ts`: `scoreFactors()` (the weighted mean — an adapter's `score()` delegates to it
+and must never reimplement it, or two protocols end up on two rulebooks) and `freshnessWindow()`
+with `STALE_CEILING_SECONDS`. Per-protocol _input reading_ stays in the adapters; nothing in this
+file reaches for chain data.
 
 **`@stenion/adapters`** — one file per protocol, each a class implementing `Adapter`. An adapter
 reads a protocol's on-chain state (Soroban RPC + Horizon), reduces it into the five `*Safety`
@@ -167,12 +186,26 @@ as runtime requires, not webpack-bundled) and pins `outputFileTracingRoot` to th
 workspace-dep tracing is correct. On Vercel: Root Directory = `dashboard`, Build Command =
 `pnpm run build`.
 
-**Tests:** `pnpm test` at the root, fanning out to whichever packages define one. There is **no
-test framework dependency** — tests are `*.test.ts` files run by Node's built-in test runner
-(`node --test`) against Node 24's native TypeScript stripping. Coverage is deliberately narrow:
-pure logic whose important cases live data can't reach. The score-history series builder is the
-current example — as of 2026-08-14 `risk_scores` held 527 rows and not one failed run, so the
-failed-run path had to be proven against fixtures rather than by looking at the page.
+**Tests:** `pnpm test` at the root, fanning out to whichever packages define one, and **run by CI on
+every PR**. There is **no test framework dependency** — tests are `*.test.ts` files run by Node's
+built-in test runner (`node --test`) against native TypeScript stripping, which is why CI and
+`.nvmrc` pin Node 24 (the floor is 22.18). Coverage is deliberately narrow: pure logic whose
+important cases live data can't reach.
+
+Two things follow from strip-only mode and are worth knowing before writing a test: a `.ts` test
+file must import with an explicit `.ts` extension, and it **cannot value-import a TypeScript
+`enum`** — `RiskFactorType` included, since Node rejects `enum` as unstrippable syntax. Import the
+enum's _type_ and use its string values, or import it from a package's built `dist/`.
+
+The two worked examples:
+
+- **`core/src/scoring.test.ts`** — `scoreFactors`, the weighted mean every protocol's score passes
+  through. Several assertions parse `METHODOLOGY.md` and the `RiskFactorType` enum as text rather
+  than restating their numbers, so the rule that code and the methodology may not drift is enforced
+  mechanically instead of by review attention.
+- **`dashboard/app/lib/score-series.test.ts`** — the score-history series builder. As of
+  2026-08-14 `risk_scores` held 527 rows and not one failed run, so the failed-run path had to be
+  proven against fixtures rather than by looking at the page.
 
 **Environment variables** (all on the one Vercel project, Production + Preview): `DATABASE_URL`
 (Neon pooled), `STENION_RPC_URL`, `STENION_HORIZON_URL`, `CRON_SECRET`. Locally, every package

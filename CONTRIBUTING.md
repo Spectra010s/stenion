@@ -86,20 +86,33 @@ Conventions you must not break:
 **How** a factor is computed can differ per protocol; the names, scale, and thresholds do not. New
 factors are added to `@stenion/core` for everyone at once — never invented per-adapter.
 
-`score()` is the same weighted mean for every adapter (copy it from `adapters/blend.ts`):
+**`score()` delegates to `@stenion/core` — do not reimplement the weighted mean.** Your adapter's
+`score()` is one line:
 
 ```ts
+import { scoreFactors } from '@stenion/core';
+
 score(factors: RiskFactorMap): RiskScoreResult {
-  let weighted = 0, totalWeight = 0;
-  for (const factor of Object.values(factors)) {
-    if (!factor) continue;                    // null factors are excluded, weights renormalize
-    weighted += factor.value * factor.weight;
-    totalWeight += factor.weight;
-  }
-  const score = totalWeight === 0 ? 0 : Math.round(weighted / totalWeight);
-  return { score, factors, computedAt: new Date() };
+  return scoreFactors(factors);
 }
 ```
+
+The method exists on the interface only so the indexer can call it; the arithmetic behind it is not
+yours to choose.
+
+**Why it's shared, not copied.** Ground rule 1 in [`METHODOLOGY.md`](METHODOLOGY.md) is that one
+rulebook applies to every protocol — that is the entire basis for claiming two protocols' scores are
+comparable. A per-adapter copy of the weighted mean is a second rulebook waiting to happen: the
+moment one copy is edited and the others aren't, "Blend 53 vs Kinetic 61" stops meaning anything,
+and nothing in review reliably catches a one-line divergence buried in an 800-line adapter. So the
+formula lives in [`core/src/scoring.ts`](core/src/scoring.ts), where changing it changes every
+protocol at once, deliberately and visibly.
+
+That also means **a change to the weighted mean is a methodology change, not an adapter change** —
+it moves every published score, so it needs the `METHODOLOGY.md` edit and probably a
+`METHODOLOGY_VERSION` bump (see [Changing a formula or threshold](#changing-a-formula-or-threshold)).
+If you find yourself wanting different scoring arithmetic for your protocol, that's the conversation
+to open — not something to work around locally.
 
 ## Error handling — throw, don't swallow
 

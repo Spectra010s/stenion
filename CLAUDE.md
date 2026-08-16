@@ -58,7 +58,12 @@ These override any default behavior and are enforced in code and review:
   monorepo — see [`ARCHITECTURE.md`](ARCHITECTURE.md) for the package map.
 - **TypeScript config split:** `tsconfig.base.json` (shared settings) → `tsconfig.node.json`
   (`nodeNext`, extended by all backend packages) → `dashboard` has its own Next.js config (bundler
-  resolution), which does **not** extend the Node config. Verify with
+  resolution), which does **not** extend the Node config. Plus `tsconfig.check.json` (`noEmit` +
+  `allowImportingTsExtensions`), extended by a backend package's own `tsconfig.json` so that
+  sources **and** `*.test.ts` are typechecked together; emitting moves to a sibling
+  `tsconfig.build.json` that excludes tests. **Keep it that way round:** editors resolve a file
+  through the nearest `tsconfig.json`, so if that config excludes tests they belong to no project
+  and the editor red-underlines every `.ts` import while the CLI stays green. Verify with
   `pnpm -r exec tsc --showConfig` if something looks off (restart the TS server before assuming a
   config bug — editor squiggles can be stale cache).
 - **Error handling:** adapters throw on failure; the indexer wraps each run in try/catch and records
