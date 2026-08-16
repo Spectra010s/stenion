@@ -195,6 +195,13 @@ as runtime requires, not webpack-bundled) and pins `outputFileTracingRoot` to th
 workspace-dep tracing is correct. On Vercel: Root Directory = `dashboard`, Build Command =
 `pnpm run build`.
 
+The workspace packages themselves are **not** externalised — they are bundled into the serverless
+functions, and therefore **minified**, which renames classes and functions. Nothing that is
+persisted or published may be derived from a runtime identifier (`constructor.name`, `fn.name`):
+those values are correct under `node --test` and `next dev` and wrong in the only environment that
+writes the data. `ProtocolMetadata.adapterRef` is a hardcoded literal for exactly this reason — see
+[`CONTRIBUTING.md`](CONTRIBUTING.md#adapterref-must-be-a-hardcoded-string-literal).
+
 **Tests:** `pnpm test` at the root, fanning out to whichever packages define one, and **run by CI on
 every PR**. There is **no test framework dependency** — tests are `*.test.ts` files run by Node's
 built-in test runner (`node --test`) against native TypeScript stripping, which is why CI and

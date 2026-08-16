@@ -88,7 +88,12 @@ describe('Store SQL (integration)', { skip }, () => {
   it('surfaces the last good score and flags it stale when the newest run failed', async () => {
     // The two LATERAL joins, which is the whole reason this needs real SQL.
     const p = id('stale');
-    await store.upsertProtocol({ id: p, name: 'Stale', chain: 'stellar' }, 'FakeAdapter');
+    await store.upsertProtocol({
+      id: p,
+      name: 'Stale',
+      chain: 'stellar',
+      adapterRef: 'FakeAdapter',
+    });
     await insertRun(p, { status: 'ok', score: 53, runAt: '2026-08-16T10:00:00Z' });
     await insertRun(p, { status: 'failed', error: 'RPC down', runAt: '2026-08-16T10:05:00Z' });
 
@@ -106,7 +111,12 @@ describe('Store SQL (integration)', { skip }, () => {
 
   it('returns a protocol with no runs, rather than hiding it', async () => {
     const p = id('unscored');
-    await store.upsertProtocol({ id: p, name: 'Unscored', chain: 'stellar' }, 'FakeAdapter');
+    await store.upsertProtocol({
+      id: p,
+      name: 'Unscored',
+      chain: 'stellar',
+      adapterRef: 'FakeAdapter',
+    });
 
     const detail = await store.getProtocolDetail(p);
     assert.ok(detail, 'a registered protocol with no runs must still resolve');
@@ -117,7 +127,12 @@ describe('Store SQL (integration)', { skip }, () => {
 
   it('orders history newest-first', async () => {
     const p = id('history');
-    await store.upsertProtocol({ id: p, name: 'History', chain: 'stellar' }, 'FakeAdapter');
+    await store.upsertProtocol({
+      id: p,
+      name: 'History',
+      chain: 'stellar',
+      adapterRef: 'FakeAdapter',
+    });
     await insertRun(p, { status: 'ok', score: 40, runAt: '2026-08-16T10:00:00Z' });
     await insertRun(p, { status: 'ok', score: 60, runAt: '2026-08-16T10:10:00Z' });
     await insertRun(p, { status: 'failed', runAt: '2026-08-16T10:05:00Z' });
@@ -141,7 +156,7 @@ describe('Store SQL (integration)', { skip }, () => {
       [high, 'High'],
       [none, 'None'],
     ]) {
-      await store.upsertProtocol({ id: p, name, chain: 'stellar' }, 'FakeAdapter');
+      await store.upsertProtocol({ id: p, name, chain: 'stellar', adapterRef: 'FakeAdapter' });
     }
     await insertRun(low, { status: 'ok', score: 10, runAt: '2026-08-16T10:00:00Z' });
     await insertRun(high, { status: 'ok', score: 90, runAt: '2026-08-16T10:00:00Z' });
@@ -163,7 +178,12 @@ describe('Store SQL (integration)', { skip }, () => {
     // RunRecord union: a failed row carrying a score should be impossible even
     // if application code regressed.
     const p = id('check');
-    await store.upsertProtocol({ id: p, name: 'Check', chain: 'stellar' }, 'FakeAdapter');
+    await store.upsertProtocol({
+      id: p,
+      name: 'Check',
+      chain: 'stellar',
+      adapterRef: 'FakeAdapter',
+    });
     await assert.rejects(
       () =>
         pool.query(
@@ -178,7 +198,12 @@ describe('Store SQL (integration)', { skip }, () => {
 
   it('round-trips a run written through insertRunRecord', async () => {
     const p = id('roundtrip');
-    await store.upsertProtocol({ id: p, name: 'Round', chain: 'stellar' }, 'FakeAdapter');
+    await store.upsertProtocol({
+      id: p,
+      name: 'Round',
+      chain: 'stellar',
+      adapterRef: 'FakeAdapter',
+    });
     await store.insertRunRecord({
       protocolId: p,
       status: 'ok',
@@ -206,8 +231,8 @@ describe('Store SQL (integration)', { skip }, () => {
 
   it('upsertProtocol is idempotent and refreshes metadata', async () => {
     const p = id('upsert');
-    await store.upsertProtocol({ id: p, name: 'First', chain: 'stellar' }, 'AdapterA');
-    await store.upsertProtocol({ id: p, name: 'Second', chain: 'stellar' }, 'AdapterB');
+    await store.upsertProtocol({ id: p, name: 'First', chain: 'stellar', adapterRef: 'AdapterA' });
+    await store.upsertProtocol({ id: p, name: 'Second', chain: 'stellar', adapterRef: 'AdapterB' });
 
     const detail = await store.getProtocolDetail(p);
     assert.equal(detail!.name, 'Second');

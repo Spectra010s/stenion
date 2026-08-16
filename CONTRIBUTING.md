@@ -41,7 +41,8 @@ it stays internal to your adapter.
 
 ```ts
 export interface Adapter<TRawData = unknown> {
-  readonly metadata: ProtocolMetadata; // { id: slug, name, chain: 'stellar' }
+  // { id: slug, name, chain: 'stellar', adapterRef: 'YourAdapter' }
+  readonly metadata: ProtocolMetadata;
 
   fetchRawData(): Promise<TRawData>; // pull raw on-chain state (RPC + Horizon)
 
@@ -53,6 +54,43 @@ export interface Adapter<TRawData = unknown> {
 
 Three separate methods (not one `run()`) so the indexer can inspect intermediate output and so
 `score()` can be unit-tested against fixed factor inputs without touching RPC.
+
+### `adapterRef` must be a hardcoded string literal
+
+`metadata.adapterRef` names the class that produced the score (`'BlendAdapter'`). It is stored in
+`protocols.adapter` and published on `GET /api/v1/protocol/:id`, where it is the provenance label a
+reader follows to find your adapter in this repo.
+
+Write it out by hand:
+
+```ts
+readonly metadata: ProtocolMetadata = {
+  id: 'yourprotocol',
+  name: 'YourProtocol',
+  chain: 'stellar',
+  adapterRef: 'YourProtocolAdapter', // literal — never this.constructor.name
+};
+```
+
+**Never derive it from the class name** — not `this.constructor.name`, not
+`YourAdapter.name`, not anything else read off a runtime identifier. It looks like the obvious
+DRY move and it is silently wrong in production:
+
+The indexer is not a standalone deployed process. It runs inside the dashboard's serverless cron
+route (`dashboard/app/api/cron/run-indexer`), which imports `@stenion/indexer` and, through it,
+your adapter class. Next bundles the workspace packages into that function and **minifies them**,
+which renames classes — `class BlendAdapter` becomes `class w`. `constructor.name` then returns
+`'w'`, and that is what gets written to the database.
+
+Nothing catches this before it ships. It is correct under `node --test`, correct under `next dev`,
+and correct in every local run, because none of those minify. It is wrong only in the one
+environment that actually writes the published data. This is not hypothetical: it is exactly how
+every row in `protocols` came to have `adapter = 'w'` for both shipped protocols until it was
+fixed. A string literal is a value the bundler has no license to rewrite; a class name is not.
+
+The same reasoning applies to anything else an adapter persists or publishes. If a value ends up in
+the database or an API response, it must come from a literal or from on-chain data — never from a
+JavaScript identifier.
 
 ## The `*Safety` taxonomy — populate all five
 

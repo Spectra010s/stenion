@@ -25,6 +25,21 @@ export interface ProtocolMetadata {
   id: string;
   name: string;
   chain: Chain;
+  /**
+   * Which adapter produced this protocol's scores, e.g. "BlendAdapter".
+   * Persisted to `protocols.adapter` and published on GET /api/v1/protocol/:id
+   * as the provenance label a reader uses to find the adapter in the repo.
+   *
+   * MUST be a string literal. Never `this.constructor.name` or anything else
+   * derived from a runtime identifier: the workspace packages are bundled and
+   * minified into the dashboard's serverless functions, which renames the
+   * classes. Deriving it is how every row in `protocols` came to read `w`
+   * instead of `BlendAdapter`/`KineticAdapter` — correct in every test and in
+   * local dev, wrong in the only environment that actually writes the data.
+   * It sits here with id/name/chain because it is the same kind of value:
+   * a fixed string the build cannot rewrite.
+   */
+  adapterRef: string;
 }
 
 /**

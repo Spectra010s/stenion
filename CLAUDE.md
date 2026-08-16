@@ -77,6 +77,11 @@ These override any default behavior and are enforced in code and review:
   so a heterogeneous adapter list shares one typed run loop. `core/src/adapter.ts` carries
   `ADAPTER_INTERFACE_VERSION` — bump it for future breaking interface changes rather than rewriting
   every adapter at once.
+- **Nothing persisted or published may come from a runtime identifier.** No `constructor.name`,
+  `fn.name`, or similar for a value that reaches the database or an API response — use a string
+  literal. The workspace packages are bundled and minified into the dashboard's serverless
+  functions, so identifiers are renamed there and _only_ there: such a value is correct in every
+  test and in local dev, and wrong in production. Full rationale in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 - **Tests are `node --test`, zero dependencies.** `*.test.ts` files run on Node's built-in runner
   via native type stripping (`pnpm test`); test files import with an explicit `.ts` extension, app
   code doesn't. Test pure logic whose important cases live data can't reach — not for coverage.
