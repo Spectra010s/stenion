@@ -235,6 +235,36 @@ defaults, and each test overrides only the field it's about. Cover the cases you
 state can't currently reach, because those are the ones nobody would otherwise notice breaking —
 for both shipped adapters that's the whole of `oracleSafety`'s failure side.
 
+### Mainnet snapshot fixtures
+
+Alongside the synthetic tests, `adapters/fixtures/*.ts` holds **frozen captures of real mainnet
+state**, asserted in `adapters/snapshot.test.ts`. They exist because hand-built fixtures use tidy
+numbers and real pools don't: Blend's live reserves carry `b_rate` values like 1.2214, and a bug in
+the fixed-point scaling cancels out entirely when the rate is exactly 1.0. Removing the rate
+multiplication passes every synthetic test and fails only here.
+
+Capture one with:
+
+```bash
+pnpm --filter @stenion/adapters build     # the script reads the built adapter
+pnpm capture:fixture blend                # or: kinetic | all
+pnpm format                               # the generated file is unformatted
+```
+
+This hits live RPC and Horizon, so it is **manual only** — never run by CI, never part of
+`pnpm test`. The committed fixture is then read offline.
+
+**Refresh deliberately, not on a schedule.** Freezing is the point: a fixture that drifts with the
+chain can't detect a regression. Regenerate when a change to the raw shape makes an old capture
+structurally invalid — and the `satisfies BlendRawData` in each fixture will tell you, because a new
+required field makes the stale file stop compiling rather than silently feeding the adapter a shape
+the adapter no longer produces.
+
+After regenerating, **re-derive the expected values in `snapshot.test.ts` by hand.** If a factor
+moved, work out whether the chain moved or your change did, before committing. That re-derivation is
+the review step — a snapshot test whose expected values get updated reflexively is worse than no
+snapshot test, because it looks like coverage.
+
 Two mechanical gotchas, both from Node's type stripping being purely syntactic:
 
 - **Split your imports.** `import type { Adapter, RiskFactorMap } from '@stenion/core'` for types,

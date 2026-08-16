@@ -223,6 +223,13 @@ The worked examples:
   every methodology rule is reachable without RPC. This is where methodology v2's `oracleSafety` is
   pinned: both live pools price fresh and bounded, so a live run exercises neither the disabled-bound
   path nor K2's inert-breaker path — the two the rulebook exists to catch.
+- **`adapters/snapshot.test.ts`** — the same adapters against **frozen mainnet captures** in
+  `adapters/fixtures/`. This asks a different question from the synthetic suites: not "does the code
+  match the rulebook" but "did a refactor move a published number on real data". It is the only
+  coverage that would notice a decode or fixed-point scaling regression, because the synthetic
+  builders use convenient values (`b_rate` = 1.0, one decimals value, round balances) and real pools
+  do not — dropping the `b_rate` multiplication entirely is an exact identity under a unit rate and
+  passes all 71 synthetic tests, while failing here.
 - **`indexer/src/cycle.test.ts`** — the run loop's error model, against a deliberately throwing
   adapter and an in-memory `Store`. The contract is that an adapter throws, the indexer records a
   failed run and continues; as of 2026-08-16 `risk_scores` held 1,683 rows and **zero** failed ones,
