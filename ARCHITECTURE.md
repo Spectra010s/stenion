@@ -33,8 +33,8 @@ TypeScript is configured in four layers (see [`CLAUDE.md`](CLAUDE.md) for the ra
   config is the one that must include the tests. Excluding them there (and typechecking via a
   separately-named config) leaves test files in no project at all: the CLI passes, because it was
   pointed at the right file explicitly, while the editor falls back to an inferred project and
-  underlines every `.ts` import. `core` and `adapters` use this split; `db` and `indexer` adopt it
-  when they get their first test.
+  underlines every `.ts` import. `core`, `adapters` and `indexer` use this split; `db` adopts it
+  when it gets its first test.
 
 - `dashboard` has its own Next.js-generated config (bundler resolution) — it does **not** extend
   the Node config. It needs no split: it's already `noEmit` and sets the flag directly.
@@ -91,6 +91,15 @@ share one typed run loop), wraps each run in try/catch, and writes the outcome �
 or a failed marker — to Postgres. Deliberately dumb: one interval, no retries, no alerting. It
 exports `runIndexerCycle()` (one cycle, used by the cron route) and guards its standalone loop
 behind `require.main === module` so importing it doesn't start the loop.
+
+The package is two modules, split along a line worth preserving. `src/cycle.ts` holds the run loop
+(`runCycle`, `toTarget`) and is a pure function of its arguments — it takes the targets and the
+`Store` to write to, and reaches for no env, no pool, and no config. `src/index.ts` is the process
+entry point: env loading, pool construction, the interval, and the `require.main` guard. The split
+exists because the error model is the part most worth testing and least exercised in production, and
+the entry point cannot be imported from a test at all — its `require.main` guard and extensionless
+relative imports are both CommonJS-only, which Node's ESM type-stripping loader rejects. Keep new
+run-loop logic in `cycle.ts`.
 
 **`@stenion/dashboard`** — a Next.js 15 (App Router) site, and the actual deployment target. It's
 three things in one Vercel project:
@@ -214,6 +223,10 @@ The worked examples:
   every methodology rule is reachable without RPC. This is where methodology v2's `oracleSafety` is
   pinned: both live pools price fresh and bounded, so a live run exercises neither the disabled-bound
   path nor K2's inert-breaker path — the two the rulebook exists to catch.
+- **`indexer/src/cycle.test.ts`** — the run loop's error model, against a deliberately throwing
+  adapter and an in-memory `Store`. The contract is that an adapter throws, the indexer records a
+  failed run and continues; as of 2026-08-16 `risk_scores` held 1,683 rows and **zero** failed ones,
+  so nothing about this path is evidenced by it having run in production.
 - **`dashboard/app/lib/score-series.test.ts`** — the score-history series builder. As of
   2026-08-14 `risk_scores` held 527 rows and not one failed run, so the failed-run path had to be
   proven against fixtures rather than by looking at the page.
