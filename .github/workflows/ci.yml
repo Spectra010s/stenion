@@ -10,9 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # No `version:` input on purpose — action-setup reads the `packageManager`
+      # field from package.json, so the pin lives in exactly one place and CI
+      # cannot drift from what corepack gives a contributor locally.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           # 24, not 20: `pnpm test` runs *.test.ts on Node's built-in runner via
