@@ -132,7 +132,8 @@ mirrors Blend/K2 — is the whole point.
 
 ## Local development setup
 
-**Prerequisites:** Node 20+, pnpm via corepack, and a Postgres database (Neon free tier works).
+**Prerequisites:** Node 22.18+ (24 recommended — see [`.nvmrc`](.nvmrc); the test runner needs
+native TypeScript stripping), pnpm via corepack, and a Postgres database (Neon free tier works).
 
 ```bash
 corepack enable
@@ -178,6 +179,7 @@ pnpm format        # prettier, writes in place — run this first
 pnpm build         # all packages compile
 pnpm lint          # eslint clean
 pnpm typecheck     # tsc clean
+pnpm test          # node --test, all packages — run build first, tests resolve deps via dist/
 ```
 
 **Branch off `dev`, and open your PR against `dev` — not `main`.** `main` is the branch Vercel
@@ -269,7 +271,8 @@ Your PR should:
 - Confirm every on-chain method/field name against the protocol's audited source or SDK — say so,
   and link it.
 - Include the live-mainnet verification (what you ran, what the output was, why it's plausible).
-- Pass `pnpm format:check`, `pnpm build`, `pnpm lint`, `pnpm typecheck` from the repo root.
+- Pass `pnpm format:check`, `pnpm build`, `pnpm lint`, `pnpm typecheck`, `pnpm test` from the repo
+  root. CI runs all five, in that order.
 - Update `METHODOLOGY.md` in the same PR if — and only if — you introduced a per-protocol anchoring
   fact (like K2's `OPTIMAL_UTILIZATION_RATE`).
 

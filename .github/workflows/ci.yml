@@ -15,7 +15,10 @@ jobs:
           version: 9
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # 24, not 20: `pnpm test` runs *.test.ts on Node's built-in runner via
+          # native TypeScript stripping, which needs 22.18+. On 20 the test step
+          # fails outright. Keep in sync with .nvmrc and root package.json engines.
+          node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # Formatting first: it's the fastest check and the cheapest failure to fix
@@ -24,3 +27,6 @@ jobs:
       - run: pnpm run lint
       - run: pnpm -r build
       - run: pnpm run typecheck
+      # Tests run last: they're the slowest check, and they import workspace deps
+      # through their dist/ output, so they need the build above to have run.
+      - run: pnpm run test
