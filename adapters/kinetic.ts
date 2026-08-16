@@ -786,14 +786,25 @@ export class KineticAdapter implements Adapter<KineticRawData> {
     const weight = 0.15;
     let worstRatio = 1;
     let worstAsset = '';
+    let measured = 0;
     for (const r of raw.reserves) {
       const { supplied, borrowed } = reserveTotals(r);
       if (supplied <= 0) continue;
+      measured++;
       const free = clamp(((supplied - borrowed) / supplied) * 100);
       if (free <= worstRatio * 100) {
         worstRatio = free / 100;
         worstAsset = r.asset;
       }
+    }
+    // METHODOLOGY.md §4 is a minimum over reserves with supplied > 0; over none
+    // it is undefined, not 100. Same rule and same reasoning as Blend.
+    if (measured === 0) {
+      return {
+        value: 0,
+        weight,
+        detail: 'no reserve has any supplied value — free liquidity cannot be assessed',
+      };
     }
     return {
       value: Math.round(worstRatio * 100),
@@ -814,9 +825,11 @@ export class KineticAdapter implements Adapter<KineticRawData> {
     let worst = 100;
     let worstAsset = '';
     let worstUtil = 0;
+    let measured = 0;
     for (const r of raw.reserves) {
       const { supplied, borrowed } = reserveTotals(r);
       if (supplied <= 0) continue;
+      measured++;
       const util = borrowed / supplied;
       const headroom = clamp(((OPTIMAL_UTIL - util) / OPTIMAL_UTIL) * 100);
       if (headroom <= worst) {
@@ -824,6 +837,19 @@ export class KineticAdapter implements Adapter<KineticRawData> {
         worstAsset = r.asset;
         worstUtil = util;
       }
+    }
+    // Only one "nothing to measure" case here, unlike Blend: K2's cap is the
+    // OPTIMAL_UTILIZATION_RATE constant (0.8), so §5's `cap > 0` filter can
+    // never exclude a reserve. There is deliberately no no-configured-cap branch
+    // — it would be unreachable. If K2 ever exposes a readable per-reserve
+    // optimal-util (see METHODOLOGY.md §5's second caveat), this needs Blend's
+    // two-branch treatment.
+    if (measured === 0) {
+      return {
+        value: 0,
+        weight,
+        detail: 'no reserve has any supplied value — utilization headroom cannot be assessed',
+      };
     }
     return {
       value: Math.round(worst),

@@ -420,3 +420,108 @@ describe('the factor map itself', () => {
     assert.equal(f.utilizationSafety!.weight, 0.2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// "Nothing to measure" scores 0, never 100.
+//
+// §4 defines liquiditySafety as `min(free)` over reserves with supplied > 0, and
+// §5 defines utilizationSafety as `min(headroom)` over reserves with supplied > 0
+// AND cap > 0. Over an empty set that minimum is undefined — it is emphatically
+// not the maximum. Both factors previously seeded their accumulators at the top
+// of the scale and `continue`d past every reserve, so a pool with nothing
+// measurable published 100: maximally safe, derived from no data, which ground
+// rule 4 forbids. 0 is both the honest answer and the direction it is safe to be
+// wrong in, and it matches what collateralSafety already did for the same case.
+//
+// No stored score was ever affected — verified against all 1,683 published rows,
+// none of which carried the empty-reserve signature — so this was a correction
+// under the existing rulebook, not a methodology change.
+// ---------------------------------------------------------------------------
+
+describe('no measurable reserves — cannot assess, so 0 not 100', () => {
+  it('liquiditySafety: a pool with no reserves cannot be assessed', async () => {
+    const f = await factors(makeRaw({ reserves: [] }));
+    assert.equal(f.liquiditySafety!.value, 0, 'min over an empty set is not 100');
+  });
+
+  it('liquiditySafety: every reserve empty is equally unassessable', async () => {
+    const f = await factors(
+      makeRaw({
+        reserves: [
+          reserve({ asset: 'CA…', supplied: 0, borrowed: 0 }),
+          reserve({ asset: 'CB…', supplied: 0, borrowed: 0 }),
+        ],
+      }),
+    );
+    assert.equal(f.liquiditySafety!.value, 0);
+  });
+
+  it('liquiditySafety: does not describe a reserve that does not exist', async () => {
+    const f = await factors(makeRaw({ reserves: [] }));
+    assert.doesNotMatch(
+      f.liquiditySafety!.detail,
+      /worst reserve/,
+      'the detail names a nonexistent worst reserve',
+    );
+  });
+
+  it('utilizationSafety: a pool with no reserves cannot be assessed', async () => {
+    const f = await factors(makeRaw({ reserves: [] }));
+    assert.equal(f.utilizationSafety!.value, 0);
+  });
+
+  it('utilizationSafety: every reserve empty is equally unassessable', async () => {
+    const f = await factors(makeRaw({ reserves: [reserve({ supplied: 0, borrowed: 0 })] }));
+    assert.equal(f.utilizationSafety!.value, 0);
+  });
+
+  it('utilizationSafety: no reserve carries a configured cap', async () => {
+    // Sharper than the empty case: these reserves have real balances, but
+    // max_util = 0 means §5's `cap > 0` filter skips every one of them. The pool
+    // must not be scored as having perfect headroom below a line nobody set.
+    const f = await factors(
+      makeRaw({
+        reserves: [
+          reserve({ asset: 'CA…', supplied: 1_000, borrowed: 900, cap: 0 }),
+          reserve({ asset: 'CB…', supplied: 1_000, borrowed: 950, cap: 0 }),
+        ],
+      }),
+    );
+    assert.equal(f.utilizationSafety!.value, 0, 'no configured cap means no headroom to report');
+  });
+
+  it('utilizationSafety: the two "cannot assess" reasons are distinguishable', async () => {
+    // These are different findings and must not share one generic message: an
+    // empty pool is not the same problem as a pool holding real debt against no
+    // declared ceiling. Someone debugging cap configuration has to be able to
+    // grep for the cap case specifically and not match the empty case.
+    const noSupply = await factors(
+      makeRaw({ reserves: [reserve({ supplied: 0, borrowed: 0, cap: 0.9 })] }),
+    );
+    const noCap = await factors(
+      makeRaw({ reserves: [reserve({ supplied: 1_000, borrowed: 900, cap: 0 })] }),
+    );
+
+    assert.equal(noSupply.utilizationSafety!.value, 0);
+    assert.equal(noCap.utilizationSafety!.value, 0);
+    assert.notEqual(
+      noSupply.utilizationSafety!.detail,
+      noCap.utilizationSafety!.detail,
+      'the two cases must not produce the same detail string',
+    );
+
+    assert.match(noSupply.utilizationSafety!.detail, /no reserve has any supplied value/);
+    assert.doesNotMatch(noSupply.utilizationSafety!.detail, /max_util/);
+
+    assert.match(noCap.utilizationSafety!.detail, /configured utilization cap \(max_util\)/);
+    assert.doesNotMatch(noCap.utilizationSafety!.detail, /no reserve has any supplied value/);
+    // The cap case still knows how many reserves it looked at — the distinction
+    // is real branching on real state, not two spellings of one dead end.
+    assert.match(noCap.utilizationSafety!.detail, /1 supplied reserve/);
+  });
+
+  it('utilizationSafety: does not describe a reserve that does not exist', async () => {
+    const f = await factors(makeRaw({ reserves: [] }));
+    assert.doesNotMatch(f.utilizationSafety!.detail, /worst reserve/);
+  });
+});

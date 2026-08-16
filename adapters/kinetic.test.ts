@@ -327,3 +327,95 @@ describe('documented gaps — pinned so a change to them is deliberate', () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// "Nothing to measure" scores 0, never 100 — see the longer note in
+// blend.test.ts. Both adapters had the same defect, not because one was copied
+// from the other but because both were written to the same rulebook and both
+// read it the same wrong way, which is why the correction had to land in both
+// at once and why it is pinned in both suites.
+// ---------------------------------------------------------------------------
+
+describe('collateralSafety — the original "nothing to measure" case (§1)', () => {
+  // This factor already scored 0 for an unassessable pool before the correction
+  // above; it is what the other two were made consistent with. It had no Kinetic
+  // test at all, which meant the shared convention was only guarded on one
+  // adapter and on two of the three factors that now follow it.
+  it('scores 0 when no reserve can be priced', async () => {
+    const f = await factors(
+      makeRaw({
+        reserves: [reserve({ asset: 'CA…', price: null }), reserve({ asset: 'CB…', price: null })],
+      }),
+    );
+    assert.equal(f.collateralSafety!.value, 0);
+    assert.match(f.collateralSafety!.detail, /no priced supplied value/);
+  });
+
+  it('scores 0 for a pool with no reserves at all', async () => {
+    const f = await factors(makeRaw({ reserves: [] }));
+    assert.equal(f.collateralSafety!.value, 0);
+  });
+
+  it('scores a single priced reserve 0 — concentrated by definition', async () => {
+    const f = await factors(makeRaw({ reserves: [reserve()] }));
+    assert.equal(f.collateralSafety!.value, 0);
+    assert.match(f.collateralSafety!.detail, /single priced reserve/);
+  });
+
+  it('scores an even split as fully diversified', async () => {
+    const f = await factors(
+      makeRaw({
+        reserves: [
+          reserve({ asset: 'CA…', supplied: 500 }),
+          reserve({ asset: 'CB…', supplied: 500 }),
+        ],
+      }),
+    );
+    assert.equal(f.collateralSafety!.value, 100);
+  });
+});
+
+describe('all three "cannot assess" factors agree on the convention', () => {
+  it('collateral, liquidity and utilization all report 0 for an empty pool', async () => {
+    // The convention is the point: three factors, one answer for "no data".
+    // A future factor that returns its accumulator seed instead should look
+    // obviously wrong next to this.
+    const f = await factors(makeRaw({ reserves: [] }));
+    assert.deepEqual(
+      {
+        collateral: f.collateralSafety!.value,
+        liquidity: f.liquiditySafety!.value,
+        utilization: f.utilizationSafety!.value,
+      },
+      { collateral: 0, liquidity: 0, utilization: 0 },
+    );
+  });
+});
+
+describe('no measurable reserves — cannot assess, so 0 not 100', () => {
+  it('liquiditySafety: a pool with no reserves cannot be assessed', async () => {
+    const f = await factors(makeRaw({ reserves: [] }));
+    assert.equal(f.liquiditySafety!.value, 0);
+  });
+
+  it('liquiditySafety: every reserve empty is equally unassessable', async () => {
+    const f = await factors(makeRaw({ reserves: [reserve({ supplied: 0, borrowed: 0 })] }));
+    assert.equal(f.liquiditySafety!.value, 0);
+  });
+
+  it('utilizationSafety: a pool with no reserves cannot be assessed', async () => {
+    const f = await factors(makeRaw({ reserves: [] }));
+    assert.equal(f.utilizationSafety!.value, 0);
+  });
+
+  it('utilizationSafety: every reserve empty is equally unassessable', async () => {
+    const f = await factors(makeRaw({ reserves: [reserve({ supplied: 0, borrowed: 0 })] }));
+    assert.equal(f.utilizationSafety!.value, 0);
+  });
+
+  it('neither factor describes a reserve that does not exist', async () => {
+    const f = await factors(makeRaw({ reserves: [] }));
+    assert.doesNotMatch(f.liquiditySafety!.detail, /worst reserve/);
+    assert.doesNotMatch(f.utilizationSafety!.detail, /worst reserve/);
+  });
+});

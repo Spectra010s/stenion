@@ -786,14 +786,28 @@ export class BlendAdapter implements Adapter<BlendRawData> {
     const weight = 0.15;
     let worstRatio = 1;
     let worstAsset = '';
+    let measured = 0;
     for (const r of raw.reserves) {
       const { supplied, borrowed } = reserveTotals(r);
       if (supplied <= 0) continue;
+      measured++;
       const free = clamp(((supplied - borrowed) / supplied) * 100);
       if (free <= worstRatio * 100) {
         worstRatio = free / 100;
         worstAsset = r.asset;
       }
+    }
+    // METHODOLOGY.md §4 is a minimum over the reserves with supplied > 0. With
+    // none, that minimum is undefined — NOT 100. Reporting the accumulator's
+    // seed here would publish "maximally safe" derived from no data at all,
+    // which ground rule 4 forbids; 0 (can't assess) matches collateralSafety's
+    // treatment of the same situation.
+    if (measured === 0) {
+      return {
+        value: 0,
+        weight,
+        detail: 'no reserve has any supplied value — free liquidity cannot be assessed',
+      };
     }
     return {
       value: Math.round(worstRatio * 100),
@@ -813,12 +827,20 @@ export class BlendAdapter implements Adapter<BlendRawData> {
     let worstAsset = '';
     let worstUtil = 0;
     let worstCap = 0;
+    // Two independent reasons a reserve is skipped, counted separately so the
+    // "nothing to measure" case can say which one applied. They are genuinely
+    // different findings: an empty pool is not the same problem as a pool whose
+    // reserves hold real debt but declare no utilization ceiling.
+    let withSupply = 0;
+    let withCap = 0;
     for (const r of raw.reserves) {
       const { supplied, borrowed } = reserveTotals(r);
       if (supplied <= 0) continue;
+      withSupply++;
       const util = borrowed / supplied;
       const cap = Number(r.config.maxUtil) / Number(SCALAR_7);
       if (cap <= 0) continue;
+      withCap++;
       const headroom = clamp(((cap - util) / cap) * 100);
       if (headroom <= worst) {
         worst = headroom;
@@ -826,6 +848,19 @@ export class BlendAdapter implements Adapter<BlendRawData> {
         worstUtil = util;
         worstCap = cap;
       }
+    }
+    // METHODOLOGY.md §5 is a minimum over reserves with supplied > 0 AND
+    // cap > 0. With none, that minimum is undefined — not the seed value of
+    // 100. See the note in liquiditySafety.
+    if (withCap === 0) {
+      return {
+        value: 0,
+        weight,
+        detail:
+          withSupply === 0
+            ? 'no reserve has any supplied value — utilization headroom cannot be assessed'
+            : `no reserve has a configured utilization cap (max_util) — headroom cannot be assessed across ${withSupply} supplied reserve(s)`,
+      };
     }
     return {
       value: Math.round(worst),
