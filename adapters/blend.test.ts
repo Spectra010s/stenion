@@ -433,9 +433,11 @@ describe('the factor map itself', () => {
 // rule 4 forbids. 0 is both the honest answer and the direction it is safe to be
 // wrong in, and it matches what collateralSafety already did for the same case.
 //
-// No stored score was ever affected — verified against all 1,683 published rows,
-// none of which carried the empty-reserve signature — so this was a correction
-// under the existing rulebook, not a methodology change.
+// No stored score was ever affected — the whole published history was scanned
+// for the signature the defect leaves behind (a `worst reserve (…)` naming no
+// asset) and matched zero rows — so this was a correction under the existing
+// rulebook, not a methodology change. See METHODOLOGY.md's "Corrections that did
+// not bump the version" table for the check and its date.
 // ---------------------------------------------------------------------------
 
 describe('no measurable reserves — cannot assess, so 0 not 100', () => {
