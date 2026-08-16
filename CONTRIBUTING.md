@@ -235,6 +235,33 @@ defaults, and each test overrides only the field it's about. Cover the cases you
 state can't currently reach, because those are the ones nobody would otherwise notice breaking —
 for both shipped adapters that's the whole of `oracleSafety`'s failure side.
 
+### Database-backed tests
+
+Most of `@stenion/db` is tested without a database: the row → response mapping is pure and lives in
+`store.test.ts`. The SQL is not — the two LATERAL joins behind the staleness model, the
+`NULLS LAST` ranking, and the `risk_scores_shape` CHECK are Postgres semantics, and an in-memory
+fake would only test a re-implementation of them.
+
+Those live in `store.integration.test.ts` and are **skipped unless `STENION_TEST_DATABASE_URL` is
+set**. CI never sets it, deliberately: a contributor's PR should not need database credentials to go
+green, and a service container plus a secret is real cost for a pre-funding project.
+
+To run them, point at a **scratch** database — they insert and delete rows:
+
+```bash
+docker run -d --name stenion-test-pg -e POSTGRES_PASSWORD=test \
+  -e POSTGRES_DB=stenion_test -p 5433:5432 postgres:16-alpine
+
+DATABASE_URL=postgresql://postgres:test@localhost:5433/stenion_test \
+  pnpm --filter @stenion/db migrate
+
+STENION_TEST_DATABASE_URL=postgresql://postgres:test@localhost:5433/stenion_test \
+  pnpm --filter @stenion/db test
+```
+
+The suite refuses to run if `STENION_TEST_DATABASE_URL` equals `DATABASE_URL`, so it can never
+append test rows to the published history. Everything it creates is prefixed and cleaned up.
+
 ### Mainnet snapshot fixtures
 
 Alongside the synthetic tests, `adapters/fixtures/*.ts` holds **frozen captures of real mainnet

@@ -33,8 +33,8 @@ TypeScript is configured in four layers (see [`CLAUDE.md`](CLAUDE.md) for the ra
   config is the one that must include the tests. Excluding them there (and typechecking via a
   separately-named config) leaves test files in no project at all: the CLI passes, because it was
   pointed at the right file explicitly, while the editor falls back to an inferred project and
-  underlines every `.ts` import. `core`, `adapters` and `indexer` use this split; `db` adopts it
-  when it gets its first test.
+  underlines every `.ts` import. All four backend packages (`core`, `adapters`, `db`, `indexer`)
+  use this split.
 
 - `dashboard` has its own Next.js-generated config (bundler resolution) — it does **not** extend
   the Node config. It needs no split: it's already `noEmit` and sets the flag directly.
@@ -230,6 +230,16 @@ The worked examples:
   builders use convenient values (`b_rate` = 1.0, one decimals value, round balances) and real pools
   do not — dropping the `b_rate` multiplication entirely is an exact identity under a unit rate and
   passes all 71 synthetic tests, while failing here.
+- **`db/src/store.test.ts`** — the row → response mapping (`toHistoryEntry`, `toProtocolDetail`,
+  `toLeaderboardEntry`), extracted from the query methods so the public JSON contract can be tested
+  without Postgres. Covers the `ok`/`failed` union and the staleness model — neither of which the
+  live site exercises, since no run has ever failed.
+- **`db/src/store.integration.test.ts`** — the SQL itself (the two LATERAL joins, `NULLS LAST`
+  ranking, the shape CHECK). **Skipped unless `STENION_TEST_DATABASE_URL` is set**, so CI and
+  contributor PRs never need database credentials. See CONTRIBUTING.md.
+- **`dashboard/app/api/_http.test.ts`** — the response envelope: status, content type, and CORS.
+  These fail only in a third party's browser, never on our own pages (which read the Store
+  in-process), so nothing else would catch a regression.
 - **`indexer/src/cycle.test.ts`** — the run loop's error model, against a deliberately throwing
   adapter and an in-memory `Store`. The contract is that an adapter throws, the indexer records a
   failed run and continues; as of 2026-08-16 `risk_scores` held 1,683 rows and **zero** failed ones,
