@@ -3,28 +3,58 @@
 
 /*
   Stenion design tokens — dark-mode ONLY (no toggle, no light theme yet).
-  Deep navy surfaces + off-white ink, with a deliberately non-default accent
-  pair: cool aqua (`accent`) against a soft periwinkle (`accent-2`) for gradient
-  wordmarks/headings. The score scale (safe/warn/danger) is a separate semantic
-  ramp — it encodes data, not brand, so it must never be reused as decoration.
+
+  ONE accent: violet, on a violet-cast dark neutral. The accent is a *marker*,
+  not a wash — it goes on the logo mark, links, active nav state, primary
+  buttons, and (at most) a couple of emphasised words in the hero. Everything
+  else is neutral ink or a hairline. There is deliberately no second accent and
+  no gradient: a gradient across two hues is decoration standing in for a colour
+  decision, and on the headline it cost readability for ornament.
+
+  --- The two violets are NOT a redundant pair. Do not collapse them. ---
+  `accent` (#7c6bf5) is for FILLS — button backgrounds, the logo tile, the
+  active-nav underline, focus rings. Against `bg` it is 4.82:1, which is fine
+  behind dark text (the primary button uses `text-bg`, 4.82:1 — white on it
+  would be 3.98:1 and fail) but leaves no headroom when used AS text: on
+  `surface` it measures 4.55:1, i.e. AA by 0.05.
+  `accent-ink` (#9b8cff) is therefore the violet for TEXT — links, prose links,
+  emphasised headline words — at 6.93:1 on `bg` / 6.54:1 on `surface`.
+  Same hue, so this does not reintroduce a second accent. Merging them back
+  into one value silently drops every inline link to the 4.55:1 floor.
+
+  Neutrals: `line` is a decorative hairline (1.25:1 on `bg`) and is fine as
+  such. `line-strong` exists because a control whose ONLY boundary is a
+  hairline is an invisible button — WCAG 1.4.11 wants 3:1 for control
+  boundaries, so interactive borders (secondary buttons) use `line-strong`
+  (3.32:1) while decorative dividers stay on `line`.
+
+  The score scale (safe/warn/danger) is a separate semantic ramp — it encodes
+  data, not brand, so it must never be reused as decoration, and no violet
+  state is ever added to it. It is kept in a desaturated red/amber/green range
+  deliberately far from the accent in hue: `danger` is a true red (hue 4°), not
+  the pink-magenta (345°) it used to be, because that sat in the same
+  perceptual family as violet and read as brand colour on a risk numeral.
+  Every band clears AA on `bg`, `surface`, AND `surface-2`; `danger` is the
+  floor at 5.89 / 5.55 / 5.13.
 */
 @theme {
-  --color-bg: #06090f;
-  --color-surface: #0b111b;
-  --color-surface-2: #111926;
-  --color-line: #1b2431;
-  --color-line-soft: #131b28;
+  --color-bg: #0f0e17; /* near-black with a violet cast, never pure black */
+  --color-surface: #1a1826;
+  --color-surface-2: #1e1c2b;
+  --color-line: #252336; /* decorative hairlines only */
+  --color-line-soft: #201e30;
+  --color-line-strong: #666090; /* interactive borders only — see above */
 
-  --color-ink: #e9eef7;
-  --color-muted: #8b95a9;
-  --color-faint: #5b6577;
+  --color-ink: #edebf2; /* off-white, never pure white */
+  --color-muted: #9a97ad;
+  --color-faint: #82809a;
 
-  --color-accent: #3fd0c9; /* custom aqua — not tailwind teal */
-  --color-accent-2: #8b8ff5; /* periwinkle */
+  --color-accent: #7c6bf5; /* fills only */
+  --color-accent-ink: #9b8cff; /* accent-coloured TEXT only */
 
-  --color-safe: #35d99a;
-  --color-warn: #f4b53f;
-  --color-danger: #f26a8d;
+  --color-safe: #56c08e;
+  --color-warn: #dfae55;
+  --color-danger: #e06b62;
 
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, 'SFMono-Regular', monospace;
@@ -47,6 +77,16 @@ body {
 
 /* Tabular figures everywhere a number carries meaning. */
 .tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* A *score* — a measured value on the 0–100 safety scale, as opposed to a rank
+   or a timestamp (those stay on plain `.tnum` in the UI face). Mono is the
+   signal: this figure was computed, not written. Applies to the hero ring, the
+   registry column, factor values, and the chart's axis/tooltip readouts. */
+.score-num {
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum' 1;
 }
@@ -82,12 +122,12 @@ body {
 }
 
 /* Prose (methodology page) tuned to the dark palette instead of prose-invert's
-   default grays — headings in ink, links in accent, code on a real surface. */
+   default grays — headings in ink, links in accent-ink, code on a real surface. */
 .prose-stenion {
   --tw-prose-body: var(--color-muted);
   --tw-prose-headings: var(--color-ink);
   --tw-prose-bold: var(--color-ink);
-  --tw-prose-links: var(--color-accent);
+  --tw-prose-links: var(--color-accent-ink);
   --tw-prose-quotes: var(--color-ink);
   --tw-prose-quote-borders: var(--color-line);
   --tw-prose-code: var(--color-ink);

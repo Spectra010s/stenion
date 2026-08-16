@@ -9,7 +9,6 @@ import {
   Coins,
   Gauge,
   KeyRound,
-  Radio,
   ShieldOff,
   Timer,
   Waves,
@@ -36,27 +35,22 @@ export default async function HomePage() {
     <>
       {/* ---------- Hero ---------- */}
       <section className="relative overflow-hidden">
+        {/* The dotted backdrop stays (white-alpha texture, no hue). The teal
+            radial glow that used to sit here is gone: an ambient wash of the
+            accent is the accent behaving as decoration, which is exactly what
+            this palette is built to avoid. */}
         <div className="grid-backdrop pointer-events-none absolute inset-0" />
-        <div
-          className="pointer-events-none absolute -top-40 left-1/2 h-[420px] w-[820px] -translate-x-1/2 rounded-full opacity-25 blur-3xl"
-          style={{
-            background: 'radial-gradient(closest-side, var(--color-accent), transparent 70%)',
-          }}
-        />
         <div className="relative mx-auto max-w-6xl px-5 pb-20 pt-20 sm:pt-28">
           <Reveal>
-            <span className="inline-flex items-center gap-2 rounded-full border border-line bg-surface/60 px-3 py-1 text-xs text-muted">
-              <Radio className="h-3.5 w-3.5 text-accent" />
+            <span className="text-xs font-medium uppercase tracking-[0.18em] text-muted">
               Live risk intelligence for Stellar / Soroban DeFi
             </span>
           </Reveal>
 
           <Reveal delay={0.06}>
             <h1 className="mt-6 max-w-3xl font-display text-4xl font-semibold leading-[1.08] tracking-tight text-ink sm:text-6xl">
-              Audits are a snapshot.{' '}
-              <span className="bg-gradient-to-r from-accent to-accent-2 bg-clip-text text-transparent">
-                Risk moves every block.
-              </span>
+              Audits are a snapshot. Risk moves{' '}
+              <span className="text-accent-ink">every block</span>.
             </h1>
           </Reveal>
 
@@ -72,14 +66,14 @@ export default async function HomePage() {
             <div className="mt-9 flex flex-wrap items-center gap-3">
               <Link
                 href="/registry"
-                className="group inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-accent to-accent-2 px-5 py-2.5 text-sm font-semibold text-bg transition-transform hover:-translate-y-0.5"
+                className="group inline-flex items-center gap-2 rounded-lg bg-accent px-5 py-2.5 text-sm font-semibold text-bg transition-transform hover:-translate-y-0.5"
               >
                 Explore the registry
                 <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
               </Link>
               <Link
                 href="/methodology"
-                className="inline-flex items-center gap-2 rounded-lg border border-line bg-surface/60 px-5 py-2.5 text-sm font-medium text-ink transition-colors hover:border-accent/40"
+                className="inline-flex items-center gap-2 rounded-lg border border-line-strong px-5 py-2.5 text-sm font-medium text-ink transition-colors hover:border-accent"
               >
                 Read the methodology
               </Link>
@@ -102,7 +96,7 @@ export default async function HomePage() {
             </div>
             <Link
               href="/registry"
-              className="hidden shrink-0 items-center gap-1 text-sm text-accent hover:text-accent-2 sm:inline-flex"
+              className="hidden shrink-0 items-center gap-1 text-sm text-accent-ink transition-colors hover:text-ink sm:inline-flex"
             >
               All protocols <ArrowRight className="h-4 w-4" />
             </Link>
@@ -112,7 +106,7 @@ export default async function HomePage() {
         {scored.length === 0 ? (
           <div className="mt-6 rounded-xl border border-line bg-surface p-6 text-sm text-muted">
             Live scores are warming up — the indexer hasn&apos;t published a run yet.{' '}
-            <Link href="/registry" className="text-accent hover:underline">
+            <Link href="/registry" className="text-accent-ink hover:underline">
               Open the registry
             </Link>{' '}
             to check again.
@@ -123,7 +117,7 @@ export default async function HomePage() {
               <RevealItem key={p.id}>
                 <Link
                   href={`/protocol/${p.id}`}
-                  className="group flex items-center gap-5 rounded-xl border border-line surface-lit p-5 transition-all hover:-translate-y-0.5 hover:border-accent/40"
+                  className="group flex items-center gap-5 rounded-xl border border-line surface-lit p-5 transition-all hover:-translate-y-0.5 hover:border-accent"
                 >
                   <ScoreRing score={p.safetyScore} size={104} stroke={8} label={null} />
                   <div className="min-w-0">
@@ -180,8 +174,8 @@ export default async function HomePage() {
           ].map((c) => (
             <RevealItem key={c.title}>
               <div className="h-full rounded-xl border border-line surface-lit p-6">
-                <div className="grid h-10 w-10 place-items-center rounded-lg bg-accent/10 ring-1 ring-inset ring-accent/20">
-                  <c.icon className="h-5 w-5 text-accent" strokeWidth={2} />
+                <div className="grid h-10 w-10 place-items-center rounded-lg bg-surface-2 ring-1 ring-inset ring-line">
+                  <c.icon className="h-5 w-5 text-muted" strokeWidth={2} />
                 </div>
                 <h3 className="mt-4 font-medium text-ink">{c.title}</h3>
                 <p className="mt-2 text-sm leading-relaxed text-muted">{c.body}</p>
@@ -208,7 +202,7 @@ export default async function HomePage() {
               </div>
               <Link
                 href="/methodology"
-                className="inline-flex items-center gap-1 text-sm text-accent hover:text-accent-2"
+                className="inline-flex items-center gap-1 text-sm text-accent-ink transition-colors hover:text-ink"
               >
                 Full methodology <ArrowRight className="h-4 w-4" />
               </Link>
@@ -225,7 +219,7 @@ export default async function HomePage() {
             ].map((f) => (
               <RevealItem key={f.name}>
                 <div className="rounded-lg border border-line-soft bg-surface p-4">
-                  <f.icon className="h-5 w-5 text-accent-2" strokeWidth={2} />
+                  <f.icon className="h-5 w-5 text-muted" strokeWidth={2} />
                   <div className="mt-3 text-sm font-medium text-ink">{f.name}</div>
                   <div className="mt-0.5 text-xs text-faint">{f.hint}</div>
                 </div>
@@ -267,7 +261,7 @@ export default async function HomePage() {
           ].map((c) => (
             <RevealItem key={c.title}>
               <div className="h-full rounded-xl border border-line surface-lit p-6">
-                <c.icon className="h-5 w-5 text-accent" strokeWidth={2} />
+                <c.icon className="h-5 w-5 text-muted" strokeWidth={2} />
                 <h3 className="mt-4 font-medium text-ink">{c.title}</h3>
                 <p className="mt-2 text-sm leading-relaxed text-muted">{c.body}</p>
               </div>
@@ -276,7 +270,7 @@ export default async function HomePage() {
         </RevealGroup>
 
         <Reveal delay={0.1}>
-          <div className="mt-12 flex flex-col items-start justify-between gap-5 rounded-2xl border border-line bg-gradient-to-br from-surface-2 to-surface p-8 sm:flex-row sm:items-center">
+          <div className="mt-12 flex flex-col items-start justify-between gap-5 rounded-2xl border border-line bg-surface-2 p-8 sm:flex-row sm:items-center">
             <div>
               <h3 className="font-display text-xl font-semibold text-ink">
                 See where the protocols stand
@@ -288,7 +282,7 @@ export default async function HomePage() {
             <div className="flex gap-3">
               <Link
                 href="/registry"
-                className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-accent to-accent-2 px-5 py-2.5 text-sm font-semibold text-bg transition-transform hover:-translate-y-0.5"
+                className="inline-flex items-center gap-2 rounded-lg bg-accent px-5 py-2.5 text-sm font-semibold text-bg transition-transform hover:-translate-y-0.5"
               >
                 Open the registry <ArrowRight className="h-4 w-4" />
               </Link>
@@ -296,7 +290,7 @@ export default async function HomePage() {
                 href={GITHUB_URL}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-2 rounded-lg border border-line bg-surface/60 px-5 py-2.5 text-sm font-medium text-ink hover:border-accent/40"
+                className="inline-flex items-center gap-2 rounded-lg border border-line-strong px-5 py-2.5 text-sm font-medium text-ink transition-colors hover:border-accent"
               >
                 Contribute an adapter
               </a>

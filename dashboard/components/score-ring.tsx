@@ -84,7 +84,7 @@ export function ScoreRing({
       <div className="absolute inset-0 grid place-items-center text-center">
         <div>
           <div
-            className="tnum font-display font-semibold leading-none"
+            className="score-num font-semibold leading-none"
             style={{ color, fontSize: size * 0.3 }}
           >
             {score === null ? '—' : Math.round(display)}

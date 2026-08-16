@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { BookOpenText, ExternalLink, FileWarning } from 'lucide-react';
+import { ExternalLink, FileWarning } from 'lucide-react';
 import { MarkdownDoc } from '../../components/markdown-doc';
 import { METHODOLOGY_SOURCE_URL } from '../lib/site';
 import { Reveal } from '../../components/reveal';
@@ -31,8 +31,7 @@ export default async function MethodologyPage() {
   return (
     <div className="mx-auto max-w-3xl px-5 py-14">
       <Reveal>
-        <span className="inline-flex items-center gap-2 rounded-full border border-line bg-surface/60 px-3 py-1 text-xs text-muted">
-          <BookOpenText className="h-3.5 w-3.5 text-accent" />
+        <span className="text-xs font-medium uppercase tracking-[0.18em] text-muted">
           The rulebook
         </span>
         <h1 className="mt-5 font-display text-4xl font-semibold tracking-tight text-ink">
@@ -47,7 +46,7 @@ export default async function MethodologyPage() {
           href={METHODOLOGY_SOURCE_URL}
           target="_blank"
           rel="noreferrer"
-          className="mt-5 inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface/60 px-4 py-2 text-sm text-ink transition-colors hover:border-accent/40"
+          className="mt-5 inline-flex items-center gap-1.5 rounded-lg border border-line-strong px-4 py-2 text-sm text-ink transition-colors hover:border-accent"
         >
           View source on GitHub <ExternalLink className="h-3.5 w-3.5" />
         </a>
@@ -70,7 +69,7 @@ export default async function MethodologyPage() {
               href={METHODOLOGY_SOURCE_URL}
               target="_blank"
               rel="noreferrer"
-              className="mt-5 inline-flex items-center gap-1.5 text-sm text-accent hover:underline"
+              className="mt-5 inline-flex items-center gap-1.5 text-sm text-accent-ink hover:underline"
             >
               Open METHODOLOGY.md <ExternalLink className="h-3.5 w-3.5" />
             </a>

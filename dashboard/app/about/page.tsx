@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { ArrowRight, Bot, GitPullRequest, Radar, ScanEye, ShieldOff } from 'lucide-react';
+import { ArrowRight, Bot, GitPullRequest, ScanEye, ShieldOff } from 'lucide-react';
 import { GITHUB_URL } from '../lib/site';
 import { Reveal, RevealGroup, RevealItem } from '../../components/reveal';
 
@@ -14,8 +14,7 @@ export default function AboutPage() {
   return (
     <div className="mx-auto max-w-3xl px-5 py-14">
       <Reveal>
-        <span className="inline-flex items-center gap-2 rounded-full border border-line bg-surface/60 px-3 py-1 text-xs text-muted">
-          <Radar className="h-3.5 w-3.5 text-accent" />
+        <span className="text-xs font-medium uppercase tracking-[0.18em] text-muted">
           About Stenion
         </span>
         <h1 className="mt-5 font-display text-4xl font-semibold tracking-tight text-ink">
@@ -35,7 +34,7 @@ export default function AboutPage() {
         </p>
         <ul className="mt-4 space-y-3">
           <li className="flex gap-3">
-            <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
+            <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-faint" />
             <span>
               <strong className="text-ink">Static audits</strong> confirm the code was sound on a
               particular date. They say nothing about the pool becoming 95% concentrated in one
@@ -43,7 +42,7 @@ export default function AboutPage() {
             </span>
           </li>
           <li className="flex gap-3">
-            <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
+            <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-faint" />
             <span>
               <strong className="text-ink">TVL trackers</strong> (DeFiLlama already does this well
               for Stellar) measure how much is at stake — not how risky the position is. Size is not
@@ -71,7 +70,7 @@ export default function AboutPage() {
           Adapters read data directly from Soroban RPC and Horizon — official, trustless Stellar
           infrastructure — so nothing is self-reported by the protocols being scored. The exact
           formulas are public in the{' '}
-          <Link href="/methodology" className="text-accent hover:underline">
+          <Link href="/methodology" className="text-accent-ink hover:underline">
             methodology
           </Link>
           , and they&apos;re meant to be challenged.
@@ -111,7 +110,7 @@ export default function AboutPage() {
         ].map((c) => (
           <RevealItem key={c.title}>
             <div className="h-full rounded-xl border border-line surface-lit p-6">
-              <c.icon className="h-5 w-5 text-accent" strokeWidth={2} />
+              <c.icon className="h-5 w-5 text-muted" strokeWidth={2} />
               <h3 className="mt-4 font-medium text-ink">{c.title}</h3>
               <p className="mt-2 text-sm leading-relaxed text-muted">{c.body}</p>
             </div>
@@ -135,7 +134,7 @@ export default function AboutPage() {
       </Section>
 
       <Reveal>
-        <div className="mt-14 flex flex-col items-start justify-between gap-5 rounded-2xl border border-line bg-gradient-to-br from-surface-2 to-surface p-8 sm:flex-row sm:items-center">
+        <div className="mt-14 flex flex-col items-start justify-between gap-5 rounded-2xl border border-line bg-surface-2 p-8 sm:flex-row sm:items-center">
           <div>
             <h3 className="font-display text-xl font-semibold text-ink">See it working</h3>
             <p className="mt-1 text-sm text-muted">
@@ -145,7 +144,7 @@ export default function AboutPage() {
           <div className="flex gap-3">
             <Link
               href="/registry"
-              className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-accent to-accent-2 px-5 py-2.5 text-sm font-semibold text-bg transition-transform hover:-translate-y-0.5"
+              className="inline-flex items-center gap-2 rounded-lg bg-accent px-5 py-2.5 text-sm font-semibold text-bg transition-transform hover:-translate-y-0.5"
             >
               Open the registry <ArrowRight className="h-4 w-4" />
             </Link>
@@ -153,7 +152,7 @@ export default function AboutPage() {
               href={GITHUB_URL}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-2 rounded-lg border border-line bg-surface/60 px-5 py-2.5 text-sm font-medium text-ink hover:border-accent/40"
+              className="inline-flex items-center gap-2 rounded-lg border border-line-strong px-5 py-2.5 text-sm font-medium text-ink transition-colors hover:border-accent"
             >
               View on GitHub
             </a>

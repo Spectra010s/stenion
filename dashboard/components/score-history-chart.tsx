@@ -136,7 +136,7 @@ export function ScoreHistoryChart({ history }: { history: HistoryEntry[] }) {
           }
         }}
         onBlur={() => setActive(null)}
-        className="relative rounded-xl border border-line surface-lit p-2 outline-none focus-visible:border-accent/60 focus-visible:ring-1 focus-visible:ring-accent/40"
+        className="relative rounded-xl border border-line surface-lit p-2 outline-none focus-visible:border-accent focus-visible:ring-1 focus-visible:ring-accent/60"
       >
         <svg
           ref={svgRef}
@@ -191,7 +191,7 @@ export function ScoreHistoryChart({ history }: { history: HistoryEntry[] }) {
                 x={X0 - 8}
                 y={scaleY(v) + 3.5}
                 textAnchor="end"
-                className="tnum"
+                className="score-num"
                 fontSize={11}
                 fill="var(--color-faint)"
               >
@@ -251,8 +251,11 @@ export function ScoreHistoryChart({ history }: { history: HistoryEntry[] }) {
               />
             ))}
 
-          {/* Methodology break: periwinkle, NOT a colour from the score ramp —
-              this annotates the rulebook, it is not a safety reading. */}
+          {/* Methodology break: the brand accent, and deliberately the ONLY
+              accent-coloured thing in this chart. It annotates the rulebook —
+              it is not a safety reading, so it must not come from the score
+              ramp. The score line itself is neutral for the same reason in
+              reverse: the accent marks, it never encodes a data value. */}
           {breaks
             .filter((b) => b.kinds.includes('methodology'))
             .map((b) => (
@@ -262,7 +265,7 @@ export function ScoreHistoryChart({ history }: { history: HistoryEntry[] }) {
                   y1={Y0 - 4}
                   x2={scaleX(b.at)}
                   y2={Y1}
-                  stroke="var(--color-accent-2)"
+                  stroke="var(--color-accent)"
                   strokeWidth={1.5}
                   strokeDasharray="4 4"
                   opacity={0.85}
@@ -273,7 +276,7 @@ export function ScoreHistoryChart({ history }: { history: HistoryEntry[] }) {
                   textAnchor="middle"
                   fontSize={10}
                   fontWeight={600}
-                  fill="var(--color-accent-2)"
+                  fill="var(--color-accent-ink)"
                 >
                   v{b.fromVersion}→v{b.toVersion}
                 </text>
@@ -305,7 +308,7 @@ export function ScoreHistoryChart({ history }: { history: HistoryEntry[] }) {
                 cx={scaleX(seg[0].t)}
                 cy={scaleY(seg[0].score)}
                 r={3.5}
-                fill="var(--color-accent)"
+                fill="var(--color-muted)"
               />
             ) : (
               <motion.path
@@ -314,7 +317,7 @@ export function ScoreHistoryChart({ history }: { history: HistoryEntry[] }) {
                   .map((p, j) => `${j === 0 ? 'M' : 'L'}${scaleX(p.t)},${scaleY(p.score)}`)
                   .join(' ')}
                 fill="none"
-                stroke="var(--color-accent)"
+                stroke="var(--color-muted)"
                 strokeWidth={2}
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -325,7 +328,9 @@ export function ScoreHistoryChart({ history }: { history: HistoryEntry[] }) {
             ),
           )}
 
-          {/* Latest point, in its band colour — the same reading as the hero ring. */}
+          {/* Latest point, in its band colour — the same reading as the hero
+              ring, and (with the band tints behind it) what actually carries
+              the score reading now that the line itself is neutral. */}
           {latest && (
             <circle
               cx={scaleX(latest.t)}
@@ -353,7 +358,7 @@ export function ScoreHistoryChart({ history }: { history: HistoryEntry[] }) {
                 cx={scaleX(activePoint.t)}
                 cy={scaleY(activePoint.score)}
                 r={4.5}
-                fill="var(--color-accent)"
+                fill="var(--color-ink)"
                 stroke="var(--color-bg)"
                 strokeWidth={1.5}
               />
@@ -445,7 +450,7 @@ function Tooltip({
         opacity: pinned ? 0.85 : 1,
       }}
     >
-      <span className="tnum font-semibold" style={{ color: bandColor(scoreBand(point.score)) }}>
+      <span className="score-num font-semibold" style={{ color: bandColor(scoreBand(point.score)) }}>
         {point.score}
       </span>
       <span className="ml-1.5 text-faint">{bandLabel(scoreBand(point.score))}</span>
@@ -469,7 +474,7 @@ function Legend({
   return (
     <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted">
       <span className="flex items-center gap-1.5">
-        <span className="h-0.5 w-4 rounded-full bg-accent" /> safety score
+        <span className="h-0.5 w-4 rounded-full bg-muted" /> safety score
       </span>
       {hasFailures && (
         <span className="flex items-center gap-1.5">
@@ -485,7 +490,7 @@ function Legend({
         <span className="flex items-center gap-1.5">
           <span
             className="h-3 w-0.5 rounded-full"
-            style={{ background: 'var(--color-accent-2)' }}
+            style={{ background: 'var(--color-accent)' }}
           />{' '}
           methodology change — scores either side aren&rsquo;t comparable
         </span>

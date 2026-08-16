@@ -56,7 +56,7 @@ export function Nav() {
     <header className="sticky top-0 z-50 border-b border-line/70 bg-bg/70 backdrop-blur-xl">
       <div className="mx-auto flex h-16 max-w-6xl items-center gap-6 px-5">
         <Link href="/" className="group flex items-center gap-2">
-          <span className="grid h-7 w-7 place-items-center rounded-lg bg-gradient-to-br from-accent/25 to-accent-2/25 ring-1 ring-inset ring-white/10">
+          <span className="grid h-7 w-7 place-items-center rounded-lg bg-accent/15 ring-1 ring-inset ring-accent/30">
             <Radar className="h-4 w-4 text-accent" strokeWidth={2} />
           </span>
           <span className="font-display text-lg font-semibold tracking-tight text-ink">
@@ -77,7 +77,7 @@ export function Nav() {
             >
               {link.label}
               {isActive(link.href) && (
-                <span className="absolute inset-x-3 -bottom-px h-px bg-gradient-to-r from-accent to-accent-2" />
+                <span className="absolute inset-x-3 -bottom-px h-px bg-accent" />
               )}
             </Link>
           ))}

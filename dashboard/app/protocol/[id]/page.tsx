@@ -60,7 +60,7 @@ export default async function ProtocolDetailPage({ params }: { params: Promise<{
       <section className="mt-14">
         <Reveal>
           <div className="flex items-center gap-2">
-            <Boxes className="h-4 w-4 text-accent" />
+            <Boxes className="h-4 w-4 text-muted" />
             <h2 className="font-display text-xl font-semibold text-ink">Factor breakdown</h2>
           </div>
           <p className="mt-1 text-sm text-muted">
@@ -145,7 +145,7 @@ function Findings({ notes, name }: { notes: ProtocolNote[]; name: string }) {
     <section className="mt-14">
       <Reveal>
         <div className="flex items-center gap-2">
-          <Search className="h-4 w-4 text-accent" />
+          <Search className="h-4 w-4 text-muted" />
           <h2 className="font-display text-xl font-semibold text-ink">Findings</h2>
         </div>
         <p className="mt-1 text-sm text-muted">
@@ -227,7 +227,7 @@ function ScoreHistory({ history }: { history: HistoryEntry[] }) {
     <section className="mt-14">
       <Reveal>
         <div className="flex items-center gap-2">
-          <ActivitySquare className="h-4 w-4 text-accent" />
+          <ActivitySquare className="h-4 w-4 text-muted" />
           <h2 className="font-display text-xl font-semibold text-ink">Score history</h2>
         </div>
         <p className="mt-1 text-sm text-muted">
@@ -278,7 +278,7 @@ function History({ history }: { history: HistoryEntry[] }) {
                   <span className="tnum w-40 shrink-0 text-muted">{formatTimestamp(h.runAt)}</span>
                   {h.status === 'ok' ? (
                     <span className="text-ink">
-                      scored <span className="tnum font-semibold">{h.safetyScore}</span>
+                      scored <span className="score-num font-semibold">{h.safetyScore}</span>
                     </span>
                   ) : (
                     <span className="truncate text-danger">failed — {h.error}</span>
