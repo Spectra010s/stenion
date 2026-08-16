@@ -49,8 +49,8 @@ export default async function HomePage() {
 
           <Reveal delay={0.06}>
             <h1 className="mt-6 max-w-3xl font-display text-4xl font-semibold leading-[1.08] tracking-tight text-ink sm:text-6xl">
-              Audits are a snapshot. Risk moves{' '}
-              <span className="text-accent-ink">every block</span>.
+              Audits are a snapshot. Risk moves <span className="text-accent-ink">every block</span>
+              .
             </h1>
           </Reveal>
 

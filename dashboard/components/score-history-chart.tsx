@@ -450,7 +450,10 @@ function Tooltip({
         opacity: pinned ? 0.85 : 1,
       }}
     >
-      <span className="score-num font-semibold" style={{ color: bandColor(scoreBand(point.score)) }}>
+      <span
+        className="score-num font-semibold"
+        style={{ color: bandColor(scoreBand(point.score)) }}
+      >
         {point.score}
       </span>
       <span className="ml-1.5 text-faint">{bandLabel(scoreBand(point.score))}</span>
@@ -488,10 +491,7 @@ function Legend({
       )}
       {hasMethodologyBreak && (
         <span className="flex items-center gap-1.5">
-          <span
-            className="h-3 w-0.5 rounded-full"
-            style={{ background: 'var(--color-accent)' }}
-          />{' '}
+          <span className="h-3 w-0.5 rounded-full" style={{ background: 'var(--color-accent)' }} />{' '}
           methodology change — scores either side aren&rsquo;t comparable
         </span>
       )}
