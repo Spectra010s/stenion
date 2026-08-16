@@ -33,8 +33,8 @@ TypeScript is configured in four layers (see [`CLAUDE.md`](CLAUDE.md) for the ra
   config is the one that must include the tests. Excluding them there (and typechecking via a
   separately-named config) leaves test files in no project at all: the CLI passes, because it was
   pointed at the right file explicitly, while the editor falls back to an inferred project and
-  underlines every `.ts` import. Only `core` uses this split so far — the other backend packages
-  adopt it when they get their first test.
+  underlines every `.ts` import. `core` and `adapters` use this split; `db` and `indexer` adopt it
+  when they get their first test.
 
 - `dashboard` has its own Next.js-generated config (bundler resolution) — it does **not** extend
   the Node config. It needs no split: it's already `noEmit` and sets the flag directly.
@@ -192,17 +192,28 @@ built-in test runner (`node --test`) against native TypeScript stripping, which 
 `.nvmrc` pin Node 24 (the floor is 22.18). Coverage is deliberately narrow: pure logic whose
 important cases live data can't reach.
 
-Two things follow from strip-only mode and are worth knowing before writing a test: a `.ts` test
-file must import with an explicit `.ts` extension, and it **cannot value-import a TypeScript
-`enum`** — `RiskFactorType` included, since Node rejects `enum` as unstrippable syntax. Import the
-enum's _type_ and use its string values, or import it from a package's built `dist/`.
+Three things follow from strip-only mode and are worth knowing before writing a test:
 
-The two worked examples:
+- A `.ts` test file must import with an explicit `.ts` extension.
+- It **cannot value-import a TypeScript `enum`** from source — `RiskFactorType` included, since
+  Node rejects `enum` as unstrippable syntax. Import the enum's _type_ and use its string values,
+  or import it from a package's built `dist/` (plain JS, so the enum is fine there).
+- **Type-only imports must be written `import type`.** Stripping is syntactic: it cannot tell that
+  `Adapter` is an interface, so a combined `import { Adapter, freshnessWindow }` survives into the
+  running module and fails to resolve against `@stenion/core`'s CommonJS output, which has no
+  runtime `Adapter`. This bites any module a test imports, not just the test file itself.
+
+The worked examples:
 
 - **`core/src/scoring.test.ts`** — `scoreFactors`, the weighted mean every protocol's score passes
   through. Several assertions parse `METHODOLOGY.md` and the `RiskFactorType` enum as text rather
   than restating their numbers, so the rule that code and the methodology may not drift is enforced
   mechanically instead of by review attention.
+- **`adapters/blend.test.ts` / `adapters/kinetic.test.ts`** — `computeRiskFactors` against
+  synthetic raw state. `computeRiskFactors` is a pure function of already-decoded on-chain data, so
+  every methodology rule is reachable without RPC. This is where methodology v2's `oracleSafety` is
+  pinned: both live pools price fresh and bounded, so a live run exercises neither the disabled-bound
+  path nor K2's inert-breaker path — the two the rulebook exists to catch.
 - **`dashboard/app/lib/score-series.test.ts`** — the score-history series builder. As of
   2026-08-14 `risk_scores` held 527 rows and not one failed run, so the failed-run path had to be
   proven against fixtures rather than by looking at the page.

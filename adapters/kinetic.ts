@@ -10,15 +10,16 @@ import {
   xdr,
 } from '@stellar/stellar-sdk';
 import { rpc } from '@stellar/stellar-sdk';
-import {
+// Types and values are imported separately — see the note in blend.ts: native
+// type stripping is syntactic, so type-only names left in a value import
+// survive into the running module and fail against core's CommonJS output.
+import { RiskFactorType, freshnessWindow, scoreFactors } from '@stenion/core';
+import type {
   Adapter,
   ProtocolMetadata,
   RiskFactor,
   RiskFactorMap,
-  RiskFactorType,
   RiskScoreResult,
-  freshnessWindow,
-  scoreFactors,
 } from '@stenion/core';
 
 // ---------------------------------------------------------------------------
@@ -167,7 +168,7 @@ export interface KineticRawData {
 
 // Shapes as they come back from scValToNative on the corresponding #[contracttype]
 // structs — u32 fields decode to number, i128/u128/u64 to bigint, Address to string.
-interface ReserveConfigurationNative {
+export interface ReserveConfigurationNative {
   data_low: number | bigint;
   data_high: number | bigint;
 }
@@ -509,8 +510,16 @@ function suppliedUsd(r: KineticReserveRaw, priceDecimals: number): number | null
   return supplied * priceFloat;
 }
 
-/** decimals packed in ReserveConfiguration.data_low bits 42-49. */
-function decodeDecimals(cfg: ReserveConfigurationNative): number {
+/**
+ * decimals packed in ReserveConfiguration.data_low bits 42-49.
+ *
+ * Exported for direct testing: this is bit-manipulation whose failure mode is
+ * silent — an off-by-one in the shift or a wrong mask yields a plausible-looking
+ * decimals value, which then scales every supplied/borrowed figure for the
+ * reserve by a power of ten. Live data can't distinguish that from a real
+ * balance change, so it's pinned against known bitmaps instead.
+ */
+export function decodeDecimals(cfg: ReserveConfigurationNative): number {
   return Number((BigInt(cfg.data_low) >> DECIMALS_SHIFT) & DECIMALS_MASK);
 }
 

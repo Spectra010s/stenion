@@ -10,15 +10,19 @@ import {
   xdr,
 } from '@stellar/stellar-sdk';
 import { rpc } from '@stellar/stellar-sdk';
-import {
+// Types and values are imported separately, deliberately. Node's native type
+// stripping is syntactic — it cannot tell that `Adapter` is an interface, so a
+// combined `import { Adapter, freshnessWindow }` survives into the running
+// module and then fails to resolve against @stenion/core's CommonJS output,
+// which has no runtime `Adapter` export. Keep type-only names under
+// `import type`.
+import { RiskFactorType, freshnessWindow, scoreFactors } from '@stenion/core';
+import type {
   Adapter,
   ProtocolMetadata,
   RiskFactor,
   RiskFactorMap,
-  RiskFactorType,
   RiskScoreResult,
-  freshnessWindow,
-  scoreFactors,
 } from '@stenion/core';
 
 // ---------------------------------------------------------------------------

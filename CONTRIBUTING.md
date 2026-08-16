@@ -227,6 +227,24 @@ If you find yourself wanting to assert against live chain data, that's a sign th
 need separating first — keep the computation pure and pass it data, the way an adapter's
 `computeRiskFactors` is separate from its `fetchRawData`.
 
+**For a new adapter, that separation is exactly what makes it testable.** `computeRiskFactors` takes
+your already-decoded `TRawData`, so you can build that shape by hand and assert the factors it
+produces — no RPC, no mocking of the Stellar SDK. See `adapters/blend.test.ts` and
+`adapters/kinetic.test.ts`: each defines a small `reserve()` / `makeRaw()` builder with sensible
+defaults, and each test overrides only the field it's about. Cover the cases your protocol's live
+state can't currently reach, because those are the ones nobody would otherwise notice breaking —
+for both shipped adapters that's the whole of `oracleSafety`'s failure side.
+
+Two mechanical gotchas, both from Node's type stripping being purely syntactic:
+
+- **Split your imports.** `import type { Adapter, RiskFactorMap } from '@stenion/core'` for types,
+  a plain `import { RiskFactorType, freshnessWindow }` for values. A type name left in a value
+  import survives into the running module and fails against core's CommonJS output. Your adapter
+  won't be importable from a test until this is right — the build won't tell you, since tsc erases
+  the unused names anyway.
+- If you add a package-level test, that package needs the `tsconfig.json` / `tsconfig.build.json`
+  split described in [`ARCHITECTURE.md`](ARCHITECTURE.md#monorepo-layout). Copy `adapters/`.
+
 ## Formatting
 
 **Formatting is enforced, not reviewed.** Prettier owns it, CI checks it, and a PR with unformatted
