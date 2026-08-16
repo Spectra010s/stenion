@@ -26,8 +26,7 @@ export default async function RegistryPage() {
   return (
     <div className="mx-auto max-w-6xl px-5 py-14">
       <Reveal>
-        <span className="inline-flex items-center gap-2 rounded-full border border-line bg-surface/60 px-3 py-1 text-xs text-muted">
-          <ShieldCheck className="h-3.5 w-3.5 text-accent" />
+        <span className="text-xs font-medium uppercase tracking-[0.18em] text-muted">
           Ranked by safety score · payment-blind
         </span>
         <h1 className="mt-5 font-display text-4xl font-semibold tracking-tight text-ink">
@@ -84,7 +83,7 @@ function ProtocolRow({ entry, rank }: { entry: LeaderboardEntry; rank: number })
           {String(rank).padStart(2, '0')}
         </span>
         <span className="font-display text-lg font-semibold text-ink">{entry.name}</span>
-        <ArrowUpRight className="h-4 w-4 text-faint transition-colors group-hover:text-accent" />
+        <ArrowUpRight className="h-4 w-4 text-faint transition-colors group-hover:text-accent-ink" />
       </div>
 
       <div className="text-sm text-muted">
@@ -94,7 +93,7 @@ function ProtocolRow({ entry, rank }: { entry: LeaderboardEntry; rank: number })
 
       <div>
         <div className="flex items-baseline gap-2">
-          <span className={`tnum text-2xl font-semibold ${bandTextClass(band)}`}>
+          <span className={`score-num text-2xl font-semibold ${bandTextClass(band)}`}>
             {entry.safetyScore ?? '—'}
           </span>
           <span className="text-xs text-faint">/ 100</span>

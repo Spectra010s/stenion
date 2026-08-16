@@ -546,6 +546,8 @@ export class BlendAdapter implements Adapter<BlendRawData> {
     id: 'blend',
     name: 'Blend',
     chain: 'stellar',
+    // Literal, not this.constructor.name — see ProtocolMetadata.adapterRef.
+    adapterRef: 'BlendAdapter',
   };
 
   private readonly rpcUrl: string;

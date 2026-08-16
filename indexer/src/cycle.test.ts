@@ -55,8 +55,7 @@ const COMPUTED_AT = new Date('2026-08-16T10:00:00.000Z');
 /** A target that succeeds with a fixed score. */
 function okTarget(id: string, safetyScore = 53): IndexTarget {
   return {
-    metadata: { id, name: id, chain: 'stellar' },
-    adapterRef: 'FakeAdapter',
+    metadata: { id, name: id, chain: 'stellar', adapterRef: 'FakeAdapter' },
     run: async () => ({ safetyScore, factors: FACTORS, computedAt: COMPUTED_AT }),
   };
 }
@@ -64,8 +63,7 @@ function okTarget(id: string, safetyScore = 53): IndexTarget {
 /** A target whose adapter throws, the way a real one does on RPC failure. */
 function throwingTarget(id: string, thrown: unknown = new Error('Soroban RPC unreachable')) {
   return {
-    metadata: { id, name: id, chain: 'stellar' as const },
-    adapterRef: 'FakeAdapter',
+    metadata: { id, name: id, chain: 'stellar' as const, adapterRef: 'FakeAdapter' },
     run: async () => {
       throw thrown;
     },
@@ -249,7 +247,7 @@ describe('toTarget — the adapter pipeline wrapper', () => {
   /** A minimal adapter with its own raw shape, to prove TRawData stays internal. */
   function fakeAdapter(id: string, calls: string[]): Adapter<{ n: number }> {
     return {
-      metadata: { id, name: id, chain: 'stellar' } as ProtocolMetadata,
+      metadata: { id, name: id, chain: 'stellar', adapterRef: 'FakeAdapter' } as ProtocolMetadata,
       async fetchRawData() {
         calls.push('fetchRawData');
         return { n: 1 };
@@ -275,10 +273,25 @@ describe('toTarget — the adapter pipeline wrapper', () => {
     assert.equal(out.computedAt, COMPUTED_AT);
   });
 
-  it("takes adapterRef from the adapter's class name", async () => {
+  it('carries adapterRef through from metadata, independent of the class name', async () => {
     // This is what lands in the protocols table's `adapter` column.
-    class BlendAdapter implements Adapter<{ n: number }> {
-      metadata = { id: 'blend', name: 'Blend', chain: 'stellar' } as ProtocolMetadata;
+    //
+    // The class here is deliberately named something OTHER than its adapterRef.
+    // The previous version of this test read the value off `constructor.name`
+    // and asserted it equalled the class name — which passes under `node --test`
+    // and in dev, and passed the whole time production was writing `w` to every
+    // row, because minification renames classes in the bundled serverless build
+    // and nothing unminified ever exercised that path. Asserting on a value the
+    // build is free to rewrite is what made the test worthless. Naming the class
+    // `MinifiedToSomethingElse` means this can only pass if the literal on
+    // `metadata` is the thing being persisted.
+    class MinifiedToSomethingElse implements Adapter<{ n: number }> {
+      metadata = {
+        id: 'blend',
+        name: 'Blend',
+        chain: 'stellar',
+        adapterRef: 'BlendAdapter',
+      } as ProtocolMetadata;
       async fetchRawData() {
         return { n: 1 };
       }
@@ -289,7 +302,10 @@ describe('toTarget — the adapter pipeline wrapper', () => {
         return { score: 1, factors, computedAt: COMPUTED_AT };
       }
     }
-    assert.equal(toTarget(new BlendAdapter()).adapterRef, 'BlendAdapter');
+
+    const target = toTarget(new MinifiedToSomethingElse());
+    assert.equal(target.metadata.adapterRef, 'BlendAdapter');
+    assert.notEqual(target.metadata.adapterRef, MinifiedToSomethingElse.name);
   });
 
   it('lets a failure anywhere in the pipeline surface to runCycle', async () => {

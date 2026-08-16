@@ -97,8 +97,14 @@ export interface ProtocolDetail {
 export const DETAIL_HISTORY_LIMIT = 50;
 
 export interface Store {
-  /** Insert-or-update the protocol row from adapter metadata. Idempotent. */
-  upsertProtocol(metadata: ProtocolMetadata, adapterRef: string): Promise<void>;
+  /**
+   * Insert-or-update the protocol row from adapter metadata. Idempotent.
+   *
+   * The adapter reference comes from `metadata.adapterRef` rather than a
+   * separate argument so there is exactly one source for it — see
+   * ProtocolMetadata.adapterRef for why it must be a literal.
+   */
+  upsertProtocol(metadata: ProtocolMetadata): Promise<void>;
   /** Append one run outcome to risk_scores. */
   insertRunRecord(record: RunRecord): Promise<void>;
   /** Every protocol with its latest-ok score, ranked by score desc (nulls last). */
@@ -231,7 +237,7 @@ export function toLeaderboardEntry(row: LeaderboardRow): LeaderboardEntry {
 
 export function createStore(pool: Pool): Store {
   return {
-    async upsertProtocol(metadata, adapterRef) {
+    async upsertProtocol(metadata) {
       await pool.query(
         `INSERT INTO protocols (id, name, chain, adapter)
          VALUES ($1, $2, $3, $4)
@@ -240,7 +246,7 @@ export function createStore(pool: Pool): Store {
                chain = EXCLUDED.chain,
                adapter = EXCLUDED.adapter,
                updated_at = now()`,
-        [metadata.id, metadata.name, metadata.chain, adapterRef],
+        [metadata.id, metadata.name, metadata.chain, metadata.adapterRef],
       );
     },
 

@@ -21,19 +21,22 @@ import type { RunRecord, Store } from '@stenion/db';
  * An adapter bound to its run pipeline. Wrapping each adapter this way keeps
  * its TRawData type internal (an `Adapter<BlendRawData>` is not assignable to
  * `Adapter<unknown>` because computeRiskFactors is contravariant in TRawData),
- * so a heterogeneous list of adapters can share one run loop. `adapterRef` is
- * the concrete adapter class name, persisted as the protocol's adapter column.
+ * so a heterogeneous list of adapters can share one run loop.
+ *
+ * The adapter reference persisted to `protocols.adapter` rides on `metadata`
+ * (as `metadata.adapterRef`) and is deliberately NOT duplicated here. It used
+ * to be read off `adapter.constructor.name`, which is correct in dev and in
+ * every test but mangled by minification in the bundled serverless build —
+ * see ProtocolMetadata.adapterRef. One source, and it's a literal.
  */
 export interface IndexTarget {
   metadata: ProtocolMetadata;
-  adapterRef: string;
   run(): Promise<{ safetyScore: number; factors: RiskFactorMap; computedAt: Date }>;
 }
 
 export function toTarget<T>(adapter: Adapter<T>): IndexTarget {
   return {
     metadata: adapter.metadata,
-    adapterRef: adapter.constructor.name,
     run: async () => {
       const raw = await adapter.fetchRawData();
       const factors = await adapter.computeRiskFactors(raw);

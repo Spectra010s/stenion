@@ -57,7 +57,7 @@ async function prepare(config: IndexerConfig): Promise<{ targets: IndexTarget[];
   // Protocol metadata is static, so upsert once here; the run loop only appends
   // scores.
   for (const target of targets) {
-    await store.upsertProtocol(target.metadata, target.adapterRef);
+    await store.upsertProtocol(target.metadata);
   }
   return { targets, store };
 }

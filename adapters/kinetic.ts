@@ -538,6 +538,8 @@ export class KineticAdapter implements Adapter<KineticRawData> {
     id: 'kinetic',
     name: 'Kinetic',
     chain: 'stellar',
+    // Literal, not this.constructor.name — see ProtocolMetadata.adapterRef.
+    adapterRef: 'KineticAdapter',
   };
 
   private readonly rpcUrl: string;
