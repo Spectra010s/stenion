@@ -61,6 +61,10 @@ const detailRow = (over: Partial<ProtocolDetailRow> = {}): ProtocolDetailRow => 
   name: 'Blend',
   chain: 'stellar',
   adapter: 'BlendAdapter',
+  logo: '/assets/protocols/blend.svg',
+  contract_id: 'CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD',
+  site_url: 'https://www.blend.capital',
+  docs_url: 'https://docs.blend.capital',
   safety_score: '53',
   computed_at: COMPUTED_AT,
   factors: FACTORS,
@@ -141,6 +145,44 @@ describe('toProtocolDetail — staleness and the never-scored case', () => {
     assert.equal(detail.lastRunStatus, 'ok');
     assert.equal(detail.history.length, 1);
     assert.equal(detail.factors, FACTORS);
+  });
+
+  it('carries protocol identity independently of scoring state', () => {
+    // logo/contractId/site/docs describe the PROTOCOL, not a run, so they must
+    // survive a protocol that has never scored — that is exactly when a reader
+    // most wants the contract link, to see for themselves what the indexer
+    // could not read. Coupling them to the latest-ok LATERAL join would blank
+    // them on the never-scored case.
+    const detail = toProtocolDetail(
+      detailRow({
+        safety_score: null,
+        computed_at: null,
+        factors: null,
+        methodology_version: null,
+      }),
+      [],
+    );
+
+    assert.equal(detail.safetyScore, null);
+    assert.equal(detail.logo, '/assets/protocols/blend.svg');
+    assert.equal(detail.contractId, 'CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD');
+    assert.equal(detail.site, 'https://www.blend.capital');
+    assert.equal(detail.docs, 'https://docs.blend.capital');
+  });
+
+  it('maps absent identity columns to null, never to a placeholder', () => {
+    // A protocol with no mark and no published docs. Each must arrive as null
+    // so the UI can choose a deliberate rendering (initials tile / omit the
+    // link) instead of emitting a dead href or a 404 image.
+    const detail = toProtocolDetail(detailRow({ logo: null, docs_url: null }), [okRow()]);
+
+    assert.equal(detail.logo, null);
+    assert.equal(detail.docs, null);
+    assert.equal(
+      detail.site,
+      'https://www.blend.capital',
+      'one absent link does not blank another',
+    );
   });
 
   it('keeps the last good score visible when the newest run failed', () => {
@@ -235,6 +277,7 @@ describe('toLeaderboardEntry', () => {
     id: 'blend',
     name: 'Blend',
     chain: 'stellar',
+    logo: '/assets/protocols/blend.svg',
     safety_score: '53',
     computed_at: COMPUTED_AT,
     last_run_at: RUN_AT,
@@ -247,11 +290,21 @@ describe('toLeaderboardEntry', () => {
       id: 'blend',
       name: 'Blend',
       chain: 'stellar',
+      logo: '/assets/protocols/blend.svg',
       safetyScore: 53,
       computedAt: COMPUTED_AT.toISOString(),
       lastRunAt: RUN_AT.toISOString(),
       lastRunStatus: 'ok',
     });
+  });
+
+  it('passes a missing logo through as null rather than a placeholder path', () => {
+    // A protocol with no usable mark is a supported state the UI renders as an
+    // initials tile. Defaulting to some '/assets/protocols/unknown.svg' here
+    // would put a 404 in every such row — the exact layout-shifting broken
+    // image the tile exists to avoid — and would hide the real answer from API
+    // consumers, who cannot tell a placeholder from a real mark.
+    assert.equal(toLeaderboardEntry(row({ logo: null })).logo, null);
   });
 
   it('keeps a never-scored protocol as null rather than 0', () => {

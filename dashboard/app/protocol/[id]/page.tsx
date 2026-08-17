@@ -1,6 +1,14 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ActivitySquare, ArrowLeft, Boxes, Search } from 'lucide-react';
+import {
+  ActivitySquare,
+  ArrowLeft,
+  Boxes,
+  BookText,
+  ExternalLink,
+  Globe,
+  Search,
+} from 'lucide-react';
 import { notesFor, type ProtocolNote } from '../../lib/protocol-notes';
 import {
   FACTOR_ORDER,
@@ -11,6 +19,8 @@ import {
   type RiskFactorMap,
 } from '../../lib/api';
 import { formatTimestamp } from '../../lib/format';
+import { contractExplorerUrl, shortenContractId } from '../../lib/explorer';
+import { MarkAttribution, ProtocolLogo } from '../../../components/protocol-logo';
 import { ScoreRing } from '../../../components/score-ring';
 import { StatusPill } from '../../../components/status-pill';
 import { FactorCard } from '../../../components/factor-bar';
@@ -56,6 +66,8 @@ export default async function ProtocolDetailPage({ params }: { params: Promise<{
       </Reveal>
 
       <Hero detail={detail} />
+
+      <ExternalRefs detail={detail} />
 
       <section className="mt-14">
         <Reveal>
@@ -184,9 +196,12 @@ function Hero({ detail }: { detail: ProtocolDetail }) {
         <ScoreRing score={detail.safetyScore} size={176} />
 
         <div className="min-w-0 flex-1">
-          <h1 className="font-display text-4xl font-semibold tracking-tight text-ink">
-            {detail.name}
-          </h1>
+          <div className="flex items-center gap-3">
+            <ProtocolLogo name={detail.name} logo={detail.logo} size={48} />
+            <h1 className="font-display text-4xl font-semibold tracking-tight text-ink">
+              {detail.name}
+            </h1>
+          </div>
           <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
             <span className="capitalize">{detail.chain}</span>
             <span className="text-faint">·</span>
@@ -215,6 +230,113 @@ function Hero({ detail }: { detail: ProtocolDetail }) {
         </div>
       </div>
     </Reveal>
+  );
+}
+
+/**
+ * Where to go to check the score instead of trusting it.
+ *
+ * The contract link leads, and that ordering is the argument: a Stenion number
+ * is only worth anything if a reader can open the exact contract it was derived
+ * from and look. The protocol's own site and docs follow as context.
+ *
+ * All three are `rel="noopener noreferrer nofollow"`. `noopener`/`noreferrer`
+ * are the ordinary hygiene for a cross-origin target. `nofollow` is the
+ * substantive one: Stenion ranks protocols, so an unqualified outbound link
+ * from a page carrying a score could be read — by a search engine or by a
+ * protocol — as this site conferring standing on the destination. It cannot,
+ * and shouldn't look like it does. The same reasoning that puts the attribution
+ * note at the foot of this block puts `nofollow` on these links.
+ *
+ * Renders nothing at all when a protocol supplies none of the three, rather
+ * than an empty card announcing an absence.
+ */
+function ExternalRefs({ detail }: { detail: ProtocolDetail }) {
+  const { contractId, site, docs, name } = detail;
+  if (!contractId && !site && !docs) return null;
+
+  return (
+    <Reveal delay={0.1} className="mt-6">
+      <div className="rounded-2xl border border-line surface-lit p-6">
+        <div className="flex items-center gap-2">
+          <Search className="h-4 w-4 text-accent" />
+          <h2 className="font-display text-base font-semibold text-ink">Verify this yourself</h2>
+        </div>
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          {contractId && (
+            <RefLink
+              href={contractExplorerUrl(contractId)}
+              icon={<ExternalLink className="h-3.5 w-3.5" />}
+              label="Scored contract"
+              // The address is shown, not just linked: it is the one value a
+              // reader can compare against another source without leaving.
+              value={shortenContractId(contractId)}
+              title={contractId}
+              primary
+            />
+          )}
+          {site && (
+            <RefLink
+              href={site}
+              icon={<Globe className="h-3.5 w-3.5" />}
+              label={`${name} website`}
+              value="Website"
+            />
+          )}
+          {docs && (
+            <RefLink
+              href={docs}
+              icon={<BookText className="h-3.5 w-3.5" />}
+              label={`${name} documentation`}
+              value="Docs"
+            />
+          )}
+        </div>
+
+        <MarkAttribution className="mt-5 border-t border-line-soft pt-4" />
+      </div>
+    </Reveal>
+  );
+}
+
+/**
+ * One outbound reference. `label` is the accessible name (it says which
+ * protocol, since "Docs" alone is meaningless out of context); `value` is the
+ * short visible text.
+ */
+function RefLink({
+  href,
+  icon,
+  label,
+  value,
+  title,
+  primary = false,
+}: {
+  href: string;
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  title?: string;
+  primary?: boolean;
+}) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      // See ExternalRefs for why nofollow is here and not just noopener/noreferrer.
+      rel="noopener noreferrer nofollow"
+      aria-label={label}
+      title={title}
+      className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors ${
+        primary
+          ? 'border-accent/40 bg-accent/5 text-ink hover:border-accent'
+          : 'border-line text-muted hover:border-accent hover:text-ink'
+      }`}
+    >
+      {icon}
+      <span className={primary ? 'font-mono text-xs' : ''}>{value}</span>
+    </a>
   );
 }
 

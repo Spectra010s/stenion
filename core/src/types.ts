@@ -20,11 +20,63 @@ export type Chain = 'stellar';
  */
 export const METHODOLOGY_VERSION = 2 as const;
 
+/**
+ * Off-chain places a reader can go to check a protocol for themselves.
+ *
+ * These are the protocol's OWN properties, listed because a score is only
+ * useful next to the thing it scores — not because Stenion vouches for any of
+ * them. Every consumer that renders these must carry the same disclaimer that
+ * covers logos: presence here is not endorsement, partnership, or any
+ * relationship. The dashboard renders them `rel="noopener noreferrer nofollow"`.
+ *
+ * Both members are optional because they are genuinely optional facts: a
+ * protocol may publish no documentation site at all. Omit what doesn't exist
+ * rather than pointing at a placeholder — a dead link is worse than no link.
+ */
+export interface ProtocolLinks {
+  /** the protocol's own front page, e.g. "https://www.blend.capital" */
+  site?: string;
+  /** published user/developer documentation, if any */
+  docs?: string;
+}
+
 export interface ProtocolMetadata {
   /** unique slug used as the primary key across storage and the API, e.g. "blend" */
   id: string;
   name: string;
   chain: Chain;
+  /**
+   * Root-relative path to the protocol's logo as stored in the dashboard's
+   * `public/` tree, e.g. "/assets/protocols/blend.svg".
+   *
+   * A PATH WE HOST, never a URL on the protocol's own CDN. Hotlinking breaks
+   * whenever they reorganise their assets, and the resulting 404 shifts layout
+   * on a page whose whole job is to be scannable. See CONTRIBUTING.md for the
+   * asset spec (format, size, where the file goes).
+   *
+   * Omit when the protocol publishes no usable mark. That is a supported state,
+   * not a gap: the dashboard renders a deliberate initials tile instead. Never
+   * invent or redraw a mark to fill this in.
+   */
+  logo?: string;
+  /**
+   * The single on-chain contract this protocol's score is actually derived from
+   * — Blend's pool, Kinetic's router. Published so a reader can open it in an
+   * explorer and check the inputs behind a number rather than taking it on
+   * faith; that verifiability is the whole pitch.
+   *
+   * MUST be the contract this adapter INSTANCE was configured with, not the
+   * module default. Build it in the constructor from the resolved id (see
+   * BlendAdapter) so an adapter pointed at a different pool cannot publish a
+   * link to the pool it did not score.
+   *
+   * Stenion picks the explorer, not the adapter — this is the raw C-address,
+   * and the dashboard builds the URL. That keeps the choice of explorer one
+   * decision in one place instead of a string every adapter has to repeat.
+   */
+  contractId?: string;
+  /** the protocol's own site/docs — see ProtocolLinks for the endorsement caveat */
+  links?: ProtocolLinks;
   /**
    * Which adapter produced this protocol's scores, e.g. "BlendAdapter".
    * Persisted to `protocols.adapter` and published on GET /api/v1/protocol/:id

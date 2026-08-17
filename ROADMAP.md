@@ -25,6 +25,12 @@ commitment — priorities shift as protocols launch and as the project finds fun
   real time axis and a fixed 0–100 axis, and the line **breaks** rather than being drawn through
   anything unknown: a failed run, an indexing gap, or a methodology change. Hand-rolled SVG, no
   charting dependency.
+- **Protocol identity — marks and verification links.** Each protocol carries a logo, the contract
+  its score is derived from, and its own site/docs, all in adapter metadata rather than a frontend
+  lookup table. Marks are self-hosted (never hotlinked), render in a fixed tile that works in both
+  themes, and fall back to an initials tile for protocols with no usable mark. The protocol page
+  links the scored contract on stellar.expert — the point being that a score should be checkable,
+  not merely readable. Marks and links carry an explicit note that neither implies endorsement.
 - **The full stack:** on-chain adapters → indexer → Postgres → API → dashboard, deployed as a single
   Vercel project with external (cron-job.org) scheduling. See [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
@@ -48,6 +54,14 @@ Roughly in priority order, but not committed to dates:
   Wanted, but it is a payload-size and query-cost decision on free tiers, not a UI tweak — likely a
   separate downsampled endpoint or a `?window=` parameter rather than simply raising the cap, since
   the detail response is already the largest thing the API serves.
+- **The Kinetic / K2 naming mismatch.** The protocol rebranded to **K2** (k2lend.com). Stenion still
+  displays `name: 'Kinetic'`, and now shows it beside the K2 mark — the logo work made an existing
+  inconsistency visible rather than creating it. Renaming isn't cosmetic: `id: 'kinetic'` is the
+  `protocols` primary key, the `risk_scores` foreign key, the public URL `/protocol/kinetic`, and
+  the `GET /api/v1/protocol/:id` path any external consumer has hardcoded. Changing the slug is a
+  breaking API change (a `v2` under the versioning policy in [`ARCHITECTURE.md`](ARCHITECTURE.md));
+  changing only the display `name` is free and additive. Almost certainly the latter, but it should
+  be a decision rather than a drift.
 - **Per-factor history.** `risk_scores` stores the full factor map on every row, so the data is
   already there, but the API exposes only `safetyScore` per history point. Charting a single
   factor over time — watching `oracleSafety` sawtooth on its own axis — is deliberately deferred
@@ -57,6 +71,15 @@ Roughly in priority order, but not committed to dates:
   core pitch — but a natural fit for the "read the chain, warn users" mission.
 - **Protocol self-service.** Let protocols claim their entry, read their factor breakdown, and
   challenge a threshold through a defined process — without ever being able to buy a better number.
+  - **Which way the logo/links metadata leans, decided in advance.** `logo`, `contract_id`,
+    `site_url` and `docs_url` are written from adapter metadata on **every** indexer cycle, so
+    anything a protocol edited directly would be reverted within ~5 minutes. That is the correct
+    default while these are maintainer-managed and reviewed in a PR. If self-service ships, a
+    protocol-supplied mark must go in **separate columns that take precedence at read time** — not
+    as an edit to these, and not by softening the upsert to preserve whatever is already there,
+    which would quietly remove our ability to correct a protocol's own metadata. Presentation of a
+    supplied mark shouldn't change: the same tile, the same attribution note, and no path by which
+    a nicer logo touches a number.
 - **Premium tiers.** Paid _visibility_ (a clearly-labeled, visually-separate "Spotlight" section),
   _speed_ (faster refresh), and _private tooling_ — never a paid score. The real registry stays free,
   public, and ranked purely on score. This is the intended business model, kept strictly walled off

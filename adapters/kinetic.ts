@@ -534,13 +534,8 @@ export interface KineticAdapterOptions {
 }
 
 export class KineticAdapter implements Adapter<KineticRawData> {
-  readonly metadata: ProtocolMetadata = {
-    id: 'kinetic',
-    name: 'Kinetic',
-    chain: 'stellar',
-    // Literal, not this.constructor.name — see ProtocolMetadata.adapterRef.
-    adapterRef: 'KineticAdapter',
-  };
+  /** Constructor-built so `contractId` is the router actually scored — see BlendAdapter. */
+  readonly metadata: ProtocolMetadata;
 
   private readonly rpcUrl: string;
   private readonly horizonUrl: string;
@@ -550,6 +545,30 @@ export class KineticAdapter implements Adapter<KineticRawData> {
     this.rpcUrl = opts.rpcUrl ?? DEFAULT_RPC_URL;
     this.horizonUrl = opts.horizonUrl ?? DEFAULT_HORIZON_URL;
     this.routerId = opts.routerId ?? KINETIC_ROUTER;
+
+    this.metadata = {
+      id: 'kinetic',
+      name: 'Kinetic',
+      chain: 'stellar',
+      // Literal, not this.constructor.name — see ProtocolMetadata.adapterRef.
+      adapterRef: 'KineticAdapter',
+      // Kinetic rebranded to "K2" (k2lend.com) and publishes no high-resolution
+      // square mark — only a 3.15:1 wordmark and this 64x64 icon. The icon is
+      // used unmodified: cropping a glyph out of the wordmark would give a
+      // sharper asset but means altering their logo, which contradicts what the
+      // attribution note on the dashboard says we do. Small and honest wins.
+      //
+      // NOTE the mark reads "K2" while `name` above is still "Kinetic". That
+      // mismatch is real and predates this — renaming the protocol changes the
+      // `id` slug (a primary key, and a public URL), so it is deliberately not
+      // done here. Flagged in ROADMAP.md.
+      logo: '/assets/protocols/kinetic.png',
+      contractId: this.routerId,
+      links: {
+        site: 'https://k2lend.com',
+        docs: 'https://docs.k2lend.com',
+      },
+    };
   }
 
   async fetchRawData(): Promise<KineticRawData> {

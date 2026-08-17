@@ -44,6 +44,17 @@ export interface LeaderboardEntry {
   id: string;
   name: string;
   chain: string;
+  /**
+   * Root-relative path to a logo the dashboard hosts, or null when the protocol
+   * publishes no usable mark. Null is a supported, rendered state (an initials
+   * tile) — never a broken image. See ProtocolMetadata.logo.
+   *
+   * The board carries `logo` but NOT `contractId`/`site`/`docs`: a logo is what
+   * makes a row scannable, and the rest is verification detail nobody acts on
+   * from a list. They stay on the detail response rather than being repeated
+   * across every row of every leaderboard fetch.
+   */
+  logo: string | null;
   safetyScore: number | null;
   computedAt: string | null;
   lastRunAt: string | null;
@@ -79,6 +90,26 @@ export interface ProtocolDetail {
   name: string;
   chain: string;
   adapter: string;
+  /** see LeaderboardEntry.logo — same value, same null-is-fine contract */
+  logo: string | null;
+  /**
+   * The Soroban contract the score was derived from, or null if unknown. A raw
+   * C-address, deliberately NOT an explorer URL — the consumer picks the
+   * explorer. This is the field that lets a reader check a score against the
+   * chain instead of trusting it.
+   */
+  contractId: string | null;
+  /**
+   * The protocol's own site and documentation, null when it publishes none.
+   *
+   * Listed as the subject's own properties, not as a recommendation: a link
+   * here is not endorsement, partnership, or any relationship with Stenion, and
+   * any UI rendering them must say so. The dashboard uses
+   * `rel="noopener noreferrer nofollow"` so a link cannot pass ranking signal
+   * or hand the destination a window handle back into the page.
+   */
+  site: string | null;
+  docs: string | null;
   safetyScore: number | null;
   computedAt: string | null;
   factors: RiskFactorMap | null;
@@ -175,6 +206,10 @@ export interface ProtocolDetailRow {
   name: string;
   chain: string;
   adapter: string;
+  logo: string | null;
+  contract_id: string | null;
+  site_url: string | null;
+  docs_url: string | null;
   safety_score: string | null;
   computed_at: Date | null;
   factors: RiskFactorMap | null;
@@ -201,6 +236,13 @@ export function toProtocolDetail(
     name: row.name,
     chain: row.chain,
     adapter: row.adapter,
+    // Identity columns are nullable in the schema and pass straight through:
+    // "this protocol has no published mark / no docs site" is a real answer the
+    // UI renders deliberately, so there is nothing to coerce or default here.
+    logo: row.logo,
+    contractId: row.contract_id,
+    site: row.site_url,
+    docs: row.docs_url,
     safetyScore: toNumber(row.safety_score),
     computedAt: toIso(row.computed_at),
     factors: row.factors,
@@ -216,6 +258,7 @@ export interface LeaderboardRow {
   id: string;
   name: string;
   chain: string;
+  logo: string | null;
   safety_score: string | null;
   computed_at: Date | null;
   last_run_at: Date | null;
@@ -228,6 +271,7 @@ export function toLeaderboardEntry(row: LeaderboardRow): LeaderboardEntry {
     id: row.id,
     name: row.name,
     chain: row.chain,
+    logo: row.logo,
     safetyScore: toNumber(row.safety_score),
     computedAt: toIso(row.computed_at),
     lastRunAt: toIso(row.last_run_at),
@@ -238,15 +282,45 @@ export function toLeaderboardEntry(row: LeaderboardRow): LeaderboardEntry {
 export function createStore(pool: Pool): Store {
   return {
     async upsertProtocol(metadata) {
+      // The identity columns are OVERWRITTEN on every cycle, like name/chain.
+      // The adapter is the single source of truth for them, so a value edited
+      // directly in the database is reverted within one indexer cycle (~5 min).
+      //
+      // That is the intended behaviour today — logos and links are
+      // maintainer-managed, reviewed in a PR alongside the adapter — and it is
+      // also the thing to know if protocol self-service ever ships: a
+      // protocol-supplied mark MUST land in separate columns that take
+      // precedence at read time, never as an edit to these. Widening this
+      // statement to a COALESCE that preserves an existing value would be the
+      // wrong fix: it would silently make the adapter unable to correct its own
+      // metadata, which is exactly backwards for the case that matters (a
+      // protocol supplying a mark that flatters, next to a score it dislikes).
+      // See ProtocolMetadata.logo and CONTRIBUTING.md.
       await pool.query(
-        `INSERT INTO protocols (id, name, chain, adapter)
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO protocols (id, name, chain, adapter, logo, contract_id, site_url, docs_url)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          ON CONFLICT (id) DO UPDATE
            SET name = EXCLUDED.name,
                chain = EXCLUDED.chain,
                adapter = EXCLUDED.adapter,
+               logo = EXCLUDED.logo,
+               contract_id = EXCLUDED.contract_id,
+               site_url = EXCLUDED.site_url,
+               docs_url = EXCLUDED.docs_url,
                updated_at = now()`,
-        [metadata.id, metadata.name, metadata.chain, metadata.adapterRef],
+        [
+          metadata.id,
+          metadata.name,
+          metadata.chain,
+          metadata.adapterRef,
+          // `?? null` because these are optional on ProtocolMetadata: pg would
+          // send `undefined` as NULL anyway, but being explicit keeps "the
+          // adapter didn't set this" and "the column is NULL" the same thing.
+          metadata.logo ?? null,
+          metadata.contractId ?? null,
+          metadata.links?.site ?? null,
+          metadata.links?.docs ?? null,
+        ],
       );
     },
 
@@ -282,7 +356,7 @@ export function createStore(pool: Pool): Store {
       // the board, `latest` is the newest run of any status for the staleness
       // flag. Rank by score desc, never-scored protocols (null score) last.
       const { rows } = await pool.query<LeaderboardRow>(
-        `SELECT p.id, p.name, p.chain,
+        `SELECT p.id, p.name, p.chain, p.logo,
                 ok.safety_score, ok.computed_at,
                 latest.run_at AS last_run_at, latest.status AS last_run_status
            FROM protocols p
@@ -311,6 +385,7 @@ export function createStore(pool: Pool): Store {
       // one query. No row → unknown id → null (the API turns this into a 404).
       const { rows } = await pool.query<ProtocolDetailRow>(
         `SELECT p.id, p.name, p.chain, p.adapter,
+                p.logo, p.contract_id, p.site_url, p.docs_url,
                 ok.safety_score, ok.computed_at, ok.factors, ok.methodology_version,
                 latest.run_at AS last_run_at, latest.status AS last_run_status
            FROM protocols p

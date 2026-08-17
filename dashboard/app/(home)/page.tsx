@@ -16,6 +16,7 @@ import {
 import { getProtocols, type LeaderboardEntry } from '../lib/api';
 import { GITHUB_URL } from '../lib/site';
 import { ScoreRing } from '../../components/score-ring';
+import { MarkAttribution, ProtocolLogo } from '../../components/protocol-logo';
 import { StatusPill } from '../../components/status-pill';
 import { Reveal, RevealGroup, RevealItem } from '../../components/reveal';
 
@@ -127,8 +128,11 @@ export default async function HomePage() {
                 >
                   <ScoreRing score={p.safetyScore} size={104} stroke={8} label={null} />
                   <div className="min-w-0">
-                    <div className="truncate font-display text-lg font-semibold text-ink">
-                      {p.name}
+                    <div className="flex items-center gap-2">
+                      <ProtocolLogo name={p.name} logo={p.logo} size={24} />
+                      <div className="truncate font-display text-lg font-semibold text-ink">
+                        {p.name}
+                      </div>
                     </div>
                     <div className="mt-0.5 text-xs uppercase tracking-wider text-faint">
                       {p.chain}
@@ -145,6 +149,9 @@ export default async function HomePage() {
             ))}
           </RevealGroup>
         )}
+
+        {/* Marks appear on this page too, so the note travels with them. */}
+        {scored.length > 0 && <MarkAttribution className="mt-6 max-w-7xl" />}
       </section>
 
       {/* ---------- Why continuous ---------- */}
