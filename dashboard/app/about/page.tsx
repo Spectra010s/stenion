@@ -110,7 +110,7 @@ export default function AboutPage() {
         ].map((c) => (
           <RevealItem key={c.title}>
             <div className="h-full rounded-xl border border-line surface-lit p-6">
-              <c.icon className="h-5 w-5 text-muted" strokeWidth={2} />
+              <c.icon className="h-5 w-5 text-accent" strokeWidth={2} />
               <h3 className="mt-4 font-medium text-ink">{c.title}</h3>
               <p className="mt-2 text-sm leading-relaxed text-muted">{c.body}</p>
             </div>

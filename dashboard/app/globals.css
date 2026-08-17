@@ -2,59 +2,272 @@
 @plugin '@tailwindcss/typography';
 
 /*
-  Stenion design tokens — dark-mode ONLY (no toggle, no light theme yet).
+  ============================================================================
+  Stenion design tokens — TWO THEMES, ONE SET OF NAMES.
+  ============================================================================
 
-  ONE accent: violet, on a violet-cast dark neutral. The accent is a *marker*,
-  not a wash — it goes on the logo mark, links, active nav state, primary
-  buttons, and (at most) a couple of emphasised words in the hero. Everything
-  else is neutral ink or a hairline. There is deliberately no second accent and
-  no gradient: a gradient across two hues is decoration standing in for a colour
-  decision, and on the headline it cost readability for ornament.
+  HOW THIS IS WIRED (read before adding a colour anywhere):
 
-  --- The two violets are NOT a redundant pair. Do not collapse them. ---
-  `accent` (#7c6bf5) is for FILLS — button backgrounds, the logo tile, the
-  active-nav underline, focus rings. Against `bg` it is 4.82:1, which is fine
-  behind dark text (the primary button uses `text-bg`, 4.82:1 — white on it
-  would be 3.98:1 and fail) but leaves no headroom when used AS text: on
-  `surface` it measures 4.55:1, i.e. AA by 0.05.
-  `accent-ink` (#9b8cff) is therefore the violet for TEXT — links, prose links,
-  emphasised headline words — at 6.93:1 on `bg` / 6.54:1 on `surface`.
-  Same hue, so this does not reintroduce a second accent. Merging them back
-  into one value silently drops every inline link to the 4.55:1 floor.
+  1. Every palette VALUE is written exactly once, in the `--light-*` / `--dark-*`
+     blocks below. Hexes appear in one place per theme so the two can't drift.
+  2. `--t-*` is the ACTIVE theme. Three small mapping blocks point it at one
+     palette: light is the base, dark applies via `prefers-color-scheme` (unless
+     an explicit light choice overrides) and via `[data-theme='dark']`.
+  3. `@theme inline` binds Tailwind's utility names to `--t-*`. Because it is
+     `inline`, `bg-surface` compiles to `var(--t-surface)` directly, so flipping
+     `data-theme` re-resolves everything with no rebuild and no `dark:` variants.
 
-  Neutrals: `line` is a decorative hairline (1.25:1 on `bg`) and is fine as
-  such. `line-strong` exists because a control whose ONLY boundary is a
-  hairline is an invisible button — WCAG 1.4.11 wants 3:1 for control
-  boundaries, so interactive borders (secondary buttons) use `line-strong`
-  (3.32:1) while decorative dividers stay on `line`.
+  ADDING A THIRD THEME is therefore a config change: add a `--<name>-*` palette
+  and one mapping block. Do NOT add `dark:` variants or per-component branching —
+  a component should never know which theme it is in.
 
-  The score scale (safe/warn/danger) is a separate semantic ramp — it encodes
-  data, not brand, so it must never be reused as decoration, and no violet
-  state is ever added to it. It is kept in a desaturated red/amber/green range
-  deliberately far from the accent in hue: `danger` is a true red (hue 4°), not
-  the pink-magenta (345°) it used to be, because that sat in the same
-  perceptual family as violet and read as brand colour on a risk numeral.
-  Every band clears AA on `bg`, `surface`, AND `surface-2`; `danger` is the
-  floor at 5.89 / 5.55 / 5.13.
+  ONE accent: violet. It is a *marker*, not a wash — logo mark, links, active
+  nav state, primary buttons, a couple of emphasised headline words. No second
+  accent, no gradients.
+
+  --- `accent` vs `accent-ink` are NOT a redundant pair. Do not collapse them. ---
+  `accent` is for FILLS (button backgrounds, logo tile, focus rings).
+  `accent-ink` is the violet for TEXT (links, prose links, emphasised words),
+  because the fill violet has no contrast headroom when used as text.
+  Note the two INVERT direction per theme: on dark, text-violet is *lighter*
+  than fill-violet; on light it is *darker*. That is the whole reason this is a
+  token rather than a constant.
+
+  --- `*-ink` score tokens exist ONLY for text on a band tint. Keep them. ---
+  `safe-ink` / `warn-ink` / `danger-ink` are the band colours used as TEXT ON A
+  `bg-{band}/10` TINT — i.e. StatusPill. On dark they are deliberately
+  identical to the base bands (the base already clears AA on the tint), which
+  makes them look redundant. They are not: on LIGHT the tint darkens the ground
+  under already-dark text and the base bands fall to 4.09–4.35, below AA.
+  Collapsing these back into the base bands silently breaks every pill in light
+  mode, and dark mode will not show it.
+
+  --- The score ramp is semantic, and it is NOT the same values per theme. ---
+  It encodes risk, never brand, and no violet state is ever added to it. Hues
+  are LOCKED across themes (safe 161°, warn 80°, danger 26°) so a band means the
+  same thing in both; only lightness and chroma move. The light ramp is not the
+  dark ramp darkened — it is re-solved for maximum chroma that still clears AA,
+  because a colour that alarms on dark reads decorative on light. `danger` gains
+  chroma on light (0.148 → 0.212 OKLCh) since red has more gamut there and light
+  grounds need more punch. `danger` stays ~102° away from the accent hue in both
+  themes so a high-risk numeral can never read as brand colour.
+
+  CONTRAST, verified against bg / surface / surface-2 in BOTH themes:
+    dark   safe 8.51/7.76/7.42  warn 9.42/8.58/8.22  danger 5.89/5.36/5.13
+    light  safe 4.81/5.43/5.13  warn 4.81/5.44/5.13  danger 4.82/5.45/5.14
+  Text roles clear 4.5 and control boundaries clear 3.0 on all three grounds in
+  both themes. If you change a ground, re-check the ramp against all three.
+  The BINDING ground differs per theme — it is whichever is furthest from the
+  text, i.e. `surface-2` on dark but `bg` on light. That asymmetry is a direct
+  consequence of the elevation order documented on the light palette below.
 */
-@theme {
-  --color-bg: #0f0e17; /* near-black with a violet cast, never pure black */
-  --color-surface: #1a1826;
-  --color-surface-2: #1e1c2b;
-  --color-line: #252336; /* decorative hairlines only */
-  --color-line-soft: #201e30;
-  --color-line-strong: #666090; /* interactive borders only — see above */
 
-  --color-ink: #edebf2; /* off-white, never pure white */
-  --color-muted: #9a97ad;
-  --color-faint: #82809a;
+:root {
+  /* ---- LIGHT palette. A genuinely tinted lavender, not white-with-a-hint. ----
 
-  --color-accent: #7c6bf5; /* fills only */
-  --color-accent-ink: #9b8cff; /* accent-coloured TEXT only */
+     The page sits at OKLCh chroma 0.040 (hue ~297°) against the 0.010 it used
+     to have — 4x the tint. That is the difference between a page you'd call
+     white and one you'd call light purple. Every ground is capped at 58–74% of
+     the sRGB chroma ceiling for its lightness: past that a channel clips and a
+     tinted light theme stops looking deliberate and starts looking dirty.
 
-  --color-safe: #56c08e;
-  --color-warn: #dfae55;
-  --color-danger: #e06b62;
+     --- ELEVATION ORDER IS DELIBERATE AND IS NOT THE SAME AS DARK'S. ---
+     Light steps are:  bg (most tinted)  <  surface-2  <  surface (lightest).
+     `surface-2` sits BETWEEN the page and the cards, NOT below both. Do not
+     "fix" this to mirror dark mode. When surface-2 was the darkest step it
+     became a third dark ground that every foreground had to clear, which
+     dragged the whole score ramp down until `warn` was olive mud. Cards are the
+     lightest and least-tinted step on purpose: they carry the most text, so
+     they need the most contrast headroom. */
+  --light-bg: #e0d9f6;
+  --light-surface: #ebe8f9;
+  --light-surface-2: #e6e1f6;
+  --light-line: #cfc4f5;
+  --light-line-soft: #e3def6;
+  --light-line-strong: #7f769b;
+  --light-ink: #231a38;
+  --light-muted: #534a6c;
+  --light-faint: #645b7e;
+  /* Moved from #5b46d6, which measured 4.6 against the tinted page and was
+     starting to read as "a darker shade of the background" rather than as the
+     accent. This is darker AND more chromatic: 5.0x the page's chroma and a
+     0.41 OKLCh lightness gap, which is what keeps ground and accent legible as
+     two different things on a violet-on-violet palette. */
+  --light-accent: #5844cc;
+  --light-accent-ink: #4d35bd;
+  --light-safe: #0a6b48;
+  /* NOTE: this reads as dark gold/ochre rather than amber, and that is NOT an
+     artifact of the tint — do not "fix" it by lightening. Hue-80 yellow cannot
+     exceed OKL 0.538 while holding 4.5:1 on ANY light ground, near-white
+     included; the untinted palette was already 0.517 and this is 0.483. The
+     hue stays locked at 80° across themes. Rotating it to ~65° would buy a
+     better warm tone but would narrow the warn-to-danger hue gap from 54° to
+     39°, and the three bands staying distinguishable from EACH OTHER matters
+     more than the exact warmth of one of them. */
+  --light-warn: #7b5708;
+  --light-danger: #bb0f1f;
+  --light-safe-ink: #0e6444;
+  --light-warn-ink: #73520c;
+  --light-danger-ink: #ab131e;
+  /* Effect layers. White-alpha is meaningless on a near-white ground, so these
+     are tokens rather than literals — see `.surface-lit`, `.grid-backdrop`,
+     `.shimmer`. The shimmer one matters most: an invisible skeleton reads as a
+     broken page, not a loading one.
+     `lit-overlay` is deliberately weak: at 0.55 it washed the top of every card
+     to #f6f5fc and put the white-site problem straight back. */
+  --light-lit-overlay: rgba(255, 255, 255, 0.28);
+  --light-dot: rgba(35, 26, 56, 0.07);
+  --light-shimmer: rgba(35, 26, 56, 0.1);
+  /* Tuned on screen, not guessed. At 0.55 the light sheen measured ~1.5x the
+     border separation dark gets at 0.8 (B-G spread of 9 vs 6 across the card's
+     top edge) — dark-violet-on-light reads stronger than light-violet-on-dark
+     at equal delta, so it needs LESS opacity, not more. 0.45 lands it close to
+     parity while staying easy to miss on first glance. */
+  --light-sheen-opacity: 0.45;
+  --light-glow-opacity: 0.09;
+
+  /* ---- DARK palette. Near-black with a violet cast, never pure black. ---- */
+  --dark-bg: #0f0e17;
+  --dark-surface: #1a1826;
+  --dark-surface-2: #1e1c2b;
+  --dark-line: #252336;
+  --dark-line-soft: #201e30;
+  /* 3.13:1 on surface-2 (was #666090 at 2.90, under the 3.0 control-boundary
+     bar — the home CTA panel is surface-2 and carries a secondary button). */
+  --dark-line-strong: #6b6597;
+  --dark-ink: #edebf2;
+  --dark-muted: #9a97ad;
+  /* 4.98:1 on surface-2 (was #82809a at 4.38, under AA). That ground is the
+     "not scored" chip in the factor breakdown — the one place a reader must
+     tell "no data" apart from "scored badly", so it is the worst place to miss
+     AA. Pre-existing dark-mode fix, unrelated to light mode. */
+  --dark-faint: #8a8aa4;
+  --dark-accent: #7c6bf5;
+  --dark-accent-ink: #9b8cff;
+  --dark-safe: #56c08e;
+  --dark-warn: #dfae55;
+  --dark-danger: #e06b62;
+  /* Identical to the base bands ON PURPOSE — see the note above. */
+  --dark-safe-ink: #56c08e;
+  --dark-warn-ink: #dfae55;
+  --dark-danger-ink: #e06b62;
+  --dark-lit-overlay: rgba(255, 255, 255, 0.025);
+  --dark-dot: rgba(255, 255, 255, 0.05);
+  --dark-shimmer: rgba(255, 255, 255, 0.06);
+  --dark-sheen-opacity: 0.8;
+  --dark-glow-opacity: 0.1;
+}
+
+/* ---- Active theme. Light is the base. ---- */
+:root {
+  color-scheme: light;
+  --t-bg: var(--light-bg);
+  --t-surface: var(--light-surface);
+  --t-surface-2: var(--light-surface-2);
+  --t-line: var(--light-line);
+  --t-line-soft: var(--light-line-soft);
+  --t-line-strong: var(--light-line-strong);
+  --t-ink: var(--light-ink);
+  --t-muted: var(--light-muted);
+  --t-faint: var(--light-faint);
+  --t-accent: var(--light-accent);
+  --t-accent-ink: var(--light-accent-ink);
+  --t-safe: var(--light-safe);
+  --t-warn: var(--light-warn);
+  --t-danger: var(--light-danger);
+  --t-safe-ink: var(--light-safe-ink);
+  --t-warn-ink: var(--light-warn-ink);
+  --t-danger-ink: var(--light-danger-ink);
+  --t-lit-overlay: var(--light-lit-overlay);
+  --t-dot: var(--light-dot);
+  --t-shimmer: var(--light-shimmer);
+  --t-sheen-opacity: var(--light-sheen-opacity);
+  --t-glow-opacity: var(--light-glow-opacity);
+}
+
+/* Dark has TWO entry points, and they must stay identical:
+     1. the OS preference, when the user has not chosen explicitly
+        (`:not([data-theme='light'])` lets an explicit light choice win), and
+     2. an explicit dark choice, which must beat a light OS preference.
+   They map to the same `--dark-*` values, so there are no duplicated hexes —
+   if you add a token, add it to BOTH blocks. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --t-bg: var(--dark-bg);
+    --t-surface: var(--dark-surface);
+    --t-surface-2: var(--dark-surface-2);
+    --t-line: var(--dark-line);
+    --t-line-soft: var(--dark-line-soft);
+    --t-line-strong: var(--dark-line-strong);
+    --t-ink: var(--dark-ink);
+    --t-muted: var(--dark-muted);
+    --t-faint: var(--dark-faint);
+    --t-accent: var(--dark-accent);
+    --t-accent-ink: var(--dark-accent-ink);
+    --t-safe: var(--dark-safe);
+    --t-warn: var(--dark-warn);
+    --t-danger: var(--dark-danger);
+    --t-safe-ink: var(--dark-safe-ink);
+    --t-warn-ink: var(--dark-warn-ink);
+    --t-danger-ink: var(--dark-danger-ink);
+    --t-lit-overlay: var(--dark-lit-overlay);
+    --t-dot: var(--dark-dot);
+    --t-shimmer: var(--dark-shimmer);
+    --t-sheen-opacity: var(--dark-sheen-opacity);
+    --t-glow-opacity: var(--dark-glow-opacity);
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --t-bg: var(--dark-bg);
+  --t-surface: var(--dark-surface);
+  --t-surface-2: var(--dark-surface-2);
+  --t-line: var(--dark-line);
+  --t-line-soft: var(--dark-line-soft);
+  --t-line-strong: var(--dark-line-strong);
+  --t-ink: var(--dark-ink);
+  --t-muted: var(--dark-muted);
+  --t-faint: var(--dark-faint);
+  --t-accent: var(--dark-accent);
+  --t-accent-ink: var(--dark-accent-ink);
+  --t-safe: var(--dark-safe);
+  --t-warn: var(--dark-warn);
+  --t-danger: var(--dark-danger);
+  --t-safe-ink: var(--dark-safe-ink);
+  --t-warn-ink: var(--dark-warn-ink);
+  --t-danger-ink: var(--dark-danger-ink);
+  --t-lit-overlay: var(--dark-lit-overlay);
+  --t-dot: var(--dark-dot);
+  --t-shimmer: var(--dark-shimmer);
+  --t-sheen-opacity: var(--dark-sheen-opacity);
+  --t-glow-opacity: var(--dark-glow-opacity);
+}
+
+/* `inline` so utilities emit `var(--t-*)` rather than a resolved value — that
+   is what makes a runtime theme swap work without regenerating any CSS. */
+@theme inline {
+  --color-bg: var(--t-bg);
+  --color-surface: var(--t-surface);
+  --color-surface-2: var(--t-surface-2);
+  --color-line: var(--t-line);
+  --color-line-soft: var(--t-line-soft);
+  --color-line-strong: var(--t-line-strong);
+
+  --color-ink: var(--t-ink);
+  --color-muted: var(--t-muted);
+  --color-faint: var(--t-faint);
+
+  --color-accent: var(--t-accent);
+  --color-accent-ink: var(--t-accent-ink);
+
+  --color-safe: var(--t-safe);
+  --color-warn: var(--t-warn);
+  --color-danger: var(--t-danger);
+  --color-safe-ink: var(--t-safe-ink);
+  --color-warn-ink: var(--t-warn-ink);
+  --color-danger-ink: var(--t-danger-ink);
 
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, 'SFMono-Regular', monospace;
@@ -91,16 +304,180 @@ body {
   font-feature-settings: 'tnum' 1;
 }
 
-/* Fine top-lit surface used on cards — subtle depth without a heavy shadow. */
+/* Fine top-lit surface used on cards — subtle depth without a heavy shadow.
+   The overlay is a token because white-alpha does nothing on a near-white
+   ground: on light it is a much stronger white over the tinted surface, which
+   produces the same "lit from above" read rather than nothing at all. */
 .surface-lit {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0) 40%),
-    var(--color-surface);
+  background: linear-gradient(180deg, var(--t-lit-overlay), transparent 40%), var(--color-surface);
+}
+
+/* Ambient border sheen — a slow, low-contrast violet light travelling around a
+   card's border, so the card reads as quietly alive rather than static.
+   Deliberately scoped: applied ONLY to the homepage live-score cards for now
+   (see app/(home)/page.tsx). Don't spread it to other cards without a decision —
+   the whole point of one accent used sparingly is that motion in the accent is
+   rare enough to mean something.
+
+   Pure CSS, no framer-motion: this is an ambient loop with no state, no
+   interaction, and no dependence on React, so a keyframe animation is both
+   simpler and cheaper than a JS-driven one — nothing has to run on the main
+   thread per frame to keep a value in sync.
+
+   Reduced motion is enforced HERE, in CSS, not via useReducedMotion. That hook
+   is the right tool for framer-motion's JS animations (see score-ring.tsx),
+   but for a CSS animation the media query is strictly better: it applies before
+   hydration (so there's no frame of motion for a user who asked for none), it
+   needs no client component, and it can't desync from the animation it guards. */
+@property --sheen-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes border-sheen {
+  to {
+    --sheen-angle: 360deg;
+  }
+}
+
+.border-sheen {
+  position: relative;
+}
+
+.border-sheen::after {
+  content: '';
+  position: absolute;
+  /* An absolutely positioned child is laid out against the PADDING box, which
+     excludes the border — so -1px pulls the ring back out onto the card's own
+     1px border rather than leaving it floating just inside. */
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px; /* = ring thickness */
+  pointer-events: none;
+  /* The two knobs, if this needs retuning: `opacity` here and the peak colour
+     in the gradient below. Started at 0.5 on `accent` and read as too faint on
+     a real display, so the peak moved to the lighter `accent-ink` and opacity
+     up to 0.8 — brighter core, same hue, still well short of a neon outline. */
+  opacity: var(--t-sheen-opacity);
+
+  /* A fully-transparent *accent*, not the `transparent` keyword (= transparent
+     black), so the falloff can't drift grey on any interpolation path. */
+  --sheen-fade: color-mix(in srgb, var(--color-accent) 0%, transparent);
+  background: conic-gradient(
+    from var(--sheen-angle),
+    var(--sheen-fade) 0deg,
+    var(--color-accent-ink) 38deg,
+    var(--color-accent-ink) 54deg,
+    var(--sheen-fade) 96deg,
+    var(--sheen-fade) 360deg
+  );
+
+  /* Punch out the middle so only the 1px ring paints: mask the content box,
+     mask the whole box, subtract one from the other. This is what keeps the
+     effect on the border without a second element or any layout involvement —
+     the pseudo-element is out of flow, so it is not a flex item and cannot
+     move, resize, or shift the card. */
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+
+  /* Slow: one full traverse every 9s. `--sheen-delay` lets sibling cards be
+     staggered so three synchronised lights don't read as a mechanism. */
+  animation: border-sheen 9s linear infinite;
+  animation-delay: var(--sheen-delay, 0s);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Not `animation: none` — that would leave a static violet arc frozen on one
+     corner. The card falls back to exactly its normal border. */
+  .border-sheen::after {
+    display: none;
+  }
+}
+
+/* Ambient panel glow — a soft violet light drifting slowly behind a panel's
+   content, for depth rather than for motion. Scoped to the homepage's
+   five-factor panel; like `border-sheen`, don't spread it without a decision.
+
+   Pure CSS again, for the same reason: no state, no interaction, nothing React
+   needs to know. Reduced motion is handled in CSS rather than via
+   useReducedMotion so it applies before hydration and needs no client
+   component — see the note on `border-sheen` above.
+
+   COST: the drift is a `transform` on a promoted layer, NOT an animated
+   `background-position` or gradient stop. That matters at this size — the
+   gradient rasterises once and the compositor moves the layer, so a large soft
+   blob costs about the same as a small one. Animating the background instead
+   would repaint the full panel every frame. */
+@keyframes panel-glow-drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(120%, 0, 0);
+  }
+}
+
+.panel-glow {
+  position: relative;
+  /* Creates a stacking context, so the z-index:-1 layer below is trapped inside
+     this panel instead of sliding behind its own background or an ancestor. */
+  isolation: isolate;
+  /* Clips the drifting blob to the panel's rounded rect. */
+  overflow: hidden;
+}
+
+.panel-glow::before {
+  content: '';
+  position: absolute;
+  /* z-index -1 paints ABOVE the panel's own background and border, but BELOW
+     every in-flow child. The nested factor cards carry an opaque `bg-surface`,
+     so they sit fully in front of this: their borders, surfaces, and text are
+     composited over an unchanged background and cannot shimmer or shift
+     contrast as the glow passes underneath. */
+  z-index: -1;
+  pointer-events: none;
+
+  /* Taller and wider than the panel so no edge of the blob can drift into
+     view. Vertical bleed is deliberate — the ellipse's soft top and bottom are
+     clipped off, leaving a broad horizontal wash. */
+  top: -50%;
+  bottom: -50%;
+  left: -15%;
+  width: 55%;
+
+  /* Two stops, one hue. Nothing else. */
+  background: radial-gradient(closest-side, var(--color-accent), transparent);
+  /* Deliberately low, and per-theme: on dark the glow LIGHTENS the ground (the
+     ceiling is ~0.18 — at 0.24 the panel's muted paragraph falls to 4.28:1),
+     while on light it DARKENS it, which light tolerates far better (even 0.12
+     holds the paragraph at 5.98:1). Same layer, opposite direction. */
+  opacity: var(--t-glow-opacity);
+
+  will-change: transform;
+  animation: panel-glow-drift 54s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Keep the glow, drop the drift. Unlike the border sheen — which is only
+     meaningful as movement — this layer is doing lighting work, so freezing it
+     preserves the depth instead of flattening the panel. */
+  .panel-glow::before {
+    animation: none;
+    will-change: auto;
+  }
 }
 
 /* Faint dotted grid for hero backdrops. */
 .grid-backdrop {
-  background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-image: radial-gradient(var(--t-dot) 1px, transparent 1px);
   background-size: 26px 26px;
   -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 40%, transparent 100%);
   mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 40%, transparent 100%);
@@ -117,7 +494,10 @@ body {
   position: absolute;
   inset: 0;
   transform: translateX(-100%);
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06), transparent);
+  /* Tokenised: a white sweep is invisible on a near-white skeleton, and a
+     skeleton that doesn't animate reads as a broken page rather than a loading
+     one. Verify this one visibly in light mode, not just that the token exists. */
+  background: linear-gradient(90deg, transparent, var(--t-shimmer), transparent);
   animation: shimmer 1.6s infinite;
 }
 

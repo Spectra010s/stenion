@@ -117,7 +117,7 @@ function ProtocolRow({ entry, rank }: { entry: LeaderboardEntry; rank: number })
 function EmptyState() {
   return (
     <div className="mt-10 rounded-xl border border-line surface-lit p-10 text-center">
-      <ShieldCheck className="mx-auto h-8 w-8 text-faint" />
+      <ShieldCheck className="mx-auto h-8 w-8 text-accent" />
       <h2 className="mt-4 font-display text-lg font-semibold text-ink">No protocols scored yet</h2>
       <p className="mx-auto mt-2 max-w-md text-sm text-muted">
         The indexer hasn&apos;t published a run yet. Once it does, protocols will appear here ranked

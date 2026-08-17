@@ -26,10 +26,36 @@ export const metadata: Metadata = {
     'Continuous, on-chain-derived safety scores for Stellar/Soroban DeFi protocols. Audits are a snapshot; Stenion tracks risk as it moves.',
 };
 
+// Resolve the theme BEFORE first paint. This is a blocking inline script in
+// <head>, deliberately not a useEffect — an effect runs after hydration, which
+// is precisely when the wrong-theme flash happens.
+//
+// It only writes `data-theme` for an EXPLICIT light/dark choice. "System" is
+// the absence of the attribute, which lets the `prefers-color-scheme` block in
+// globals.css apply on its own — so system mode needs no JS at all, keeps
+// following the OS live, and still paints correctly if this script fails.
+const THEME_INIT = `(function(){try{var c=localStorage.getItem('stenion-theme');var d=document.documentElement;if(c==='light'||c==='dark'){d.setAttribute('data-theme',c)}else{d.removeAttribute('data-theme')}}catch(e){}})()`;
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable} ${display.variable}`}>
+    // suppressHydrationWarning: the script above mutates `data-theme` before
+    // React hydrates, so the server HTML and the live DOM differ by design.
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={`${GeistSans.variable} ${GeistMono.variable} ${display.variable}`}
+    >
       <body className="min-h-screen bg-bg text-ink antialiased">
+        {/* FIRST child of <body>, and deliberately NOT inside a <head> element.
+            Inside <head> this is part of the React tree Next may stream: on a
+            route that calls notFound() the head is already flushed, so the tag
+            arrived only in the RSC payload as serialised JSON and never
+            executed — /protocol/<unknown-id> rendered in the wrong theme while
+            every other route was fine. At the top of <body> it is always in the
+            initial shell. It still runs before first paint: the stylesheet is
+            already in <head>, and a synchronous inline script blocks parsing,
+            so the attribute is set before any body content is laid out. */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT }} />
         <Nav />
         <main>{children}</main>
         <Footer />
