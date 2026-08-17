@@ -71,21 +71,51 @@ export function requireDatabaseUrl(): string {
   if (url.protocol !== 'postgres:' && url.protocol !== 'postgresql:') {
     throw new Error(`DATABASE_URL must be a postgres:// URL, got protocol "${url.protocol}"`);
   }
-  return requireVerifyFullSslMode(raw);
+  return pinVerifyFullSslMode(raw);
 }
 
 /**
- * Pin sslmode=verify-full explicitly for Neon/Postgres connections.
+ * Hosts where the connection never leaves the machine. No local development
+ * Postgres serves a verifiable certificate — the `postgres:16-alpine` container
+ * in CONTRIBUTING.md speaks no TLS at all — so pinning `verify-full` here would
+ * break `pnpm --filter @stenion/db migrate` locally and buy nothing. Loopback
+ * only, deliberately: a remote host gets no escape from verification, so this
+ * carve-out can never become a production downgrade path.
  *
- * pg currently treats sslmode=require as certificate-verifying, but pg v9 is
- * expected to weaken that behaviour. Keeping verify-full in the connection
- * string makes the required TLS verification explicit and prevents a dependency
- * bump from silently downgrading database transport security.
+ * Compared case-insensitively because `postgresql:` is not a "special" URL
+ * scheme, so WHATWG URL parsing leaves the host's case alone (`@LOCALHOST/`
+ * stays `LOCALHOST`) instead of lowercasing it the way it would for http.
+ */
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/**
+ * Pin `sslmode=verify-full` onto a Postgres connection string.
+ *
+ * **Why pinned at all.** `pg` currently treats `sslmode=require` as *verifying*
+ * the server's certificate, which is not what libpq means by `require`.
+ * `pg-connection-string` v3 / `pg` v9 adopt the libpq semantics, where
+ * `require` encrypts the transport but authenticates nobody — so an unchanged
+ * connection string would silently stop verifying that we are talking to Neon
+ * the day that major version lands. `verify-full` means the same strong thing
+ * under both readings, which is the entire point: it takes our transport
+ * security out of the hands of a dependency's interpretation. We are on
+ * `pg@^8`, so this is preparation rather than a live hole — the caret cannot
+ * reach v9 on its own. That is not a reason to simplify this away; it is the
+ * reason it has to be here *before* someone bumps the major.
+ *
+ * **Why it overrides instead of filling a gap.** Neon hands out connection
+ * strings that already carry `sslmode=require`, so a "set it only if absent"
+ * version would never fire on the one deployment that actually matters.
+ * Whatever `DATABASE_URL` says about `sslmode` loses, on purpose — including a
+ * weaker explicit value, which is exactly the case worth overriding.
+ *
+ * The sole exception is loopback; see {@link LOOPBACK_HOSTS}.
  *
  * See: https://github.com/stenion-lab/stenion/issues/4
  */
-export function requireVerifyFullSslMode(databaseUrl: string): string {
+export function pinVerifyFullSslMode(databaseUrl: string): string {
   const url = new URL(databaseUrl);
+  if (LOOPBACK_HOSTS.has(url.hostname.toLowerCase())) return databaseUrl;
   url.searchParams.set('sslmode', 'verify-full');
   return url.toString();
 }

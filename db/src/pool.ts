@@ -1,8 +1,11 @@
-// A single shared pg Pool for the process. DATABASE_URL is normalized to
-// `sslmode=verify-full` before the pool is created, so Neon/Postgres TLS
-// certificate verification is explicit and not dependent on pg version-specific
-// `sslmode=require` behaviour. Callers get the pool lazily so simply importing
-// the package doesn't open a connection.
+// A single shared pg Pool for the process. DATABASE_URL is pinned to
+// `sslmode=verify-full` on the way in (see env.ts for why, and for the loopback
+// carve-out), so certificate verification is stated outright rather than left
+// to whatever the installed pg version reads `sslmode=require` to mean. Every
+// consumer — indexer, dashboard pages, route handlers, migrations — reaches the
+// database through this function, so the pin covers all of them at once.
+// Callers get the pool lazily so simply importing the package doesn't open a
+// connection.
 
 import { Pool } from 'pg';
 
