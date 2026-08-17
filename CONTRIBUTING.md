@@ -300,6 +300,11 @@ STENION_TEST_DATABASE_URL=postgresql://postgres:test@localhost:5433/stenion_test
 The suite refuses to run if `STENION_TEST_DATABASE_URL` equals `DATABASE_URL`, so it can never
 append test rows to the published history. Everything it creates is prefixed and cleaned up.
 
+That container speaks no TLS, and `@stenion/db` pins `sslmode=verify-full` on every connection
+(see `db/src/env.ts`) — the two only coexist because the pin exempts loopback hosts. So point these
+at `localhost`/`127.0.0.1`, not at a remote scratch database reached over a tunnel: a remote host is
+pinned like any other and will need a certificate that actually verifies.
+
 ### Mainnet snapshot fixtures
 
 Alongside the synthetic tests, `adapters/fixtures/*.ts` holds **frozen captures of real mainnet
