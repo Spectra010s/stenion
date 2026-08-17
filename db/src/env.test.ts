@@ -13,18 +13,14 @@ describe('requireVerifyFullSslMode', () => {
 
   it('replaces sslmode=require with sslmode=verify-full', () => {
     assert.equal(
-      requireVerifyFullSslMode(
-        'postgresql://user:pass@example.com/stenion?sslmode=require',
-      ),
+      requireVerifyFullSslMode('postgresql://user:pass@example.com/stenion?sslmode=require'),
       'postgresql://user:pass@example.com/stenion?sslmode=verify-full',
     );
   });
 
   it('preserves existing query parameters', () => {
     assert.equal(
-      requireVerifyFullSslMode(
-        'postgresql://user:pass@example.com/stenion?connect_timeout=10',
-      ),
+      requireVerifyFullSslMode('postgresql://user:pass@example.com/stenion?connect_timeout=10'),
       'postgresql://user:pass@example.com/stenion?connect_timeout=10&sslmode=verify-full',
     );
   });
