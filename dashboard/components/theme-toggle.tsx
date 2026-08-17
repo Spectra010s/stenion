@@ -2,6 +2,8 @@
 
 import { Check, Monitor, Moon, Sun } from 'lucide-react';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
+import { useReducedMotion } from 'framer-motion';
 import { cn } from '../app/lib/cn';
 
 /**
@@ -33,6 +35,60 @@ function applyChoice(choice: ThemeChoice) {
   else root.setAttribute('data-theme', choice);
 }
 
+/**
+ * Run `update` behind a circle of the NEW theme expanding from (x, y).
+ *
+ * This is presentation only. `update` is the whole theme change and it always
+ * runs exactly once — if the View Transitions API isn't here, the caller calls
+ * it directly instead. Nothing about resolution or persistence lives in here.
+ *
+ * The keyframes live in globals.css (`theme-sweep`); this side only measures
+ * the click and hands over the three numbers CSS can't work out for itself.
+ */
+function sweepFrom(x: number, y: number, update: () => void) {
+  const root = document.documentElement;
+
+  // Distance to the furthest viewport corner. A click on the toggle — top
+  // right, always — needs a radius close to the full diagonal, where a
+  // centred one would need barely half that, so a fixed radius would either
+  // leave an unswept corner or spend most of the animation off-screen.
+  // innerWidth/Height include the scrollbar gutter, which errs large: covering
+  // a few px more than the viewport is invisible, covering less is a seam.
+  const radius = Math.hypot(
+    Math.max(x, window.innerWidth - x),
+    Math.max(y, window.innerHeight - y),
+  );
+
+  root.style.setProperty('--vt-x', `${x}px`);
+  root.style.setProperty('--vt-y', `${y}px`);
+  root.style.setProperty('--vt-r', `${radius}px`);
+  root.setAttribute('data-theme-sweep', '');
+
+  const cleanup = () => {
+    root.removeAttribute('data-theme-sweep');
+    root.style.removeProperty('--vt-x');
+    root.style.removeProperty('--vt-y');
+    root.style.removeProperty('--vt-r');
+  };
+  // Both arms, not `.finally`: `finished` rejects if the transition is skipped
+  // (another one starts, the tab is hidden mid-flight), and a `.finally` chain
+  // would re-throw that into an unhandled rejection. The theme has already been
+  // applied by then either way — only the scoping attribute needs clearing.
+  document.startViewTransition(update).finished.then(cleanup, cleanup);
+}
+
+/**
+ * Where the circle starts. `detail === 0` means the button was activated from
+ * the keyboard, where clientX/clientY are both 0 — using them would wipe in
+ * from the top-left corner, nowhere near the control. Fall back to the option's
+ * own centre so a keyboard user gets the same gesture from the same place.
+ */
+function originOf(e: React.MouseEvent<HTMLElement>) {
+  if (e.detail !== 0) return { x: e.clientX, y: e.clientY };
+  const r = e.currentTarget.getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+}
+
 export function ThemeToggle({ className }: { className?: string }) {
   // Starts at 'system' on the server and on the first client render, then
   // corrects from storage on mount. Only this control's own state can settle a
@@ -40,6 +96,12 @@ export function ThemeToggle({ className }: { className?: string }) {
   const [choice, setChoice] = useState<ThemeChoice>('system');
   const [systemIsDark, setSystemIsDark] = useState(false);
   const [open, setOpen] = useState(false);
+  const reduceMotion = useReducedMotion();
+
+  // Which theme is actually on screen right now. Needed above `select` as well
+  // as in the render, because a change that doesn't move this value has nothing
+  // to animate — see there.
+  const resolvedDark = choice === 'dark' || (choice === 'system' && systemIsDark);
 
   const menuId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -99,18 +161,61 @@ export function ThemeToggle({ className }: { className?: string }) {
     itemRefs.current[Math.max(0, i)]?.focus();
   }, [open, choice]);
 
-  const select = useCallback((next: ThemeChoice) => {
-    setChoice(next);
-    applyChoice(next);
-    setOpen(false);
-    triggerRef.current?.focus();
-    try {
-      if (next === 'system') localStorage.removeItem(STORAGE_KEY);
-      else localStorage.setItem(STORAGE_KEY, next);
-    } catch {
-      /* the theme still applies for this session even if it can't persist */
-    }
-  }, []);
+  const select = useCallback(
+    (next: ThemeChoice, e: React.MouseEvent<HTMLElement>) => {
+      // The theme change itself, entire. Whether it runs inside a view
+      // transition or on its own is a presentation decision made below — this
+      // never changes, and never fails to run.
+      const commit = () => {
+        setChoice(next);
+        applyChoice(next);
+        // Closing the menu inside the transition is deliberate. The OLD
+        // snapshot is taken before this runs, so it still has the menu open;
+        // the NEW one doesn't. The circle therefore erases the menu from the
+        // exact point that was clicked, instead of the menu vanishing first
+        // (which orphans the origin — the sweep appears to start from nowhere)
+        // or after (which leaves a stale menu sitting on top of a finished
+        // transition, then pops).
+        setOpen(false);
+      };
+
+      const nextDark = next === 'dark' || (next === 'system' && systemIsDark);
+      const skipAnimation =
+        // Nothing to reveal: "System" picked while system already resolves to
+        // the theme on screen, or re-picking the current option. Animating here
+        // would be a full-viewport repaint that ends on the same pixels.
+        nextDark === resolvedDark ||
+        reduceMotion ||
+        // Feature-detect, never sniff. Firefox <144 and older Safari land here.
+        typeof document.startViewTransition !== 'function';
+
+      if (skipAnimation) {
+        commit();
+        triggerRef.current?.focus();
+      } else {
+        const { x, y } = originOf(e);
+        sweepFrom(x, y, () => {
+          // flushSync because the API snapshots the new DOM the moment this
+          // callback returns, and React batches state updates — without it the
+          // "after" snapshot is the tree from *before* `commit`, and the circle
+          // expands to reveal the old theme with the menu still open.
+          flushSync(commit);
+          // Inside the callback too: unmounting the menu drops focus to <body>,
+          // and doing this after the transition starts would move the focus
+          // ring visibly a beat later.
+          triggerRef.current?.focus();
+        });
+      }
+
+      try {
+        if (next === 'system') localStorage.removeItem(STORAGE_KEY);
+        else localStorage.setItem(STORAGE_KEY, next);
+      } catch {
+        /* the theme still applies for this session even if it can't persist */
+      }
+    },
+    [reduceMotion, resolvedDark, systemIsDark],
+  );
 
   const onItemKeyDown = (e: React.KeyboardEvent, index: number) => {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -126,7 +231,6 @@ export function ThemeToggle({ className }: { className?: string }) {
     }
   };
 
-  const resolvedDark = choice === 'dark' || (choice === 'system' && systemIsDark);
   const ResolvedIcon = resolvedDark ? Moon : Sun;
   const activeLabel = OPTIONS.find((o) => o.value === choice)?.label ?? 'System';
 
@@ -172,7 +276,7 @@ export function ThemeToggle({ className }: { className?: string }) {
                 type="button"
                 role="menuitemradio"
                 aria-checked={selected}
-                onClick={() => select(value)}
+                onClick={(e) => select(value, e)}
                 onKeyDown={(e) => onItemKeyDown(e, i)}
                 className={cn(
                   'flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm transition-colors',
