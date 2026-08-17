@@ -71,5 +71,21 @@ export function requireDatabaseUrl(): string {
   if (url.protocol !== 'postgres:' && url.protocol !== 'postgresql:') {
     throw new Error(`DATABASE_URL must be a postgres:// URL, got protocol "${url.protocol}"`);
   }
-  return raw;
+  return requireVerifyFullSslMode(raw);
+}
+
+/**
+ * Pin sslmode=verify-full explicitly for Neon/Postgres connections.
+ *
+ * pg currently treats sslmode=require as certificate-verifying, but pg v9 is
+ * expected to weaken that behaviour. Keeping verify-full in the connection
+ * string makes the required TLS verification explicit and prevents a dependency
+ * bump from silently downgrading database transport security.
+ *
+ * See: https://github.com/stenion-lab/stenion/issues/4
+ */
+export function requireVerifyFullSslMode(databaseUrl: string): string {
+  const url = new URL(databaseUrl);
+  url.searchParams.set('sslmode', 'verify-full');
+  return url.toString();
 }
