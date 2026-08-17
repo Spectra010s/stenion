@@ -13,6 +13,12 @@ export interface LeaderboardEntry {
   id: string;
   name: string;
   chain: string;
+  /**
+   * Root-relative path to a logo this app hosts under `public/`, or null when
+   * the protocol publishes no usable mark. Null is a rendered state, not an
+   * error — <ProtocolLogo> draws a deliberate initials tile.
+   */
+  logo: string | null;
   safetyScore: number | null;
   computedAt: string | null;
   lastRunAt: string | null;
@@ -64,6 +70,21 @@ export interface ProtocolDetail {
   name: string;
   chain: string;
   adapter: string;
+  /** see LeaderboardEntry.logo */
+  logo: string | null;
+  /**
+   * The Soroban contract this protocol's score is derived from — a raw
+   * C-address, not an explorer URL. The dashboard builds the URL itself (see
+   * lib/explorer.ts) so the choice of explorer is one decision in one place.
+   */
+  contractId: string | null;
+  /**
+   * The protocol's own site/docs, null when it publishes none. Rendered as the
+   * subject's own properties, never as a recommendation — see the attribution
+   * note that accompanies them in the UI.
+   */
+  site: string | null;
+  docs: string | null;
   safetyScore: number | null;
   computedAt: string | null;
   factors: RiskFactorMap | null;

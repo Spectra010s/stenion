@@ -41,7 +41,7 @@ it stays internal to your adapter.
 
 ```ts
 export interface Adapter<TRawData = unknown> {
-  // { id: slug, name, chain: 'stellar', adapterRef: 'YourAdapter' }
+  // identity: { id: slug, name, chain, adapterRef, logo?, contractId?, links? }
   readonly metadata: ProtocolMetadata;
 
   fetchRawData(): Promise<TRawData>; // pull raw on-chain state (RPC + Horizon)
@@ -91,6 +91,87 @@ fixed. A string literal is a value the bundler has no license to rewrite; a clas
 The same reasoning applies to anything else an adapter persists or publishes. If a value ends up in
 the database or an API response, it must come from a literal or from on-chain data — never from a
 JavaScript identifier.
+
+### Logo, links, and the scored contract
+
+`metadata` also carries the protocol's identity: its mark, the contract its score comes from, and
+its own site/docs. These live here — not in a slug-keyed table in the dashboard — for the same
+reason `name` and `chain` do: a frontend lookup has to be edited by someone working in a package
+they didn't touch, which is how such tables go stale. They travel the one existing path
+(`upsertProtocol` → `protocols` → the API), so adding an adapter is still a single-package change.
+
+```ts
+readonly metadata: ProtocolMetadata;
+
+constructor(opts: YourAdapterOptions = {}) {
+  this.poolId = opts.poolId ?? DEFAULT_POOL;
+
+  this.metadata = {
+    id: 'yourprotocol',
+    name: 'YourProtocol',
+    chain: 'stellar',
+    adapterRef: 'YourProtocolAdapter',
+    logo: '/assets/protocols/yourprotocol.svg',
+    contractId: this.poolId, // the instance's pool, NOT the module default
+    links: { site: 'https://yourprotocol.xyz', docs: 'https://docs.yourprotocol.xyz' },
+  };
+}
+```
+
+**Build `metadata` in the constructor, not as a field initialiser.** `contractId` must be the
+contract _this instance_ was configured with. An adapter constructed with a non-default pool would
+otherwise publish an explorer link to a pool it never read — a real address under a number that
+didn't come from it, which is worse than no link.
+
+**`contractId` is a raw C-address, never an explorer URL.** Which explorer to send a reader to is a
+Stenion presentation choice and lives in one place, `dashboard/app/lib/explorer.ts`. Don't repeat a
+`stellar.expert` string in your adapter.
+
+**Links are optional and must not be padded.** Omit `docs` if the protocol publishes none. A dead
+link is worse than an absent one; the UI just leaves the button out. Note also what these links are
+_not_: listing a protocol's site is not an endorsement of it, the dashboard renders them
+`rel="noopener noreferrer nofollow"`, and the attribution note beside them says so explicitly.
+
+#### The logo asset
+
+|               |                                                                                       |
+| ------------- | ------------------------------------------------------------------------------------- |
+| **Where**     | `dashboard/public/assets/protocols/<id>.<ext>` — filename matches your `metadata.id`  |
+| **Format**    | SVG preferred. PNG only when the protocol publishes no vector mark                    |
+| **Size**      | SVG: any square-ish viewBox. PNG: **at least 128×128**, square, transparent or opaque |
+| **Reference** | `logo: '/assets/protocols/<id>.svg'` — a root-relative path, always                   |
+
+**Commit the file; never hotlink.** A URL on the protocol's CDN breaks the moment they reorganise
+their assets, and the resulting 404 shifts layout on a page whose whole job is to be scannable.
+Download it, check it in, and reference the local path.
+
+**Check an SVG before committing it.** These are served from our own origin, and an SVG opened
+directly is a document, not an image — a `<script>`, an `onload=`, or a `<foreignObject>` inside one
+is same-origin script execution. Strip anything that isn't drawing:
+
+```
+grep -oiE '<script|on[a-z]+=|<foreignObject|<use|<image|href="http|javascript:' your-logo.svg
+```
+
+Nothing should match. Also drop any `<image>` with an embedded raster — it defeats the point of a
+vector mark and bloats the file.
+
+**Both themes.** The dashboard renders every mark in a fixed dark tile
+([`components/protocol-logo.tsx`](dashboard/components/protocol-logo.tsx)) precisely so this is
+mostly handled for you: a mark designed for a dark background works, and one that reads on anything
+also works. What you must still check is a mark that is **dark-on-transparent** — it will vanish
+into the tile. If that's what the protocol publishes, prefer their light/inverse variant if they
+offer one; if they don't, omit the logo rather than recolouring their mark.
+
+**No usable mark? Omit the field.** `logo` is optional, and its absence is a designed state, not a
+gap: the dashboard renders the protocol's initials in the same tile, so the row still scans and
+nothing looks broken. **Never invent, redraw, or recolour a mark to fill this in**, and never point
+`logo` at a placeholder file — that's a 404 in every row that uses it.
+
+**These fields are maintainer-managed.** `upsertProtocol` overwrites them from adapter metadata on
+every indexer cycle, so a value edited directly in the database reverts within ~5 minutes. That's
+deliberate. If protocol self-service ever ships, a protocol-supplied mark must land in _separate_
+columns that win at read time — never as an edit to these.
 
 ## The `*Safety` taxonomy — populate all five
 

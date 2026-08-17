@@ -63,8 +63,15 @@ dashboard/API (reads) so there's no duplicated connection logic. Exposes a lazy 
 `Pool` (`getPool`/`closePool`), a `createStore(pool)` factory with all read/write methods, env
 loading, and the persisted `RunRecord` type. Two tables:
 
-- `protocols` — one row per protocol (slug PK, name, chain, adapter class name). Upserted at
-  indexer startup from adapter metadata.
+- `protocols` — one row per protocol (slug PK, name, chain, adapter class name) plus its identity:
+  `logo` (a root-relative path into the dashboard's own `public/` tree — we host every mark, never
+  hotlink), `contract_id` (the raw Soroban address the score is derived from, so a reader can check
+  it in an explorer; the explorer itself is chosen in `dashboard/app/lib/explorer.ts`, not per
+  adapter), and `site_url` / `docs_url`. All four are nullable, because "publishes no mark" and
+  "publishes no docs" are real answers the UI renders deliberately rather than papering over with a
+  placeholder. Upserted at indexer startup from adapter metadata — and **overwritten every cycle**,
+  so these are maintainer-managed; a future protocol self-service flow needs separate
+  precedence-taking columns, not edits to these.
 - `risk_scores` — append-only history. `safety_score` is promoted to its own `numeric` column
   (it's what the registry ranks on); the five factors live in one `jsonb` column (displayed, not
   ranked, and growing the taxonomy then needs no migration). `methodology_version` records which

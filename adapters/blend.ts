@@ -542,13 +542,14 @@ export interface BlendAdapterOptions {
 }
 
 export class BlendAdapter implements Adapter<BlendRawData> {
-  readonly metadata: ProtocolMetadata = {
-    id: 'blend',
-    name: 'Blend',
-    chain: 'stellar',
-    // Literal, not this.constructor.name — see ProtocolMetadata.adapterRef.
-    adapterRef: 'BlendAdapter',
-  };
+  /**
+   * Built in the constructor rather than as a field initialiser because
+   * `contractId` must be the pool THIS INSTANCE scores, not the module default.
+   * An adapter constructed with `{ poolId }` would otherwise publish an explorer
+   * link to a pool it never read — a wrong number attached to a real address,
+   * which is worse than no link at all. Everything else here is a literal.
+   */
+  readonly metadata: ProtocolMetadata;
 
   private readonly rpcUrl: string;
   private readonly horizonUrl: string;
@@ -558,6 +559,21 @@ export class BlendAdapter implements Adapter<BlendRawData> {
     this.rpcUrl = opts.rpcUrl ?? DEFAULT_RPC_URL;
     this.horizonUrl = opts.horizonUrl ?? DEFAULT_HORIZON_URL;
     this.poolId = opts.poolId ?? FIXED_POOL_V2;
+
+    this.metadata = {
+      id: 'blend',
+      name: 'Blend',
+      chain: 'stellar',
+      // Literal, not this.constructor.name — see ProtocolMetadata.adapterRef.
+      adapterRef: 'BlendAdapter',
+      // Self-hosted copy of Blend's own mark, never a hotlink to their CDN.
+      logo: '/assets/protocols/blend.svg',
+      contractId: this.poolId,
+      links: {
+        site: 'https://www.blend.capital',
+        docs: 'https://docs.blend.capital',
+      },
+    };
   }
 
   async fetchRawData(): Promise<BlendRawData> {

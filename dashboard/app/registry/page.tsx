@@ -4,6 +4,7 @@ import { ArrowUpRight, ServerCrash, ShieldCheck } from 'lucide-react';
 import { getProtocols, type LeaderboardEntry } from '../lib/api';
 import { bandColor, bandTextClass, formatTimestamp, scoreBand } from '../lib/format';
 import { StatusPill } from '../../components/status-pill';
+import { MarkAttribution, ProtocolLogo } from '../../components/protocol-logo';
 import { Reveal, RevealGroup, RevealItem } from '../../components/reveal';
 
 export const dynamic = 'force-dynamic';
@@ -61,6 +62,8 @@ export default async function RegistryPage() {
               </RevealItem>
             ))}
           </RevealGroup>
+
+          <MarkAttribution className="mt-8  border-t border-line-soft pt-6 max-w-7xl" />
         </Reveal>
       )}
     </div>
@@ -82,6 +85,9 @@ function ProtocolRow({ entry, rank }: { entry: LeaderboardEntry; rank: number })
         <span className="tnum mr-1 text-sm text-faint md:hidden">
           {String(rank).padStart(2, '0')}
         </span>
+        {/* Mark first, then the name as text — the logo is an aid to scanning,
+            never the identifier. A row stays fully readable with images off. */}
+        <ProtocolLogo name={entry.name} logo={entry.logo} size={36} className="mr-1" />
         <span className="font-display text-lg font-semibold text-ink">{entry.name}</span>
         <ArrowUpRight className="h-4 w-4 text-faint transition-colors group-hover:text-accent-ink" />
       </div>

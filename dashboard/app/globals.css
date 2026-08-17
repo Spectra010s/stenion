@@ -501,6 +501,73 @@ body {
   animation: shimmer 1.6s infinite;
 }
 
+/* Circular theme sweep — the new theme wipes in from the point that was clicked.
+   Paired with components/theme-toggle.tsx; neither half works alone.
+
+   Scoped to `[data-theme-sweep]`, which the toggle sets on <html> only for the
+   duration of the transition. Without that scope these rules would also capture
+   any future view transition (a route animation, say) that has nothing to do
+   with the theme.
+
+   Origin and radius arrive as --vt-x / --vt-y / --vt-r, set on <html> by the
+   toggle. Custom properties inherit into the ::view-transition pseudo tree from
+   its originating element (:root), which is what lets a JS-measured click point
+   drive a pure-CSS animation. The radius is the distance to the FURTHEST
+   viewport corner, so it has to be computed per click — a click near an edge
+   needs a far bigger circle than one in the middle.
+
+   Reduced motion is handled in theme-toggle.tsx via useReducedMotion, not here
+   — unlike border-sheen/panel-glow above, the decision is *whether to start a
+   view transition at all*, which is a JS branch. The media query at the bottom
+   of this block is only a backstop. */
+:root[data-theme-sweep]::view-transition-old(root),
+:root[data-theme-sweep]::view-transition-new(root) {
+  /* Kill the UA's default cross-fade. Left on, both themes fade through each
+     other *underneath* the clip and the swept area goes muddy mid-transition.
+     `normal` also undoes the UA's `plus-lighter` blending of the two halves. */
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+/* The direction is FIXED: the old theme sits still and the new one is clipped
+   in over it, every time. That is what makes light→dark and dark→light read as
+   the same gesture. The alternative — shrinking the old layer away for one of
+   the two directions — reverses the direction of travel, so the animation
+   depends on which theme you happened to start in. */
+:root[data-theme-sweep]::view-transition-old(root) {
+  z-index: 0;
+}
+
+:root[data-theme-sweep]::view-transition-new(root) {
+  z-index: 1;
+  /* 450ms. Below ~350 the circle reads as a flicker and you lose the sense of
+     it coming FROM the click; past ~600 the far corner visibly lags behind the
+     rest and it starts to feel like waiting. Ease-out cubic, not a quint or a
+     spring: the edge has to leave the click point immediately, and a long tail
+     on a full-viewport wipe is exactly what reads as slow. */
+  animation: theme-sweep 450ms cubic-bezier(0.33, 1, 0.68, 1);
+}
+
+@keyframes theme-sweep {
+  from {
+    clip-path: circle(0px at var(--vt-x) var(--vt-y));
+  }
+  to {
+    clip-path: circle(var(--vt-r) at var(--vt-x) var(--vt-y));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Belt and braces: the toggle already skips the transition entirely under
+     this setting, so this should be unreachable. If that check ever came back
+     wrong, no animation on either half means the transition finishes on the
+     first frame — i.e. the instant switch the setting is asking for, rather
+     than a full-viewport wipe. */
+  :root[data-theme-sweep]::view-transition-new(root) {
+    animation: none;
+  }
+}
+
 /* Prose (methodology page) tuned to the dark palette instead of prose-invert's
    default grays — headings in ink, links in accent-ink, code on a real surface. */
 .prose-stenion {
