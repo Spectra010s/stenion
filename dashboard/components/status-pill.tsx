@@ -19,11 +19,15 @@ export function StatusPill({
 }) {
   const { text, tone } = stalenessLabel(lastRunStatus, hasScore);
 
+  // Border and fill use the base band; the LABEL uses `*-ink`. On dark the two
+  // are the same value, but on light the /10 tint darkens the ground under
+  // already-dark text and the base band drops to ~4.1:1 — under AA. See the
+  // `*-ink` note in globals.css before simplifying this back to one token.
   const styles =
     tone === 'ok'
-      ? 'border-safe/25 bg-safe/10 text-safe'
+      ? 'border-safe/25 bg-safe/10 text-safe-ink'
       : tone === 'warn'
-        ? 'border-danger/25 bg-danger/10 text-danger'
+        ? 'border-danger/25 bg-danger/10 text-danger-ink'
         : 'border-line bg-surface-2 text-faint';
 
   const Icon = tone === 'ok' ? CircleCheck : tone === 'warn' ? TriangleAlert : CircleSlash;

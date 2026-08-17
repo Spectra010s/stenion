@@ -7,6 +7,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { Github, Menu, Radar, X } from 'lucide-react';
 import { cn } from '../app/lib/cn';
 import { GITHUB_URL, NAV_LINKS } from '../app/lib/site';
+import { ThemeToggle } from './theme-toggle';
 
 // Same expo-out ease the rest of the site uses (see reveal.tsx) — subtle, not bouncy.
 const EASE = [0.16, 1, 0.3, 1] as const;
@@ -90,6 +91,7 @@ export function Nav() {
           >
             <Github className="h-4 w-4" />
           </a>
+          <ThemeToggle />
         </nav>
 
         {/* Mobile trigger — hamburger below md only. */}
@@ -155,6 +157,16 @@ export function Nav() {
                   <Github className="h-4 w-4" />
                   GitHub
                 </a>
+
+                {/* The toggle has to live here too — the desktop nav is hidden
+                    below md, so without this the control is unreachable on the
+                    viewport where most people meet the site. Its own menu closes
+                    on selection, but the sheet deliberately stays open so you can
+                    see the theme change against the page behind it. */}
+                <div className="mt-1 flex items-center justify-between border-t border-line-soft px-3 pt-3">
+                  <span className="text-xs uppercase tracking-wider text-faint">Theme</span>
+                  <ThemeToggle />
+                </div>
               </div>
             </motion.nav>
           </div>

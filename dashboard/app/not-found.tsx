@@ -14,7 +14,7 @@ export default function NotFound() {
   return (
     <div className="mx-auto grid max-w-2xl place-items-center px-5 py-28 text-center">
       <div className="grid h-14 w-14 place-items-center rounded-2xl bg-surface-2 ring-1 ring-inset ring-line">
-        <Compass className="h-7 w-7 text-muted" />
+        <Compass className="h-7 w-7 text-accent" />
       </div>
       <h1 className="mt-6 font-display text-5xl font-semibold tracking-tight text-ink">404</h1>
       <p className="mt-3 text-muted">That page — or protocol — isn&apos;t part of the registry.</p>

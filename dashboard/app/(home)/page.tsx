@@ -113,11 +113,17 @@ export default async function HomePage() {
           </div>
         ) : (
           <RevealGroup className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {scored.map((p) => (
+            {scored.map((p, i) => (
               <RevealItem key={p.id}>
                 <Link
                   href={`/protocol/${p.id}`}
-                  className="group flex items-center gap-5 rounded-xl border border-line surface-lit p-5 transition-all hover:-translate-y-0.5 hover:border-accent"
+                  // `border-sheen` (globals.css) is scoped to these cards only
+                  // for now — a deliberate trial, not a general card treatment.
+                  // The negative delay spreads the three lights around the loop
+                  // instead of firing them in unison; it starts each card
+                  // mid-animation rather than waiting, so nothing is idle.
+                  style={{ '--sheen-delay': `${i * -3}s` } as React.CSSProperties}
+                  className="border-sheen group flex items-center gap-5 rounded-xl border border-line surface-lit p-5 transition-all hover:-translate-y-0.5 hover:border-accent"
                 >
                   <ScoreRing score={p.safetyScore} size={104} stroke={8} label={null} />
                   <div className="min-w-0">
@@ -175,7 +181,7 @@ export default async function HomePage() {
             <RevealItem key={c.title}>
               <div className="h-full rounded-xl border border-line surface-lit p-6">
                 <div className="grid h-10 w-10 place-items-center rounded-lg bg-surface-2 ring-1 ring-inset ring-line">
-                  <c.icon className="h-5 w-5 text-muted" strokeWidth={2} />
+                  <c.icon className="h-5 w-5 text-accent" strokeWidth={2} />
                 </div>
                 <h3 className="mt-4 font-medium text-ink">{c.title}</h3>
                 <p className="mt-2 text-sm leading-relaxed text-muted">{c.body}</p>
@@ -187,7 +193,10 @@ export default async function HomePage() {
 
       {/* ---------- Factor teaser ---------- */}
       <section className="mx-auto max-w-6xl px-5 py-10">
-        <div className="rounded-2xl border border-line surface-lit p-8 sm:p-10">
+        {/* `panel-glow` (globals.css) adds a drifting layer BEHIND this panel's
+            content. Scoped here only. The nested factor cards keep their opaque
+            bg-surface, which is what keeps them crisp over it. */}
+        <div className="panel-glow rounded-2xl border border-line surface-lit p-8 sm:p-10">
           <Reveal>
             <div className="flex flex-wrap items-end justify-between gap-4">
               <div>
@@ -219,7 +228,7 @@ export default async function HomePage() {
             ].map((f) => (
               <RevealItem key={f.name}>
                 <div className="rounded-lg border border-line-soft bg-surface p-4">
-                  <f.icon className="h-5 w-5 text-muted" strokeWidth={2} />
+                  <f.icon className="h-5 w-5 text-accent" strokeWidth={2} />
                   <div className="mt-3 text-sm font-medium text-ink">{f.name}</div>
                   <div className="mt-0.5 text-xs text-faint">{f.hint}</div>
                 </div>
@@ -261,7 +270,7 @@ export default async function HomePage() {
           ].map((c) => (
             <RevealItem key={c.title}>
               <div className="h-full rounded-xl border border-line surface-lit p-6">
-                <c.icon className="h-5 w-5 text-muted" strokeWidth={2} />
+                <c.icon className="h-5 w-5 text-accent" strokeWidth={2} />
                 <h3 className="mt-4 font-medium text-ink">{c.title}</h3>
                 <p className="mt-2 text-sm leading-relaxed text-muted">{c.body}</p>
               </div>
