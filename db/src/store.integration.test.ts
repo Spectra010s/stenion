@@ -196,6 +196,55 @@ describe('Store SQL (integration)', { skip }, () => {
     );
   });
 
+  it('requires a methodology version on ok rows and forbids one on failed rows', async () => {
+    // The other half of the union, added in migration 0004 once the deployed
+    // indexer named the column on both arms. Both directions are asserted
+    // because only one of them is exercised by anything else: every seeded row
+    // in this file is well-formed, so "the constraint accepts a failed row with
+    // no version" proves nothing about whether it would REJECT one carrying a
+    // version. There are zero failed rows in the real database, so this test is
+    // the only thing that ever runs the failed half.
+    const p = id('version-shape');
+    await store.upsertProtocol({
+      id: p,
+      name: 'VersionShape',
+      chain: 'stellar',
+      adapterRef: 'FakeAdapter',
+    });
+
+    // A failed run produced no score, so there is no rulebook to attribute it
+    // to. A version here would be a fabricated attribution.
+    await assert.rejects(
+      () =>
+        pool.query(
+          `INSERT INTO risk_scores (protocol_id, status, error, run_at, methodology_version)
+           VALUES ($1, 'failed', 'boom', now(), 1)`,
+          [p],
+        ),
+      /risk_scores_methodology_version_shape/,
+      'a failed row carrying a version must be rejected',
+    );
+
+    // The direction migration 0004 exists for: with the DEFAULT dropped, a
+    // writer that forgets the column no longer gets silently stamped 1.
+    await assert.rejects(
+      () =>
+        pool.query(
+          `INSERT INTO risk_scores (protocol_id, status, safety_score, factors, computed_at, run_at)
+           VALUES ($1, 'ok', 50, '{}'::jsonb, now(), now())`,
+          [p],
+        ),
+      /risk_scores_methodology_version_shape/,
+      'an ok row with no version must be rejected, not defaulted to 1',
+    );
+
+    // And the well-formed failed row still lands.
+    await insertRun(p, { status: 'failed', error: 'RPC down', runAt: '2026-08-16T11:00:00Z' });
+    const detail = await store.getProtocolDetail(p);
+    assert.equal(detail!.history.length, 1, 'only the well-formed row was written');
+    assert.equal(detail!.history[0].status, 'failed');
+  });
+
   it('carries a per-row methodology version through to the history', async () => {
     // Every row stored today is v1 and there is no second version yet, so live
     // data cannot exercise this. It is seeded instead, for the same reason the
