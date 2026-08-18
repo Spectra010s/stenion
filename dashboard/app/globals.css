@@ -568,8 +568,21 @@ body {
   }
 }
 
-/* Prose (methodology page) tuned to the dark palette instead of prose-invert's
-   default grays — headings in ink, links in accent-ink, code on a real surface. */
+/* Prose (methodology page) driven off the theme tokens instead of prose's default
+   grays — headings in ink, links in accent-ink, code on a real surface. Every
+   value here is a `--color-*` token, so the block is theme-agnostic and follows
+   light/dark on its own.
+
+   EVERY --tw-prose-* TOKEN THE DOC CAN REACH MUST BE SET HERE. The plugin's
+   defaults are a fixed gray ramp that does not track our themes, so any token
+   left unset silently keeps a hardcoded gray — which may happen to look fine in
+   one theme and be unreadable in the other. `pre-code`/`pre-bg` are the trap:
+   the plugin ships code blocks as light-on-dark in BOTH themes (gray-200 text on
+   gray-800), so overriding only the background to a light `surface` left
+   near-white text on a near-white ground in light mode (~1.03:1, invisible)
+   while dark mode looked correct and hid the bug. Inline code was unaffected
+   because it reads `--tw-prose-code`, which was set — that asymmetry is the
+   tell. */
 .prose-stenion {
   --tw-prose-body: var(--color-muted);
   --tw-prose-headings: var(--color-ink);
@@ -578,6 +591,11 @@ body {
   --tw-prose-quotes: var(--color-ink);
   --tw-prose-quote-borders: var(--color-line);
   --tw-prose-code: var(--color-ink);
+  --tw-prose-pre-code: var(--color-ink);
+  --tw-prose-pre-bg: var(--color-surface);
+  --tw-prose-captions: var(--color-faint);
+  --tw-prose-lead: var(--color-muted);
+  --tw-prose-kbd: var(--color-ink);
   --tw-prose-th-borders: var(--color-line);
   --tw-prose-td-borders: var(--color-line-soft);
   --tw-prose-hr: var(--color-line);
@@ -596,8 +614,8 @@ body {
 .prose-stenion :where(code):not(:where(pre code))::after {
   content: none;
 }
+/* Background comes from --tw-prose-pre-bg above; only the border is extra. */
 .prose-stenion :where(pre) {
-  background: var(--color-surface);
   border: 1px solid var(--color-line);
 }
 .prose-stenion :where(table) {

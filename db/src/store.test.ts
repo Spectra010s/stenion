@@ -42,7 +42,7 @@ const okRow = (over: Partial<HistoryRow> = {}): HistoryRow => ({
   error: null,
   computed_at: COMPUTED_AT,
   run_at: RUN_AT,
-  methodology_version: 2,
+  methodology_version: 1,
   ...over,
 });
 
@@ -68,7 +68,7 @@ const detailRow = (over: Partial<ProtocolDetailRow> = {}): ProtocolDetailRow => 
   safety_score: '53',
   computed_at: COMPUTED_AT,
   factors: FACTORS,
-  methodology_version: 2,
+  methodology_version: 1,
   last_run_at: RUN_AT,
   last_run_status: 'ok',
   ...over,
@@ -85,7 +85,7 @@ describe('toHistoryEntry — the ok/failed discriminated union', () => {
     assert.deepEqual(entry, {
       status: 'ok',
       safetyScore: 53,
-      methodologyVersion: 2,
+      methodologyVersion: 1,
       computedAt: '2026-08-16T11:25:01.000Z',
       runAt: '2026-08-16T11:25:02.000Z',
     });
@@ -118,11 +118,16 @@ describe('toHistoryEntry — the ok/failed discriminated union', () => {
     assert.equal(toHistoryEntry(failedRow()).runAt, RUN_AT.toISOString());
   });
 
-  it('carries the methodology version through on ok rows', () => {
-    // A v1 row and a v2 row are not comparable; the stamp is what lets the
-    // chart break the line rather than draw a step change through it.
-    const v1 = toHistoryEntry(okRow({ methodology_version: 1 }));
-    assert.equal(v1.status === 'ok' && v1.methodologyVersion, 1);
+  it('carries the methodology version through on ok rows, whatever it is', () => {
+    // Everything stored today is v1, but the mapping must not special-case that:
+    // scores under different rulebooks are not comparable, and this stamp is what
+    // lets the chart break the line rather than draw a step change through it.
+    // Asserted against a hypothetical future bump so the path stays exercised
+    // before there is any real second version to exercise it with.
+    for (const version of [1, 2, 7]) {
+      const entry = toHistoryEntry(okRow({ methodology_version: version }));
+      assert.equal(entry.status === 'ok' && entry.methodologyVersion, version);
+    }
   });
 
   it('handles a fractional or zero score without losing it', () => {
@@ -141,7 +146,7 @@ describe('toProtocolDetail — staleness and the never-scored case', () => {
   it('maps a healthy protocol', () => {
     const detail = toProtocolDetail(detailRow(), [okRow()]);
     assert.equal(detail.safetyScore, 53);
-    assert.equal(detail.methodologyVersion, 2);
+    assert.equal(detail.methodologyVersion, 1);
     assert.equal(detail.lastRunStatus, 'ok');
     assert.equal(detail.history.length, 1);
     assert.equal(detail.factors, FACTORS);

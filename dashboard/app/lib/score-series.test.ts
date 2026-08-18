@@ -2,10 +2,13 @@
 //
 // WHY THESE EXIST: the two behaviours that matter most here — a failed run
 // leaving a gap rather than a zero, and a methodology bump breaking the line —
-// are exactly the two that live data cannot exercise. As of 2026-08-14 the
-// production `risk_scores` table holds 527 rows and not one of them is a failed
-// run, so "the page rendered fine" proves nothing about either path. Everything
-// below is synthetic on purpose.
+// are exactly the two that live data cannot exercise. Live history has never
+// contained a failed run, and since the development-era history was discarded it
+// contains no methodology bump either: every stored row is v1 and there is no
+// second version yet (see METHODOLOGY.md, "Current version"). So "the page
+// rendered fine" proves nothing about either path, and the version-break
+// fixtures below are the ONLY thing keeping that path honest until the first
+// real bump. Everything here is synthetic on purpose.
 //
 // Run with: pnpm --filter @stenion/dashboard test
 // (Node's built-in runner + native type stripping — no test-framework dependency.)
@@ -19,7 +22,8 @@ import { buildScoreSeries, GAP_BREAK_FACTOR, timeTicks } from './score-series.ts
 const T0 = Date.parse('2026-08-14T08:00:00.000Z');
 const FIVE_MIN = 5 * 60_000;
 
-const ok = (minute: number, score: number, version = 2): HistoryEntry => ({
+/** Default version is 1 — the only version any stored row carries today. */
+const ok = (minute: number, score: number, version = 1): HistoryEntry => ({
   status: 'ok',
   safetyScore: score,
   methodologyVersion: version,
@@ -122,6 +126,10 @@ describe('buildScoreSeries', () => {
   });
 
   describe('methodology breaks', () => {
+    // There is no bump in live data — every stored row is v1. These fixtures model
+    // the NEXT one (1 -> 2), which is the whole reason they exist: the mechanism has
+    // to work on the day it is first needed, and an untested path we are relying on
+    // later is worth less than no path at all.
     it('splits the line at a version bump and records both versions', () => {
       const s = buildScoreSeries(
         newestFirst([ok(0, 21, 1), ok(5, 21, 1), ok(10, 46, 2), ok(15, 46, 2)]),
@@ -143,6 +151,29 @@ describe('buildScoreSeries', () => {
       assert.equal(b.toVersion, 2);
       // Anchored between the two runs — we only know it happened somewhere in there.
       assert.ok(b.at > b.from && b.at < b.to);
+    });
+
+    it('does not break a history that is entirely one version', () => {
+      // The live shape today: many runs, all v1, no boundary to mark. A build that
+      // invented a break here would put a discontinuity in front of readers that
+      // does not exist.
+      const s = buildScoreSeries(newestFirst([ok(0, 53), ok(5, 54), ok(10, 52), ok(15, 53)]));
+      assert.equal(s.segments.length, 1);
+      assert.equal(
+        s.breaks.filter((b) => b.kinds.includes('methodology')).length,
+        0,
+        'one version throughout is not a methodology break',
+      );
+    });
+
+    it('breaks on any version change, not just the specific 1 -> 2 step', () => {
+      // Nothing in the builder may hardcode which versions exist. A 2 -> 3 bump,
+      // years from now, has to break the line for the same reason 1 -> 2 does.
+      const s = buildScoreSeries(newestFirst([ok(0, 40, 2), ok(5, 40, 3)]));
+      assert.equal(s.breaks.length, 1);
+      assert.ok(s.breaks[0].kinds.includes('methodology'));
+      assert.equal(s.breaks[0].fromVersion, 2);
+      assert.equal(s.breaks[0].toVersion, 3);
     });
 
     it('marks a break even when the score is identical either side', () => {

@@ -112,10 +112,11 @@ kept but not deployed. Env vars: `DATABASE_URL` (Neon pooled), `STENION_RPC_URL`
 
 ## Open questions
 
-Oracle _manipulation_ vs staleness is **resolved and shipped** — `oracleSafety` now scores both, as
-methodology v2 (effective 2026-08-14 11:25 UTC; see [`METHODOLOGY.md`](METHODOLOGY.md) §2 and its
-"Current version" section). It was done by extending an existing factor rather than adding a sixth,
-so the five-factor taxonomy in `core/src/types.ts` is unchanged.
+Oracle _manipulation_ vs staleness is **resolved and shipped** — `oracleSafety` now scores both,
+and it is part of methodology **v1**, the only version that exists (see
+[`METHODOLOGY.md`](METHODOLOGY.md) §2 and its "Current version" section). It was done by extending
+an existing factor rather than adding a sixth, so the five-factor taxonomy in `core/src/types.ts`
+is unchanged.
 
 Still open, and tracked in [`ROADMAP.md`](ROADMAP.md): scoring pause/frozen-pool state, and
 market-depth-aware oracle scoring. Both are breaking taxonomy changes, so they're flagged, not

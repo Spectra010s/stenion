@@ -2,7 +2,7 @@
 //
 // WHY THESE EXIST: `computeRiskFactors` is a pure function of already-decoded
 // on-chain state, so every rule in METHODOLOGY.md can be exercised here without
-// touching RPC. That matters most for methodology v2's `oracleSafety`, whose
+// touching RPC. That matters most for `oracleSafety` (METHODOLOGY.md §2), whose
 // whole point is separating pools that live mainnet data cannot currently
 // separate: the Blend Fixed V2 pool prices fresh and bounded on every reserve,
 // so a live run proves nothing about the disabled-bound path — the path that
@@ -138,7 +138,7 @@ const sub = (f: RiskFactor, id: string): number | null | undefined =>
 
 // ---------------------------------------------------------------------------
 
-describe('oracleSafety — deviation bound (methodology v2, §2b)', () => {
+describe('oracleSafety — deviation bound (METHODOLOGY.md §2b)', () => {
   // METHODOLOGY.md §2b: bounded iff `0 < max_dev < 100`, mirroring the
   // aggregator's own condition in oracle-aggregator/src/price_data.rs.
   const cases: [number, number, string][] = [
@@ -178,7 +178,7 @@ describe('oracleSafety — deviation bound (methodology v2, §2b)', () => {
   });
 });
 
-describe('oracleSafety — price freshness (methodology v2, §2a)', () => {
+describe('oracleSafety — price freshness (METHODOLOGY.md §2a)', () => {
   it('scores a price newer than one publish interval as fully fresh', async () => {
     const f = await factors(makeRaw({ reserves: [reserve({ ageSeconds: 0 })] }));
     assert.equal(sub(f.oracleSafety!, 'priceFreshness'), 100);
@@ -224,9 +224,10 @@ describe('oracleSafety — the composite takes the binding constraint', () => {
     assert.equal(f.oracleSafety!.value, 100);
   });
 
-  it('a fresh but unbounded price scores 0 — the v1 failure mode', async () => {
-    // Under v1 this scored 100: price age was the only signal. This single
-    // assertion is the difference between the two rulebooks.
+  it('a fresh but unbounded price scores 0 — the age-only failure mode', async () => {
+    // An oracle factor that scored price age alone would give this 100. This
+    // single assertion is why §2 takes the binding constraint of two sub-signals
+    // instead.
     const f = await factors(makeRaw({ reserves: [reserve({ ageSeconds: 0, maxDev: 0 })] }));
     assert.equal(sub(f.oracleSafety!, 'priceFreshness'), 100);
     assert.equal(sub(f.oracleSafety!, 'deviationBound'), 0);

@@ -50,7 +50,7 @@ export function scoreFactors(factors: RiskFactorMap): RiskScoreResult {
  * tolerating staler prices, which is the wrong incentive for a platform
  * protocols are ranked by.
  *
- * The cap is an **unvalidated v1 judgment call**, retained deliberately and
+ * The cap is an **unvalidated judgment call**, retained deliberately and
  * flagged as such in METHODOLOGY.md §2. There is no external framework fixing
  * it at one hour; it is the one Stenion-chosen constant left in this factor.
  */
