@@ -63,7 +63,7 @@ describe('Store SQL (integration)', { skip }, () => {
          (protocol_id, status, safety_score, factors, error, computed_at, run_at, methodology_version)
        VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8)`,
       row.status === 'ok'
-        ? [protocolId, 'ok', row.score, '{}', null, row.runAt, row.runAt, row.version ?? 2]
+        ? [protocolId, 'ok', row.score, '{}', null, row.runAt, row.runAt, row.version ?? 1]
         : [protocolId, 'failed', null, null, row.error ?? 'boom', null, row.runAt, null],
     );
   }
@@ -196,6 +196,37 @@ describe('Store SQL (integration)', { skip }, () => {
     );
   });
 
+  it('carries a per-row methodology version through to the history', async () => {
+    // Every row stored today is v1 and there is no second version yet, so live
+    // data cannot exercise this. It is seeded instead, for the same reason the
+    // failed-run path is: the version stamp is what lets the score chart BREAK
+    // the line at a rulebook change instead of drawing a step change through it,
+    // and a path we are relying on later is worth nothing untested.
+    //
+    // This is the DB half of that seam — the column round-trips per row, not per
+    // protocol. The break-detection half lives in the dashboard's
+    // score-series.test.ts fixtures.
+    const p = id('methodology-break');
+    await store.upsertProtocol({
+      id: p,
+      name: 'Break',
+      chain: 'stellar',
+      adapterRef: 'FakeAdapter',
+    });
+    await insertRun(p, { status: 'ok', score: 21, runAt: '2026-08-16T09:00:00Z', version: 1 });
+    await insertRun(p, { status: 'ok', score: 21, runAt: '2026-08-16T09:05:00Z', version: 1 });
+    await insertRun(p, { status: 'ok', score: 46, runAt: '2026-08-16T09:10:00Z', version: 2 });
+
+    const detail = await store.getProtocolDetail(p);
+    // History is newest-first.
+    assert.deepEqual(
+      detail!.history.map((h) => (h.status === 'ok' ? h.methodologyVersion : null)),
+      [2, 1, 1],
+      'each row must keep the version it was written with',
+    );
+    assert.equal(detail!.methodologyVersion, 2, 'the detail reports the newest run’s version');
+  });
+
   it('round-trips a run written through insertRunRecord', async () => {
     const p = id('roundtrip');
     await store.upsertProtocol({
@@ -209,7 +240,7 @@ describe('Store SQL (integration)', { skip }, () => {
       status: 'ok',
       safetyScore: 53,
       factors: {} as never,
-      methodologyVersion: 2,
+      methodologyVersion: 1,
       computedAt: '2026-08-16T10:00:00.000Z',
       runAt: '2026-08-16T10:00:00.000Z',
     });

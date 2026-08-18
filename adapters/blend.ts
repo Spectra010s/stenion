@@ -667,8 +667,8 @@ export class BlendAdapter implements Adapter<BlendRawData> {
   }
 
   // Can this pool's prices be trusted? Two things must both hold: the price is
-  // current, AND a single update can't move it arbitrarily far. Price age alone
-  // (the v1 factor) scored a fresh-but-manipulated price 100 — exactly the
+  // current, AND a single update can't move it arbitrarily far. An age-only
+  // oracle factor scores a fresh-but-manipulated price 100 — exactly the
   // YieldBlox failure mode. See METHODOLOGY.md §2.
   //
   // Both sub-signals take the worst reserve, and the factor takes the binding
@@ -698,7 +698,7 @@ export class BlendAdapter implements Adapter<BlendRawData> {
     // Freshness anchors are the aggregator's own: `resolution` is how often the
     // upstream feed publishes (a price younger than that is as fresh as the feed
     // can be), `max_age` is the age at which the aggregator itself refuses the
-    // price. The STALE_CEILING cap is the one retained v1 judgment call.
+    // price. The STALE_CEILING cap is the one unvalidated judgment call here.
     const worstFresh = worstBy(graded, (r) => {
       if (!r.price) return { score: 0, note: 'no oracle price' };
       const age = Math.max(0, raw.fetchedAt - r.price.timestamp);

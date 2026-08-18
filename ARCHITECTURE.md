@@ -78,9 +78,11 @@ loading, and the persisted `RunRecord` type. Two tables:
   rulebook produced the score — see below. A DB-level CHECK enforces the `ok`/`failed`
   discriminated union.
 
-**Methodology versioning.** The rulebook is currently at **v2**, effective 2026-08-14 11:25 UTC —
-what changed, the exact v1/v2 boundary in stored rows, and what does and doesn't warrant a bump
-are all in [`METHODOLOGY.md`](METHODOLOGY.md#current-version). Mechanically: a scoring change that
+**Methodology versioning.** The rulebook is at **v1**, and versioning starts there: every stored
+row carries `methodology_version = 1`, and no second version exists yet. Development-era history
+under earlier iterations of the rules was discarded rather than migrated — the reasoning, and what
+does and doesn't warrant a bump, are in
+[`METHODOLOGY.md`](METHODOLOGY.md#current-version). Mechanically: a scoring change that
 makes old scores non-comparable bumps
 `METHODOLOGY_VERSION` in `@stenion/core`; the indexer stamps it onto every run. History is
 **never backfilled** — `risk_scores` keeps only outputs (score + factor map), never the raw

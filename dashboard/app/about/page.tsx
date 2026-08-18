@@ -121,10 +121,20 @@ export default function AboutPage() {
       <Section title="Honest about the limits">
         <p>
           Stenion measures what it can read trustlessly on-chain, and is explicit about what it
-          can&apos;t. Oracle scoring currently measures price <em>freshness</em>, not manipulation
-          of a fresh price — a real, recorded limitation, not a hidden one. Every threshold is
-          labeled as either anchored to an external/on-chain value or an unvalidated v1 judgment
-          call open to challenge.
+          can&apos;t. Oracle scoring grades two things: how stale the worst price is, measured
+          against that oracle&apos;s <em>own</em> publish resolution and maximum acceptable age
+          rather than a Stenion constant, and whether the pool&apos;s price path actually bounds how
+          far a single update can move it — including whether that bound is armed, since a
+          configured limit with no stored baseline is inert. The factor takes the worse of the two,
+          because a bounded stale price and a fresh unbounded price are both untrustworthy.
+        </p>
+        <p className="mt-4">
+          What it still doesn&apos;t measure is <em>market depth</em> — whether the bound is
+          generous relative to how cheap the underlying market is to move. A thin market can be
+          pushed within an allowed deviation. That is a real, recorded limitation, not a hidden one,
+          and it is open on the roadmap rather than quietly assumed away. Every threshold is labeled
+          as either anchored to an external/on-chain value or an unvalidated judgment call open to
+          challenge.
         </p>
         <p className="mt-4">
           It&apos;s built in the open by a solo developer in the Stellar ecosystem. If you think a

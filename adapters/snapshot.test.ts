@@ -99,10 +99,13 @@ describe('Kinetic — frozen mainnet snapshot', () => {
   });
 
   it('scores oracleSafety 0 on a genuinely stale price, with the breaker armed', async () => {
-    // This is K2's ordinary state, not an unlucky capture: 533 of its 588
-    // methodology-v2 rows carry oracleSafety 0. The two sub-signals disagreeing
-    // is the whole point of the v2 composite — the circuit breaker IS armed, and
-    // the factor is still 0, because a bounded stale price is untrustworthy.
+    // This is K2's ordinary state, not an unlucky capture: across the
+    // development-era history (since discarded — see METHODOLOGY.md, "Current
+    // version") 533 of 588 scored runs carried oracleSafety 0, and the protocol
+    // page's Findings section records the same pattern with its own verification
+    // steps. The two sub-signals disagreeing is the whole point of the §2
+    // composite — the circuit breaker IS armed, and the factor is still 0,
+    // because a bounded stale price is untrustworthy.
     const factors = await new KineticAdapter().computeRiskFactors(kineticMainnet);
     assert.equal(sub(factors.oracleSafety!, 'priceFreshness'), 0);
     assert.equal(sub(factors.oracleSafety!, 'deviationBound'), 100);

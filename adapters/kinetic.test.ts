@@ -1,7 +1,7 @@
 // Fixture tests for KineticAdapter.computeRiskFactors, plus the one decode
 // helper that is worth testing directly.
 //
-// WHY THESE EXIST: K2's half of methodology v2 turns on a rule Blend has no
+// WHY THESE EXIST: K2's half of `oracleSafety` (METHODOLOGY.md §2) turns on a rule Blend has no
 // equivalent of — its circuit breaker fails *open*. `validate_price_change`
 // returns Ok when there is no stored baseline, so a configured
 // `max_price_change_bps` with no `get_last_price` is inert: configured, but not

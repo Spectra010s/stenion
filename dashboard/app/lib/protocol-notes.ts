@@ -40,10 +40,12 @@ export const PROTOCOL_NOTES: Record<string, ProtocolNote[]> = {
           'score oscillate, and it is visible as a repeating sawtooth in the score ' +
           'history above — the oscillation is the price ageing out and being renewed, ' +
           'not the pool’s risk genuinely changing every few minutes.',
-        'This spans a methodology change, and the comparison survives it. The v1 and v2 ' +
-          'rulebooks score price freshness differently, but both take 3600 seconds as ' +
-          'the point where a price is worthless, so "older than the protocol’s own ' +
-          'staleness threshold" means the same thing on either side of the break.',
+        'The runs behind this were recorded during development, and that stored history ' +
+          'has since been discarded — Stenion’s score history now starts fresh under the ' +
+          'published methodology, so these counts cannot be re-derived from the API. What ' +
+          'is stated here is an observation that was made, not a claim about rows you can ' +
+          'still fetch. The condition itself is checkable on-chain today by anyone, by the ' +
+          'steps below.',
         'What is not being claimed: the circuit breaker was scored 100 throughout, so ' +
           'the bound on a single-step price move is armed — this is purely about ' +
           'freshness. And a price past a staleness threshold does not by itself mean the ' +

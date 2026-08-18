@@ -22,69 +22,62 @@ If the code and this document ever disagree, that is a bug — open an issue (se
 
 ## Current version
 
-**Methodology v2**, effective **2026-08-14 11:25 UTC**. Everything in this document describes v2
-unless a section says otherwise.
+**Methodology v1** — the rulebook described by this document, in full, including `oracleSafety`
+scoring both price freshness and manipulation resistance (§2).
 
-**The boundary in stored data is exact.** The indexer stamps
-`risk_scores.methodology_version` at write time, and the cutover happened between two indexer
-cycles, so there is no overlap and no ambiguous row:
+**Versioning begins here.** Every score in `risk_scores` carries
+`methodology_version = 1`, because that is the only version any stored row has ever been
+published under. There is no v1-versus-v2 boundary to look for, and no version-2 rows exist.
 
-|                               |                           |
-| ----------------------------- | ------------------------- |
-| Last run scored under **v1**  | `2026-08-14 11:20:05 UTC` |
-| First run scored under **v2** | `2026-08-14 11:25:02 UTC` |
+### Earlier development history was discarded, not migrated
 
-Every row with `run_at` at or after the v2 timestamp carries `methodology_version = 2`; every
-earlier row carries `1`. To check which rulebook produced any stored score, read that column —
-don't infer it from the date. It is also returned on every history point and on the protocol
-detail from `GET /api/v1/protocol/:id`.
+Before this point Stenion accumulated a few weeks of scored runs during development, under
+earlier iterations of these rules. **That history was deleted rather than carried forward, and
+this is a deliberate, recorded choice rather than a silent one.** Three reasons, stated plainly:
 
-### What changed in v2
+- **It contained scores computed under two known bugs**, since fixed. Those numbers were wrong
+  under their own rulebook, not merely scored under a different one.
+- **It predates the oracle robustness work** (§2), so its `oracleSafety` values measured price
+  age alone — a signal we now consider misleading rather than merely incomplete.
+- **Nobody was downstream of it.** Every row came from our own cron during development; no
+  external consumer had been built against the API, and the only reader of the history was our
+  own score chart. Marking a discontinuity in a dataset nobody had read would have been
+  bookkeeping, not disclosure.
 
-Both changes are to `oracleSafety` (§2). No other factor, and no weight, was touched.
-
-1. **The price-deviation bound is now scored, alongside freshness.** `oracleSafety` is
-   `min(priceFreshness, deviationBound)` — the binding constraint of the two. `deviationBound`
-   reads whether the pool's own price path bounds how far a single update can move the price
-   **and whether that bound is actually armed** (for K2, a configured bound with no stored
-   baseline is inert, so the baseline is checked too). Under v1 this signal did not exist.
-2. **Freshness is anchored to the protocol's own parameters, not to fixed constants.**
-   `priceFreshness` now grades against each oracle's own publish/refresh resolution and its own
-   declared maximum acceptable age, with a single capped ceiling
-   (`STALE_CEILING_SECONDS = 3600`) so a protocol cannot score better merely by tolerating
-   staler prices. Under v1 the thresholds were Stenion constants.
-
-### Why it changed
-
-**v1 scored price age and nothing else, so a fresh but manipulated price scored 100.** That is
-precisely the configuration behind the February 2026 YieldBlox/Blend incident: the manipulated
-price was perfectly current, and the deviation check that would have rejected it was disabled
-(`max_dev: 0`). A factor that would have given the exploited pool full marks on the axis that
-actually failed is not a weak signal — it is a misleading one. v2 separates the two pools on
-that axis; the worked comparison is in
-[§2, "What this factor would have said on 2026-02-22"](#what-this-factor-would-have-said-on-2026-02-22),
-including its honest limits.
-
-### Scores across the boundary are not comparable
-
-A v1 score and a v2 score are different measurements and must not be read as a trend. **This
-discontinuity is marked, never smoothed over:** the score-history chart on each protocol page
-breaks the line at the version change rather than drawing through it, and the run list labels
-it. History is **not backfilled, and cannot be** — `risk_scores` stores only outputs (the score
-and the factor map), never the raw on-chain inputs a run was computed from, so no one, including
-us, can recompute an old row under new rules. See
-[Methodology versions](#methodology-versions).
+A clean history starting from a rulebook we actually stand behind is more honest than a
+marked-up one carrying forward numbers we know were wrong. **This is the last time that
+reasoning applies.** From here on, history is never deleted and never backfilled — the version
+stamp exists so a change is labeled instead.
 
 ### What bumps the version, going forward
 
 **Bump when a change alters what a number means** — a factor starting or stopping measuring
-something (v2's deviation bound), a threshold's anchor changing (v2 re-anchoring freshness to
-each protocol's own parameters), a re-weighting, or any formula change that moves scores for
-unchanged on-chain state. **Don't bump** for a fix that makes the implementation match the rule
-already documented here (the stored scores were wrong, not scored under a different rulebook —
-say so in the changelog instead), for adding a protocol or an adapter, or for wording,
-disclosure, and presentation changes. The test is simple: if comparing an old score to a new one
-would mislead, bump; if the old score was just incorrect under this same rulebook, don't.
+something, a threshold's anchor changing, a re-weighting, or any formula change that moves
+scores for unchanged on-chain state. **Don't bump** for a fix that makes the implementation
+match the rule already documented here (the stored scores were wrong, not scored under a
+different rulebook — say so in the changelog instead), for adding a protocol or an adapter, or
+for wording, disclosure, and presentation changes. The test is simple: if comparing an old score
+to a new one would mislead, bump; if the old score was just incorrect under this same rulebook,
+don't.
+
+### Scores across a boundary are not comparable
+
+There is no boundary in the stored data today, but the machinery that marks one is live and
+tested, because the first bump must be legible on the day it happens rather than built in a
+hurry then:
+
+- The indexer stamps `risk_scores.methodology_version` from `METHODOLOGY_VERSION` in
+  [`core/src/types.ts`](core/src/types.ts) at write time. An adapter has no say in it.
+- The score-history chart on each protocol page **breaks the line** at a version change rather
+  than drawing through it, and the run list labels the break. Both paths are covered by fixture
+  tests, since live data cannot exercise them.
+- The version is returned on every history point and on the protocol detail from
+  `GET /api/v1/protocol/:id`. To check which rulebook produced a stored score, read that column
+  — don't infer it from the date.
+
+History is **not backfilled across a bump, and cannot be** — `risk_scores` stores only outputs
+(the score and the factor map), never the raw on-chain inputs a run was computed from, so no
+one, including us, can recompute an old row under new rules.
 
 ---
 
@@ -135,14 +128,14 @@ Every scored run is stamped with the rulebook version that produced it
 [`core/src/types.ts`](core/src/types.ts)), and it is surfaced on the API's protocol detail
 and on each history point. The changelog:
 
-| Version | Effective (UTC)    | Change                                                                                                                                                       |
-| ------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1       | initial            | Initial five-factor model. `oracleSafety` scored price age only.                                                                                             |
-| **2**   | `2026-08-14 11:25` | `oracleSafety` extended from price age alone to age **and** manipulation resistance; freshness re-anchored to each oracle's own resolution and max-age (§2). |
+| Version | Effective | Change                                                                                                                |
+| ------- | --------- | --------------------------------------------------------------------------------------------------------------------- |
+| **1**   | initial   | The five-factor model as documented here. `oracleSafety` scores price freshness **and** manipulation resistance (§2). |
 
-The current version, the exact v1/v2 boundary in stored data, why it changed, and what does and
-doesn't warrant a bump are all at the top of this document — see
-[Current version](#current-version).
+One row, and that is the point: v1 is where versioning starts, not where it started counting
+again. Development-era history under earlier iterations of these rules was discarded rather
+than migrated — what that was and why it was deleted is at the top of this document, along with
+what does and doesn't warrant a bump. See [Current version](#current-version).
 
 #### Corrections that did not bump the version
 
@@ -150,6 +143,11 @@ Fixes where the **implementation disagreed with this document** and the document
 rulebook did not change, so these are not version boundaries and stored scores remain comparable
 across them — but they are recorded here rather than left silent, because a score did change shape
 even if no published number moved.
+
+> The entry below was verified against the development-era history that has since been
+> discarded (see [Current version](#current-version)), so its row counts are no longer
+> re-checkable. It is kept as the record of a correction, not as a live claim about stored
+> data. The fix itself is in the shipped v1 rulebook.
 
 | Date (UTC)   | Correction                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -172,20 +170,19 @@ appearing as an unexplained step in a chart.
 | `liquiditySafety`   | 0.15     |
 | **Total**           | **1.00** |
 
-**Worked example (live Blend Fixed V2 pool, 2026-08-14, methodology v2):**
+**Worked example (live Blend Fixed V2 pool, 2026-08-14, methodology v1):**
 `70×0.20 + 100×0.25 + 40×0.20 + 22×0.15 + 14×0.20 = 53.1 → 53`.
 
-> **Weights are a v1 judgment call, not an external fact.** `oracleSafety` carries the most
+> **Weights are an unvalidated judgment call, not an external fact.** `oracleSafety` carries the most
 > weight because an untrustworthy price silently poisons every other measurement —
 > collateral value, utilization and liquidity are all priced off it. Liquidity carries the
 > least because it partly overlaps utilization. There is no external framework these exact
 > weights are anchored to yet — they are open to challenge like any threshold below.
 >
-> **The v2 change deliberately did _not_ touch the weights.** Extending `oracleSafety`
-> rather than adding a sixth factor was chosen partly for this reason: a sixth member would
-> have forced a redistribution across all five, layering a second unanchored judgment call
-> on top of one already flagged as unanchored. The taxonomy in
-> [`core/src/types.ts`](core/src/types.ts) is unchanged at five factors.
+> **Oracle robustness was folded into `oracleSafety` rather than given its own factor**,
+> partly for this reason: a sixth member would have forced a redistribution across all five,
+> layering a second unanchored judgment call on top of one already flagged as unanchored. The
+> taxonomy in [`core/src/types.ts`](core/src/types.ts) stays at five factors.
 
 ---
 
@@ -193,7 +190,7 @@ appearing as an unexplained step in a chart.
 
 For each factor: the exact raw on-chain data that feeds it, the exact formula, and why the
 thresholds are what they are (anchored to an external/on-chain value where one exists,
-labeled an unvalidated v1 judgment call where none does).
+labeled an unvalidated judgment call where none does).
 
 Two fixed-point scalars appear throughout, taken from
 `blend-contracts-v2/pool/src/constants.rs`:
@@ -252,11 +249,13 @@ many reserves it has, not against an arbitrary constant.
 
 ### 2. `oracleSafety` — price trustworthiness: freshness _and_ manipulation resistance (weight 0.25)
 
-> **Changed in methodology v2.** Through v1 this factor scored price **age only**. A fresh
-> but manipulated price scored 100 — which is precisely the configuration behind the
-> February 2026 YieldBlox/Blend incident. Scores from before the change are stamped
-> `methodology_version = 1` and are not comparable with later ones; see
-> [Methodology versions](#methodology-versions).
+> **Why this factor is not just price age.** An age-only oracle factor scores a fresh but
+> manipulated price 100 — which is precisely the configuration behind the February 2026
+> YieldBlox/Blend incident. Freshness alone is not a weak signal on that axis, it is a
+> misleading one, so this factor takes the binding constraint of freshness and manipulation
+> resistance. Earlier development-era scores did measure age alone; that history was
+> discarded rather than carried forward, and no stored row was computed that way — see
+> [Current version](#current-version).
 
 **What it measures:** whether the prices this pool actually runs on can be trusted. Two
 things must both hold, and the factor takes **the binding constraint of the two** — a
@@ -300,7 +299,7 @@ Taking the tighter of two limits a protocol declared is not a Stenion threshold 
 numbers are K2's, and the binding one is the one that governs.
 
 > **⚠️ The 3600s cap on `dead` is the one Stenion constant left in this factor, and it is
-> an unvalidated v1 judgment call.** Anchoring purely to a protocol's own max age would
+> an unvalidated judgment call.** Anchoring purely to a protocol's own max age would
 > mean a protocol scores _better_ for tolerating staler prices — K2's per-asset `max_age`
 > is 12 hours, which would make a six-hour-old price score ~50. That is the wrong
 > incentive for a platform protocols are ranked by, so the anchor is capped. There is no
@@ -416,7 +415,7 @@ rulebook, no special-casing:
 | Blend Fixed V2 (`CAJJZSGM…`)                | 100              | 100 — all reserves bounded (`max_dev` 60/20/20)     | **100**        |
 | YieldBlox (`CCCCIQSD…`, the exploited pool) | 100              | 0 — XLM and AQUA carry `max_dev: 0`, check disabled | **0**          |
 
-Both pools' prices are fresh, so the v1 factor scores both 100. The v2 factor separates
+Both pools' prices are fresh, so an age-only factor scores both 100. This factor separates
 them, and on the axis that actually failed.
 
 > **⚠️ Two honest limits on that claim, stated rather than glossed:**
@@ -496,7 +495,7 @@ fabricate a plausible signer/activity number, we assign a fixed, clearly-labeled
 baseline of 60 and say so in the factor's `detail` string. This is honest ignorance, not a
 score.
 
-**Why these numbers (v1 judgment calls, partially anchored):**
+**Why these numbers (unvalidated judgment calls, partially anchored):**
 
 - The single-key (40) vs multisig (90) _split_ is anchored to a real, hard security fact: a
   1-of-1 key is a single point of unilateral compromise; an N-of-M multisig with
@@ -504,7 +503,7 @@ score.
   detection condition (`signerCount > 1 AND high_threshold > 1`) reads Stellar's actual
   account threshold model, not a proxy.
 - The **exact** base values (40, 90, 60) and the activity penalty shape (`−3` per op, capped
-  at `−30`) are **unvalidated v1 judgment calls.** The cap deliberately keeps structure
+  at `−30`) are **unvalidated judgment calls.** The cap deliberately keeps structure
   dominant over activity (a busy multisig should still beat an idle single key). There is no
   external framework these specific integers are anchored to — they are open to challenge.
 
@@ -598,7 +597,7 @@ closest to its line.
 ## Disputing or changing a threshold
 
 Every number in this document is meant to be challengeable — especially the ones labeled
-"v1 judgment call." If you believe a threshold, weight, or formula is wrong (including if
+"unvalidated judgment call." If you believe a threshold, weight, or formula is wrong (including if
 you are a protocol being scored):
 
 1. **Open a GitHub issue** against this repository describing the specific threshold/formula

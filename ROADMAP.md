@@ -15,11 +15,12 @@ commitment — priorities shift as protocols launch and as the project finds fun
 - **The five-factor `*Safety` model** — collateral concentration, oracle trustworthiness, admin-key
   control, liquidity depth, utilization headroom — with a fully public, challengeable rulebook in
   [`METHODOLOGY.md`](METHODOLOGY.md).
-- **Oracle robustness (methodology v2).** `oracleSafety` scores price freshness _and_ manipulation
+- **Oracle robustness.** `oracleSafety` scores price freshness _and_ manipulation
   resistance: whether the pool's own price path bounds how far a single update can move, read from
   the protocol's own on-chain config. Freshness is anchored to each oracle's real resolution and
-  max-age rather than to Stenion constants. Runs are stamped with the methodology version that
-  produced them, so the discontinuity at the change is visible rather than silent.
+  max-age rather than to Stenion constants. This is part of methodology v1 — the only version
+  that exists. Runs are stamped with the version that produced them, so a future change to what a
+  factor measures is visible rather than silent.
 - **Score history on the protocol page.** The append-only run history rendered as a chart of
   `safetyScore` over time — the visible form of the "continuous, not static" pitch. Plotted on a
   real time axis and a fixed 0–100 axis, and the line **breaks** rather than being drawn through
@@ -93,8 +94,9 @@ Roughly in priority order, but not committed to dates:
 - **AI explanations.** Plain-language summaries of _why_ a protocol scores the way it does, generated
   from the real underlying factor data. AI **only explains** — it never generates an independent risk
   assessment or sets a score.
-- **Methodology v2 candidates** (breaking taxonomy changes, so deliberately not rushed):
-  - **Market-depth-aware oracle scoring.** Shipped v2 grades whether a price bound _exists_, not how
+- **Methodology v2 candidates** (breaking taxonomy changes, so deliberately not rushed — any of
+  these would be the first version bump):
+  - **Market-depth-aware oracle scoring.** Shipped v1 grades whether a price bound _exists_, not how
     cheap the underlying market is to move — and thin depth is what made the YieldBlox manipulation
     cost ~$5. SDEX depth is readable from Horizon, but order books are trivially spoofed with walls
     that are never hit, it only applies to DEX-priced assets, and it can't be validated

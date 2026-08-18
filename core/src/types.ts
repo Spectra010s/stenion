@@ -13,12 +13,18 @@ export type Chain = 'stellar';
  * raw on-chain inputs — so history is not backfilled across a bump. The point of
  * this field is to make the discontinuity legible rather than silent.
  *
- * 1 — initial five-factor model.
- * 2 — `oracleSafety` extended from price age alone to age + manipulation
- *     resistance; freshness re-anchored to each oracle's own resolution and
- *     max-age. See METHODOLOGY.md §2.
+ * 1 — the current five-factor rulebook, including `oracleSafety` scoring price
+ *     age *and* manipulation resistance. This is the first version anyone can
+ *     be downstream of: the development-era history that ran under earlier,
+ *     unpublished iterations was discarded rather than migrated, so no stored
+ *     row carries anything but 1. See METHODOLOGY.md, "Current version".
+ *
+ * There is no version 2 yet. The next change that alters what a number means
+ * makes one — and the machinery below (the stamp, the DB column, the chart's
+ * break rendering) exists and is tested precisely so that bump is legible on
+ * the day it happens, not built in a hurry then.
  */
-export const METHODOLOGY_VERSION = 2 as const;
+export const METHODOLOGY_VERSION = 1 as const;
 
 /**
  * Off-chain places a reader can go to check a protocol for themselves.
