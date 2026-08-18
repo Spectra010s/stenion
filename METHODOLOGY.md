@@ -26,9 +26,13 @@ If the code and this document ever disagree, that is a bug — open an issue (se
 scoring both price freshness and manipulation resistance (§2), and the minimum-size filter §4
 and §5 select reserves through ([The minimum-size filter](#the-minimum-size-filter)).
 
-**Versioning begins here.** Every score in `risk_scores` carries
-`methodology_version = 1`, because that is the only version any stored row has ever been
-published under. There is no v1-versus-v2 boundary to look for, and no version-2 rows exist.
+**Versioning begins here.** `methodology_version = 1` is the only version this rulebook
+defines, and the only one any stored row will carry. A version 2 was briefly live in the code
+— stamped onto runs between 2026-08-14 11:25 and 2026-08-18 11:30 UTC, before the rulebook was
+flattened back to v1 — and that history is discarded rather than migrated, for the same reason
+the development-era history was: it was computed under a rulebook that no longer exists, and
+nobody was downstream of it. After that discard there is no v1-versus-v2 boundary in
+`risk_scores`, and none to look for.
 
 ### Earlier development history was discarded, not migrated
 
@@ -63,9 +67,9 @@ don't.
 
 ### Scores across a boundary are not comparable
 
-There is no boundary in the stored data today, but the machinery that marks one is live and
-tested, because the first bump must be legible on the day it happens rather than built in a
-hurry then:
+No boundary survives in the stored data — the v2 rows above were discarded — but the machinery
+that marks one is live and tested, because the first real bump must be legible on the day it
+happens rather than built in a hurry then:
 
 - The indexer stamps `risk_scores.methodology_version` from `METHODOLOGY_VERSION` in
   [`core/src/types.ts`](core/src/types.ts) at write time. An adapter has no say in it.
@@ -157,19 +161,20 @@ even if no published number moved.
 #### Amendments folded into v1
 
 Changes to the rulebook made **while v1 was still being finalized as the comparability
-baseline.** These are not version boundaries: v1 is defined as the rulebook this document
-describes, and these are part of that definition rather than a departure from it. But each one
-moved a number that had already been stored, so each gets a row here. "No bump required" does
-not mean "no record required" — a step in a history chart with nothing marking it is exactly
-what the version stamp exists to prevent.
+baseline** — before any surviving stored history existed. These are not version boundaries: v1
+is defined as the rulebook this document describes, and these are part of that definition
+rather than a departure from it. None of them left a step in a published history, because the
+history they predate was discarded rather than carried forward. Each gets a row anyway, so that
+what v1 means is traceable rather than assumed: "no bump required" does not mean "no record
+required".
 
 **This section closes when the next change lands.** From that point the rule in
 [What bumps the version](#what-bumps-the-version-going-forward) applies without exception, and
 a change that alters what a number means bumps to v2.
 
-| Date (UTC)   | Amendment                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `2026-08-18` | §4 and §5 gained the [minimum-size filter](#the-minimum-size-filter): both now select the worst reserve only among reserves clearing the protocol's own declared minimum exposure **or** 0.5% of the pool's supplied USD. This changes what the two factors measure, which is why it is recorded rather than treated as a correction. **No live score moved when it landed** — verified against both protocols on the day: Blend excludes nothing (its smallest reserve is ~$3.4M against a $5.00 `min_collateral`), and K2's dust reserve had already stopped being its worst reserve. **Stored K2 rows from before it are not comparable on these two factors:** on the frozen 2026-08-16 snapshot the filter moves `liquiditySafety` 34 → 44 and `utilizationSafety` 18 → 30 (score 24 → 28), by excluding a $3.00 reserve holding 0.19% of a $1,571 pool. |
+| Date (UTC)   | Amendment                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `2026-08-18` | §4 and §5 gained the [minimum-size filter](#the-minimum-size-filter): both now select the worst reserve only among reserves clearing the protocol's own declared minimum exposure **or** 0.5% of the pool's supplied USD. This changes what the two factors measure, which is why it is recorded rather than treated as a correction. **No live score moved when it landed** — verified against both protocols on the day: Blend excludes nothing (its smallest reserve is ~$3.4M against a $5.00 `min_collateral`), and K2's dust reserve had already stopped being its worst reserve. **What it changes, measured on the frozen 2026-08-16 snapshot:** `liquiditySafety` 34 → 44 and `utilizationSafety` 18 → 30 (score 24 → 28), by excluding a $3.00 reserve holding 0.19% of a $1,571 pool. |
 
 **History is not backfilled across a version bump, and cannot be.** `risk_scores` stores
 only outputs — the score and the factor map — never the raw on-chain inputs a run was
@@ -740,6 +745,37 @@ closest to its line.
 >    scope in the audited source** (`code-423n4/2026-04-k2`) and so not independently
 >    verifiable — if a reserve overrides the default this factor uses the documented 80%, not
 >    that reserve's exact kink. Revisit if K2 exposes a readable per-reserve optimal-util.
+
+---
+
+## Findings are published, not scored — and how they must be written
+
+Verifiable observations we can't or won't grade go in the protocol page's Findings section
+(`dashboard/app/lib/protocol-notes.ts`), never into a factor. **Nothing there is read by any
+scoring path**, and a note — favourable or not — can never move a number.
+
+**A note must survive the history it was drawn from.** Twice now a Findings note has outlived
+the stored runs behind it: once when the development-era history was discarded, and again when
+the briefly-live v2 rows were. Score history is not an archive — it is discarded across a
+rulebook change and cannot be recomputed, because `risk_scores` keeps only outputs. A note
+written as "our history shows X" therefore decays into an unverifiable claim on a page whose
+entire pitch is that you don't have to trust us.
+
+So every note citing our own observations follows the same form:
+
+1. **Cite a closed window, with both ends stated.** "Between 2026-08-11 18:16 and 2026-08-18
+   15:55 UTC, 1,469 runs" — not "93% of runs", which silently means something different every
+   time the cron fires. A reader re-running the query later must be able to tell that a
+   different number is a later window, not a contradiction.
+2. **Say the counts are a snapshot of that window** and do not update.
+3. **Phrase the underlying claim so it stays checkable from chain after the history is gone.**
+   Our runs are evidence that a condition _persisted_; the condition itself must be one anyone
+   can observe today, directly from the contracts. If the only support for a claim is rows in
+   our database, it is not a finding — it is an assertion.
+4. **Give the exact verification steps** — contract, method, field, and what to compare against.
+   If we can't say how a reader would check it themselves, it doesn't go in.
+5. **Claim only what was measured.** Where a sub-signal wasn't recorded separately, say so and
+   scope the claim to the runs that carry it, rather than generalising across all of them.
 
 ---
 

@@ -40,13 +40,17 @@ export const PROTOCOL_NOTES: Record<string, ProtocolNote[]> = {
         'It is not a continuous outage. The feed refreshes to an age of a few hundred ' +
           'seconds, climbs back past the threshold over roughly an hour, and then sits ' +
           'there for hours before refreshing again. That cycle is what makes the overall ' +
-          'score oscillate, and it is visible as a repeating sawtooth in the score ' +
-          'history above — the oscillation is the price ageing out and being renewed, ' +
-          'not the pool’s risk genuinely changing every few minutes.',
-        'These counts come from the live scored history the API serves, over the closed ' +
-          'window stated above — they are a snapshot of that window and do not update as ' +
-          'new runs land. The condition itself is checkable on-chain directly, by the ' +
-          'steps below, without taking our history on trust.',
+          'score oscillate: the oscillation is the price ageing out and being renewed, ' +
+          'not the pool’s risk genuinely changing every few minutes. It shows up as a ' +
+          'repeating sawtooth in the score history above once enough runs have ' +
+          'accumulated since the history was reset — a chart covering only a few hours ' +
+          'may catch one excursion, or none.',
+        'The runs behind these counts have since been discarded — the stored score ' +
+          'history was reset when the methodology was flattened to a single published ' +
+          'version, so these figures cannot be re-derived from the API. What is stated ' +
+          'here is an observation over a closed window that was made and recorded, not a ' +
+          'claim about rows you can still fetch. The condition itself needs none of our ' +
+          'history: it is checkable on-chain directly, by the steps below.',
         'What is not being claimed: the circuit breaker was scored 100 throughout, so ' +
           'the bound on a single-step price move is armed — this is purely about ' +
           'freshness. And a price past a staleness threshold does not by itself mean the ' +

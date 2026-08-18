@@ -16,13 +16,15 @@ export type Chain = 'stellar';
  * 1 — the current five-factor rulebook, including `oracleSafety` scoring price
  *     age *and* manipulation resistance. This is the first version anyone can
  *     be downstream of: the development-era history that ran under earlier,
- *     unpublished iterations was discarded rather than migrated, so no stored
- *     row carries anything but 1. See METHODOLOGY.md, "Current version".
+ *     unpublished iterations was discarded rather than migrated, and so is the
+ *     history stamped 2 while a briefly-live v2 was in this constant before the
+ *     rulebook was flattened back. See METHODOLOGY.md, "Current version".
  *
- * There is no version 2 yet. The next change that alters what a number means
- * makes one — and the machinery below (the stamp, the DB column, the chart's
- * break rendering) exists and is tested precisely so that bump is legible on
- * the day it happens, not built in a hurry then.
+ * The next change that alters what a number means makes version 2 — properly
+ * this time, as a published boundary rather than a value that came and went.
+ * The machinery below (the stamp, the DB column, the chart's break rendering)
+ * exists and is tested precisely so that bump is legible on the day it happens,
+ * not built in a hurry then.
  */
 export const METHODOLOGY_VERSION = 1 as const;
 
