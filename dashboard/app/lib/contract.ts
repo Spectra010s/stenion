@@ -29,7 +29,7 @@ export interface LeaderboardEntry {
  * A named sub-signal inside a factor. A numeric `value` is a scored component
  * that fed the parent factor; `value: null` is a DISCLOSURE — a real on-chain
  * quantity published deliberately without a score, because grading it would
- * invent comparability the data doesn't support (METHODOLOGY.md §2c). Null is
+ * invent comparability the data doesn't support (METHODOLOGY.md §2c/§2d). Null is
  * never "missing data" here.
  */
 export interface RiskFactorComponent {

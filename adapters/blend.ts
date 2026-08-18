@@ -18,15 +18,19 @@ import { rpc } from '@stellar/stellar-sdk';
 // `import type`.
 import {
   RiskFactorType,
+  describePriceAges,
+  describeWorst,
   excludedComponent,
   freshnessWindow,
   scoreFactors,
   sizeReserves,
+  worstReserves,
 } from '@stenion/core';
 import type {
   Adapter,
   ExcludedReserve,
   ProtocolMetadata,
+  WorstReserves,
   RiskFactor,
   RiskFactorMap,
   RiskScoreResult,
@@ -529,21 +533,20 @@ const deviationBounded = (maxDevPercent: number): boolean =>
   maxDevPercent > 0 && maxDevPercent < 100;
 
 /**
- * Score every reserve on one sub-signal and keep the worst.
+ * Score every reserve on one sub-signal and keep the worst — and every reserve
+ * tied with it. The selection rule and the phrasing both live in core
+ * (`worstReserves`/`describeWorst`) so the two adapters cannot drift into
+ * describing the same situation differently.
  *
- * Worst-reserve selection is the house convention across factors: the binding
- * constraint is the single weakest reserve, and averaging would hide it.
+ * Blend is the clearest case for reporting ties: all reserves are priced from a
+ * single aggregator publish round, so their ages are identical and they always
+ * tie. Naming one of them was pure iteration order.
  */
 function worstBy(
   reserves: BlendReserveRaw[],
   score: (r: BlendReserveRaw) => { score: number; note: string },
-): { score: number; note: string; asset: string } {
-  let worst = { score: Number.POSITIVE_INFINITY, note: 'no reserves', asset: '' };
-  for (const r of reserves) {
-    const s = score(r);
-    if (s.score <= worst.score) worst = { ...s, asset: r.asset };
-  }
-  return Number.isFinite(worst.score) ? worst : { score: 0, note: 'no reserves', asset: '' };
+): WorstReserves {
+  return worstReserves(reserves.map((r) => ({ asset: r.asset, ...score(r) })));
 }
 
 /** USD value of supplied liquidity for a reserve, or null if no price. */
@@ -765,20 +768,39 @@ export class BlendAdapter implements Adapter<BlendRawData> {
       weight,
       detail:
         worstBound.score === 0
-          ? `worst reserve (${shortAsset(worstBound.asset)}) ${worstBound.note}`
-          : `worst reserve (${shortAsset(worstFresh.asset)}) ${worstFresh.note}; all reserves have a deviation bound`,
+          ? describeWorst(worstBound)
+          : `${describeWorst(worstFresh)}; all reserves have a deviation bound`,
       components: [
         {
           id: 'priceFreshness',
           label: 'Price freshness',
           value: Math.round(worstFresh.score),
-          detail: `worst reserve (${shortAsset(worstFresh.asset)}) ${worstFresh.note}; anchored to the aggregator's own resolution and max_age (${raw.oracleConfig.maxAge}s)`,
+          detail: `${describeWorst(worstFresh)}; anchored to the aggregator's own resolution and max_age (${raw.oracleConfig.maxAge}s)`,
         },
         {
           id: 'deviationBound',
           label: 'Deviation bound',
           value: Math.round(worstBound.score),
-          detail: `worst reserve (${shortAsset(worstBound.asset)}) ${worstBound.note}`,
+          detail: describeWorst(worstBound),
+        },
+        {
+          id: 'priceAges',
+          label: 'Price age by feed (not scored)',
+          value: null,
+          // Blend's reserves are priced in one aggregator round, so these ages
+          // are normally identical and this disclosure is unremarkable. It is
+          // published anyway, on the same rule as every protocol: the value of
+          // showing per-feed ages is that a divergence becomes visible when one
+          // appears, and a disclosure that only exists where we already expect
+          // trouble is one nobody can check against a healthy baseline.
+          detail: describePriceAges(
+            graded.map((r) => ({
+              asset: r.asset,
+              feed: r.priceConfig?.upstreamAsset ?? null,
+              ageSeconds: r.price ? Math.max(0, raw.fetchedAt - r.price.timestamp) : null,
+            })),
+            raw.oracleConfig.maxAge,
+          ),
         },
         {
           id: 'deviationTightness',

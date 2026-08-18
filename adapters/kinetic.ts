@@ -15,15 +15,19 @@ import { rpc } from '@stellar/stellar-sdk';
 // survive into the running module and fail against core's CommonJS output.
 import {
   RiskFactorType,
+  describePriceAges,
+  describeWorst,
   excludedComponent,
   freshnessWindow,
   scoreFactors,
   sizeReserves,
+  worstReserves,
 } from '@stenion/core';
 import type {
   Adapter,
   ExcludedReserve,
   ProtocolMetadata,
+  WorstReserves,
   RiskFactor,
   RiskFactorMap,
   RiskScoreResult,
@@ -485,19 +489,18 @@ function lerp01(v: number, a: number, b: number): number {
 const shortAsset = (a: string): string => `${a.slice(0, 6)}…`;
 
 /**
- * Score every reserve on one sub-signal and keep the worst. Same convention as
- * every other factor: the binding constraint is the single weakest reserve.
+ * Score every reserve on one sub-signal and keep the worst — and every reserve
+ * tied with it. Selection and phrasing both live in core, identical to Blend.
+ *
+ * K2 is why this matters for more than tidiness: with USDC and PYUSD both pinned
+ * at freshness 0, naming only one of them made `oracleSafety` look like it hinged
+ * on a $4.00 dust reserve when a reserve thirteen times larger was equally dead.
  */
 function worstBy(
   reserves: KineticReserveRaw[],
   score: (r: KineticReserveRaw) => { score: number; note: string },
-): { score: number; note: string; asset: string } {
-  let worst = { score: Number.POSITIVE_INFINITY, note: 'no reserves', asset: '' };
-  for (const r of reserves) {
-    const s = score(r);
-    if (s.score <= worst.score) worst = { ...s, asset: r.asset };
-  }
-  return Number.isFinite(worst.score) ? worst : { score: 0, note: 'no reserves', asset: '' };
+): WorstReserves {
+  return worstReserves(reserves.map((r) => ({ asset: r.asset, ...score(r) })));
 }
 
 /** Underlying supplied/borrowed for a reserve, in human units (asset decimals applied). */
@@ -753,20 +756,38 @@ export class KineticAdapter implements Adapter<KineticRawData> {
       weight,
       detail:
         worstBound.score === 0
-          ? `worst reserve (${shortAsset(worstBound.asset)}) ${worstBound.note}`
-          : `worst reserve (${shortAsset(worstFresh.asset)}) ${worstFresh.note}; circuit breaker armed on all reserves`,
+          ? describeWorst(worstBound)
+          : `${describeWorst(worstFresh)}; circuit breaker armed on all reserves`,
       components: [
         {
           id: 'priceFreshness',
           label: 'Price freshness',
           value: Math.round(worstFresh.score),
-          detail: `worst reserve (${shortAsset(worstFresh.asset)}) ${worstFresh.note}; anchored to K2's own cache TTL (${priceCacheTtl}s) and staleness threshold (${priceStalenessThreshold}s)`,
+          detail: `${describeWorst(worstFresh)}; anchored to K2's own cache TTL (${priceCacheTtl}s) and staleness threshold (${priceStalenessThreshold}s)`,
         },
         {
           id: 'deviationBound',
           label: 'Deviation bound',
           value: Math.round(worstBound.score),
-          detail: `worst reserve (${shortAsset(worstBound.asset)}) ${worstBound.note}`,
+          detail: describeWorst(worstBound),
+        },
+        {
+          id: 'priceAges',
+          label: 'Price age by feed (not scored)',
+          value: null,
+          // K2 is the case this disclosure exists for: one oracle and one
+          // batchAdapter source serve some assets seconds-fresh and leave others
+          // untouched for hours. `priceFreshness` grades only the worst of them,
+          // so without this a reader sees a 0 and cannot tell whether the oracle
+          // is down or two specific feeds are unmaintained.
+          detail: describePriceAges(
+            raw.reserves.map((r) => ({
+              asset: r.asset,
+              feed: r.priceConfig?.feedId ?? null,
+              ageSeconds: r.price ? Math.max(0, raw.fetchedAt - r.price.timestamp) : null,
+            })),
+            priceStalenessThreshold,
+          ),
         },
         {
           id: 'deviationTightness',

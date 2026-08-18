@@ -267,7 +267,7 @@ describe('oracleSafety — composite and disclosures', () => {
     const f = await factors(makeRaw({ maxPriceChangeBps: 2_000 }));
     const tightness = f.oracleSafety!.components!.find((c) => c.id === 'deviationTightness');
     assert.ok(tightness);
-    assert.equal(tightness.value, null, 'tightness is disclosed, never scored (§2c)');
+    assert.equal(tightness.value, null, 'tightness is disclosed, never scored (§2d)');
     assert.match(tightness.detail, /2000 \(20%\)/);
     assert.match(tightness.detail, /not comparable|not graded/);
   });
@@ -496,5 +496,106 @@ describe('minimum-size filter — excluding everything still cannot publish 100'
       assert.match(filtered[key]!.detail, /below the minimum scorable size/);
       assert.doesNotMatch(filtered[key]!.detail, /worst reserve/);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// oracleSafety reports every stale reserve, not one tie-break winner.
+//
+// The score was never wrong; the explanation was. With two feeds both pinned at
+// freshness 0, the old detail named whichever came last in iteration order — so
+// a $4.00 dust reserve was reported as the cause while a reserve thirteen times
+// larger, equally dead, went unmentioned. That is what issue #45 was filed on.
+// oracleSafety is deliberately NOT size-filtered (METHODOLOGY.md §2), so the
+// only fix owed here is an honest explanation.
+// ---------------------------------------------------------------------------
+
+describe('oracleSafety — a tie names every reserve in it', () => {
+  /** K2's live shape: two fresh feeds, two dead ones of very different ages. */
+  const mixedStaleness = makeRaw({
+    reserves: [
+      reserve({ asset: 'CUSDCAAAA', supplied: 54, ageSeconds: 19_599 }),
+      reserve({ asset: 'CXLMAAAAA', supplied: 1_450, ageSeconds: 167 }),
+      reserve({ asset: 'CPYUSDAAA', supplied: 4, ageSeconds: 39_955 }),
+      reserve({ asset: 'CSOLVAAAA', supplied: 37, ageSeconds: 17 }),
+    ],
+  });
+
+  it('names both dead feeds, not just the worse one', async () => {
+    const f = await factors(mixedStaleness);
+    assert.equal(f.oracleSafety!.value, 0);
+    assert.match(f.oracleSafety!.detail, /2 of 4 reserves tied at the worst score/);
+    assert.match(f.oracleSafety!.detail, /CUSDCA…/, 'the larger dead reserve must appear');
+    assert.match(f.oracleSafety!.detail, /CPYUSD…/, 'the dust dead reserve must appear too');
+  });
+
+  it('does not mention the reserves that are actually fresh', async () => {
+    const f = await factors(mixedStaleness);
+    assert.doesNotMatch(f.oracleSafety!.detail, /CXLMAA…/);
+    assert.doesNotMatch(f.oracleSafety!.detail, /CSOLVA…/);
+  });
+
+  it('still names a single reserve when only one is worst', async () => {
+    // The common case must not get more verbose to serve the tie case.
+    const f = await factors(
+      makeRaw({
+        reserves: [
+          reserve({ asset: 'CFRESHAAA', ageSeconds: 10 }),
+          reserve({ asset: 'CSTALEAAA', ageSeconds: 40_000 }),
+        ],
+      }),
+    );
+    assert.match(f.oracleSafety!.detail, /^worst reserve \(CSTALE…\)/);
+  });
+
+  it('scores the dust reserve exactly as it scores any other (§2 is not size-filtered)', async () => {
+    // Pinning the decision from #45: a reserve too small for §4/§5 still counts
+    // in full here. §2 measures a vulnerability, and a stale price on a dust
+    // reserve is an open door rather than a small room — nothing stops an
+    // attacker supplying into it at the stale price. Size-filtering §2 would
+    // blind it to the newly-listed-thin-asset shape the YieldBlox incident ran
+    // through, which is the exact scenario this factor exists to catch.
+    const dustOnlyStale = makeRaw({
+      reserves: [
+        reserve({ asset: 'CBIGAAAAA', supplied: 1_000_000, ageSeconds: 10 }),
+        reserve({ asset: 'CDUSTAAAA', supplied: 1, ageSeconds: 40_000 }),
+      ],
+    });
+    const f = await factors(dustOnlyStale);
+    assert.equal(f.oracleSafety!.value, 0, 'a dust reserve must still be able to sink this factor');
+    assert.match(f.oracleSafety!.detail, /CDUSTA…/);
+    // And it is genuinely excluded from the factors that DO filter by size.
+    assert.equal(sub(f.liquiditySafety!, 'excludedReserves'), null);
+  });
+});
+
+describe('oracleSafety — per-feed price ages are disclosed (#47/#48)', () => {
+  it('shows both ends of the spread, not just the graded worst', async () => {
+    // The finding this exists for: one oracle, one batchAdapter source, some
+    // feeds seconds-fresh and others untouched for hours. A reader seeing
+    // oracleSafety 0 could not previously tell those apart from a dead oracle.
+    const f = await factors(
+      makeRaw({
+        reserves: [
+          reserve({ asset: 'CUSDCAAAA', ageSeconds: 21_421 }),
+          reserve({ asset: 'CXLMAAAAA', ageSeconds: 177 }),
+          reserve({ asset: 'CPYUSDAAA', ageSeconds: 41_777 }),
+          reserve({ asset: 'CSOLVAAAA', ageSeconds: 27 }),
+        ],
+      }),
+    );
+    const ages = f.oracleSafety!.components!.find((c) => c.id === 'priceAges')!;
+    assert.equal(ages.value, null, 'a disclosure is never graded');
+    assert.match(ages.detail, /41777s/);
+    assert.match(ages.detail, /27s/, 'the fresh end must be visible too');
+    assert.match(ages.detail, /2 of 4 past the protocol's own 3600s staleness limit/);
+  });
+
+  it('does not let the disclosure move the score', async () => {
+    // It republishes inputs priceFreshness already used. If it ever gained a
+    // numeric value it would double-count the same staleness.
+    const f = await factors(makeRaw({ reserves: [reserve({ ageSeconds: 41_777 })] }));
+    const scored = f.oracleSafety!.components!.filter((c) => c.value !== null).map((c) => c.id);
+    assert.deepEqual(scored, ['priceFreshness', 'deviationBound']);
   });
 });
