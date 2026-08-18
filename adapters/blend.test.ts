@@ -98,6 +98,12 @@ interface RawOpts {
   resolution?: number;
   baseAssets?: string[];
   admin?: BlendRawData['admin'];
+  /**
+   * The pool's `min_collateral` in USD — leg A of §4/§5's minimum-size filter.
+   * Defaults to the live Fixed V2 pool's $5.00 so the synthetic pools here are
+   * filtered by the same rule mainnet is. Pass 0 for a pool declaring none.
+   */
+  minCollateralUsd?: number;
 }
 
 function makeRaw(o: RawOpts = {}): BlendRawData {
@@ -109,6 +115,7 @@ function makeRaw(o: RawOpts = {}): BlendRawData {
     // Contract-governed admin by default: a flagged neutral 60 that doesn't
     // depend on Horizon, so adminKeySafety never perturbs an oracle assertion.
     admin = { address: 'CADMIN…', isContract: true, account: null },
+    minCollateralUsd = 5,
   } = o;
 
   return {
@@ -116,6 +123,10 @@ function makeRaw(o: RawOpts = {}): BlendRawData {
     oracleId: 'CORACLE…',
     oracleDecimals: ORACLE_DECIMALS,
     status: 0,
+    // Stored in the oracle's base-asset decimals, as on chain — so the test's
+    // ORACLE_DECIMALS of 14, not the live pool's 7. Reading it back through
+    // oracleDecimals is part of what the adapter is being tested on.
+    minCollateral: BigInt(Math.round(minCollateralUsd * 10 ** ORACLE_DECIMALS)),
     admin,
     oracleConfig: {
       maxAge,
@@ -526,5 +537,151 @@ describe('no measurable reserves — cannot assess, so 0 not 100', () => {
   it('utilizationSafety: does not describe a reserve that does not exist', async () => {
     const f = await factors(makeRaw({ reserves: [] }));
     assert.doesNotMatch(f.utilizationSafety!.detail, /worst reserve/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The minimum-size filter (METHODOLOGY.md §4/§5).
+//
+// §4 and §5 both select the WORST reserve, which means a reserve holding
+// effectively nothing can set a protocol's published number. The filter excludes
+// a reserve only when it fails BOTH legs: the pool's own declared min_collateral
+// and 0.5% of the pool's total supplied USD. The OR is the part worth testing —
+// each leg exists to cover a failure the other has.
+// ---------------------------------------------------------------------------
+
+describe('minimum-size filter — leg A, the pool’s own min_collateral (§4/§5)', () => {
+  /** A dominant reserve plus a tiny one that is the worst on both factors. */
+  const lopsided = (minCollateralUsd: number) =>
+    makeRaw({
+      minCollateralUsd,
+      reserves: [
+        reserve({ asset: 'CBIG…', supplied: 1_000_000, borrowed: 0, cap: 0.8 }),
+        reserve({ asset: 'CSMALL…', supplied: 10, borrowed: 9, cap: 0.8 }),
+      ],
+    });
+
+  it('keeps a small reserve that still clears the protocol’s own floor', async () => {
+    // $10 against a $1,000,010 pool is 0.001% — leg B fails outright. Leg A
+    // carries it, because Blend itself says a $5 exposure is worth having. This
+    // is the case relative-only would get wrong, and it is the worse error:
+    // 90% utilization on real capital would have been hidden.
+    const f = await factors(lopsided(5));
+    assert.equal(f.liquiditySafety!.value, 10, 'the small reserve must still bind');
+    assert.equal(sub(f.liquiditySafety!, 'excludedReserves'), undefined, 'nothing was excluded');
+  });
+
+  it('drops the same reserve when the pool declares no floor at all', async () => {
+    // Identical pool, min_collateral = 0. Leg A is unavailable, leg B fails, so
+    // the reserve goes — and the factor jumps to the untroubled reserve. Held
+    // side by side with the test above, this is exactly what leg A buys.
+    const f = await factors(lopsided(0));
+    assert.equal(f.liquiditySafety!.value, 100);
+    assert.match(f.liquiditySafety!.components![0].detail, /CSMALL/);
+  });
+});
+
+describe('minimum-size filter — leg B, share of the pool (§4/§5)', () => {
+  it('keeps a reserve sitting exactly on the 0.5% line', async () => {
+    // The comparison is >=, so the boundary reserve is IN. Erring toward
+    // inclusion is the documented direction: excluding a real reserve hides
+    // risk, keeping a dust one only reports a misleading number.
+    const f = await factors(
+      makeRaw({
+        minCollateralUsd: 0,
+        reserves: [
+          reserve({ asset: 'CBIG…', supplied: 199, borrowed: 0 }),
+          reserve({ asset: 'CEDGE…', supplied: 1, borrowed: 1 }),
+        ],
+      }),
+    );
+    assert.equal(f.liquiditySafety!.value, 0, '1/200 = 0.5% exactly — kept, and it is fully drawn');
+  });
+
+  it('does not filter at all when no reserve can be priced', async () => {
+    // §4/§5 are otherwise pure balance ratios that work with the oracle down.
+    // With no prices there is no denominator, so the filter stands aside and the
+    // factors behave exactly as they did before it existed, rather than
+    // refusing to score. Flagged in METHODOLOGY.md §4 because it means these two
+    // numbers mean something slightly different during an oracle outage.
+    const f = await factors(
+      makeRaw({
+        reserves: [
+          reserve({ asset: 'CBIG…', supplied: 1_000_000, borrowed: 0, price: null }),
+          reserve({ asset: 'CDUST…', supplied: 1, borrowed: 1, price: null }),
+        ],
+      }),
+    );
+    assert.equal(
+      f.liquiditySafety!.value,
+      0,
+      'the dust reserve still binds — nothing was filtered',
+    );
+    assert.equal(sub(f.liquiditySafety!, 'excludedReserves'), undefined);
+  });
+
+  it('keeps an individual unpriced reserve rather than reading it as worthless', async () => {
+    // Could-not-measure is not the same as empty, so an unpriced reserve is
+    // never excluded by size — it has no measurable size to judge.
+    const f = await factors(
+      makeRaw({
+        reserves: [
+          reserve({ asset: 'CBIG…', supplied: 1_000_000, borrowed: 0 }),
+          reserve({ asset: 'CUNPRICED…', supplied: 1, borrowed: 1, price: null }),
+        ],
+      }),
+    );
+    assert.equal(f.liquiditySafety!.value, 0);
+  });
+});
+
+describe('minimum-size filter — excluding everything still cannot publish 100', () => {
+  // This is the state the filter could reintroduce the "0 not 100" bug through,
+  // so it is pinned even though it is unreachable on a real pool: shares sum to
+  // 1, so the largest reserve is always >= 1/n, which clears 0.5% for any
+  // n <= 200. It takes 201 equal reserves to starve leg B everywhere, which is
+  // why live data can never exercise this path.
+  const starved = (minCollateralUsd: number) =>
+    makeRaw({
+      minCollateralUsd,
+      // 201 × $0.01: each share is 1/201 = 0.4975% (leg B fails) and each is
+      // below the $5 floor (leg A fails). borrowed = 0 means every one of them
+      // would have scored 100 — so if either the accumulator seed leaked or the
+      // filter were skipped, this test reads 100 instead of 0.
+      reserves: Array.from({ length: 201 }, (_, i) =>
+        reserve({ asset: `C${i}`.padEnd(56, 'X'), supplied: 1, borrowed: 0, price: 0.01 }),
+      ),
+    });
+
+  it('liquiditySafety reports cannot-assess, not maximally safe', async () => {
+    const f = await factors(starved(5));
+    assert.equal(f.liquiditySafety!.value, 0, 'a filtered-empty set is undefined, not 100');
+    assert.match(f.liquiditySafety!.detail, /below the minimum scorable size/);
+  });
+
+  it('utilizationSafety reports cannot-assess, not maximally safe', async () => {
+    const f = await factors(starved(5));
+    assert.equal(f.utilizationSafety!.value, 0);
+    assert.match(f.utilizationSafety!.detail, /below the minimum scorable size/);
+  });
+
+  it('says it filtered them out, not that the pool is empty', async () => {
+    // The three cannot-assess reasons stay distinguishable. "Every reserve is
+    // too small" and "the pool has no supplied value" are different findings
+    // about different pools and must not share one message.
+    const filtered = await factors(starved(5));
+    const empty = await factors(makeRaw({ reserves: [] }));
+    assert.notEqual(filtered.liquiditySafety!.detail, empty.liquiditySafety!.detail);
+    assert.doesNotMatch(filtered.liquiditySafety!.detail, /no reserve has any supplied value/);
+    assert.doesNotMatch(empty.liquiditySafety!.detail, /minimum scorable size/);
+    assert.doesNotMatch(filtered.liquiditySafety!.detail, /worst reserve/);
+  });
+
+  it('is genuinely the filter doing it — the same pool scores with leg A available', async () => {
+    // Same 201 reserves, but a pool declaring a $0.001 floor keeps every one of
+    // them. Proves the 0 above comes from the size filter and not from some
+    // other property of a 201-reserve fixture.
+    const f = await factors(starved(0.001));
+    assert.equal(f.liquiditySafety!.value, 100);
   });
 });

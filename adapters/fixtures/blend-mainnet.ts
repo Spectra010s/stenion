@@ -4,8 +4,8 @@
 // the expected values in adapters/snapshot.test.ts. If a factor moved, find out
 // why before committing — that is the entire point of this file.
 //
-// Captured: 2026-08-16T12:24:30.039Z
-// At capture time this scored: safetyScore 53 (collateralSafety 70, oracleSafety 100, adminKeySafety 40, liquiditySafety 21, utilizationSafety 12)
+// Captured: 2026-08-18T12:18:53.305Z
+// At capture time this scored: safetyScore 54 (collateralSafety 71, oracleSafety 100, adminKeySafety 40, liquiditySafety 23, utilizationSafety 15)
 //
 // `satisfies` is load-bearing: if BlendRawData gains a required field, this file
 // stops compiling rather than quietly feeding the adapter a stale shape.
@@ -17,6 +17,7 @@ export const blendMainnet = {
   oracleId: 'CCVTVW2CVA7JLH4ROQGP3CU4T3EXVCK66AZGSM4MUQPXAI4QHCZPOATS',
   oracleDecimals: 7,
   status: 1,
+  minCollateral: 50000000n,
   admin: {
     address: 'GAX2VVWVHU5YQY5J3NJBXKHI3FFKZN54BE6GRJCWSIKSBZTQWJJNJMPC',
     isContract: false,
@@ -46,12 +47,12 @@ export const blendMainnet = {
         enabled: true,
       },
       data: {
-        dRate: 1001515118894n,
-        bRate: 1000022228606n,
-        bSupply: 7686167566738108n,
-        dSupply: 14298726642175n,
+        dRate: 1001520650764n,
+        bRate: 1000022236789n,
+        bSupply: 7685718879420512n,
+        dSupply: 14277657918510n,
       },
-      price: { value: 1568646n, timestamp: 1786882800 },
+      price: { value: 1532003n, timestamp: 1787055300 },
       priceConfig: { upstreamAsset: 'Other:XLM', oracleIndex: 0, maxDev: 60 },
     },
     {
@@ -65,12 +66,12 @@ export const blendMainnet = {
         enabled: true,
       },
       data: {
-        dRate: 1221403469415n,
-        bRate: 1139207224686n,
-        bSupply: 545615708615427n,
-        dSupply: 402252761629576n,
+        dRate: 1222104480312n,
+        bRate: 1139610716797n,
+        bSupply: 563890003175335n,
+        dSupply: 402284022286888n,
       },
-      price: { value: 10009204n, timestamp: 1786882800 },
+      price: { value: 10008876n, timestamp: 1787055300 },
       priceConfig: { upstreamAsset: 'Other:USDC', oracleIndex: 0, maxDev: 20 },
     },
     {
@@ -84,14 +85,14 @@ export const blendMainnet = {
         enabled: true,
       },
       data: {
-        dRate: 1224916473552n,
-        bRate: 1140389770338n,
-        bSupply: 25619578866528n,
-        dSupply: 17805748874511n,
+        dRate: 1225442373158n,
+        bRate: 1140682362932n,
+        bSupply: 25825898186705n,
+        dSupply: 17997536239877n,
       },
-      price: { value: 11575207n, timestamp: 1786882800 },
+      price: { value: 11588012n, timestamp: 1787055300 },
       priceConfig: { upstreamAsset: 'Other:EURC', oracleIndex: 0, maxDev: 20 },
     },
   ],
-  fetchedAt: 1786883070,
+  fetchedAt: 1787055533,
 } satisfies BlendRawData;

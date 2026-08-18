@@ -16,9 +16,16 @@ import { rpc } from '@stellar/stellar-sdk';
 // module and then fails to resolve against @stenion/core's CommonJS output,
 // which has no runtime `Adapter` export. Keep type-only names under
 // `import type`.
-import { RiskFactorType, freshnessWindow, scoreFactors } from '@stenion/core';
+import {
+  RiskFactorType,
+  excludedComponent,
+  freshnessWindow,
+  scoreFactors,
+  sizeReserves,
+} from '@stenion/core';
 import type {
   Adapter,
+  ExcludedReserve,
   ProtocolMetadata,
   RiskFactor,
   RiskFactorMap,
@@ -139,6 +146,20 @@ export interface BlendRawData {
   oracleDecimals: number;
   /** pool status: 0 active, higher = increasingly frozen (see Blend docs) */
   status: number;
+  /**
+   * PoolConfig `min_collateral` — the smallest collateral value a position may
+   * hold and still borrow, in the ORACLE's base-asset denomination (so divide by
+   * 10^oracleDecimals to get USD; the Fixed V2 pool's oracle bases on
+   * `Other:USD` at 7 decimals, making the live value of 50000000 exactly $5.00).
+   *
+   * Read because it is Blend's OWN dust guard: it is set where liquidating a
+   * position stops being economically worthwhile, which is the same question
+   * §4/§5's minimum-size filter asks. Kept raw rather than pre-divided so the
+   * fixture records what the chain actually said.
+   *
+   * 0n when the pool declares none — a real state, not a missing read.
+   */
+  minCollateral: bigint;
   admin: BlendAdminRaw;
   oracleConfig: BlendOracleConfigRaw;
   reserves: BlendReserveRaw[];
@@ -165,6 +186,8 @@ interface PoolConfigNative {
   oracle: string;
   status: number | bigint;
   admin?: string;
+  /** optional because a pool predating V2's dust guard simply has no such field */
+  min_collateral?: number | bigint;
 }
 interface PriceDataNative {
   price: number | bigint;
@@ -587,6 +610,8 @@ export class BlendAdapter implements Adapter<BlendRawData> {
     const poolConfig = scValToNative(configScv) as PoolConfigNative;
     const oracleId: string = poolConfig.oracle;
     const status = Number(poolConfig.status);
+    const minCollateral =
+      poolConfig.min_collateral === undefined ? 0n : BigInt(poolConfig.min_collateral);
     const adminAddress: string = adminScv
       ? (scValToNative(adminScv) as string)
       : (poolConfig.admin ?? '');
@@ -615,6 +640,7 @@ export class BlendAdapter implements Adapter<BlendRawData> {
       oracleId,
       oracleDecimals,
       status,
+      minCollateral,
       admin,
       oracleConfig,
       reserves,
@@ -800,21 +826,34 @@ export class BlendAdapter implements Adapter<BlendRawData> {
   // This is the withdrawal/liquidation cushion: how much can leave before the
   // pool is drained. Distinct from utilizationSpike below, which measures
   // proximity to the *protocol-configured* cap rather than absolute headroom.
+  //
+  // Reserves below the shared minimum size are excluded before selection — see
+  // reserveSizing() and METHODOLOGY.md §4 — and disclosed rather than dropped.
   private liquiditySafety(raw: BlendRawData): RiskFactor {
     const weight = 0.15;
+    const sizing = this.reserveSizing(raw);
+    const excluded: ExcludedReserve[] = [];
     let worstRatio = 1;
     let worstAsset = '';
     let measured = 0;
-    for (const r of raw.reserves) {
+    for (const [i, r] of raw.reserves.entries()) {
       const { supplied, borrowed } = reserveTotals(r);
       if (supplied <= 0) continue;
-      measured++;
       const free = clamp(((supplied - borrowed) / supplied) * 100);
+      // The size filter sits AHEAD of `measured++` on purpose: a pool where it
+      // excludes everything then falls through to the can't-assess branch below
+      // rather than reaching a separate path that could report the seed value.
+      if (!sizing[i].scored) {
+        excluded.push({ asset: r.asset, ...sizing[i], wouldHaveScored: Math.round(free) });
+        continue;
+      }
+      measured++;
       if (free <= worstRatio * 100) {
         worstRatio = free / 100;
         worstAsset = r.asset;
       }
     }
+    const components = excludedComponent(excluded, 'free liquidity');
     // METHODOLOGY.md §4 is a minimum over the reserves with supplied > 0. With
     // none, that minimum is undefined — NOT 100. Reporting the accumulator's
     // seed here would publish "maximally safe" derived from no data at all,
@@ -824,13 +863,18 @@ export class BlendAdapter implements Adapter<BlendRawData> {
       return {
         value: 0,
         weight,
-        detail: 'no reserve has any supplied value — free liquidity cannot be assessed',
+        detail:
+          excluded.length > 0
+            ? `every reserve with supplied value is below the minimum scorable size — free liquidity cannot be assessed`
+            : 'no reserve has any supplied value — free liquidity cannot be assessed',
+        ...components,
       };
     }
     return {
       value: Math.round(worstRatio * 100),
       weight,
       detail: `worst reserve (${worstAsset.slice(0, 6)}…) has ${(worstRatio * 100).toFixed(0)}% of supply as free liquidity`,
+      ...components,
     };
   }
 
@@ -841,6 +885,8 @@ export class BlendAdapter implements Adapter<BlendRawData> {
   // config's target field.
   private utilizationSafety(raw: BlendRawData): RiskFactor {
     const weight = 0.2;
+    const sizing = this.reserveSizing(raw);
+    const excluded: ExcludedReserve[] = [];
     let worst = 100;
     let worstAsset = '';
     let worstUtil = 0;
@@ -851,12 +897,23 @@ export class BlendAdapter implements Adapter<BlendRawData> {
     // reserves hold real debt but declare no utilization ceiling.
     let withSupply = 0;
     let withCap = 0;
-    for (const r of raw.reserves) {
+    for (const [i, r] of raw.reserves.entries()) {
       const { supplied, borrowed } = reserveTotals(r);
       if (supplied <= 0) continue;
-      withSupply++;
       const util = borrowed / supplied;
       const cap = Number(r.config.maxUtil) / Number(SCALAR_7);
+      // Ahead of `withSupply++` for the same reason as in liquiditySafety, and
+      // so the no-cap message counts reserves this factor would actually have
+      // scored rather than ones it had already set aside as too small.
+      if (!sizing[i].scored) {
+        excluded.push({
+          asset: r.asset,
+          ...sizing[i],
+          wouldHaveScored: cap > 0 ? Math.round(clamp(((cap - util) / cap) * 100)) : null,
+        });
+        continue;
+      }
+      withSupply++;
       if (cap <= 0) continue;
       withCap++;
       const headroom = clamp(((cap - util) / cap) * 100);
@@ -867,24 +924,44 @@ export class BlendAdapter implements Adapter<BlendRawData> {
         worstCap = cap;
       }
     }
+    const components = excludedComponent(excluded, 'utilization headroom');
     // METHODOLOGY.md §5 is a minimum over reserves with supplied > 0 AND
     // cap > 0. With none, that minimum is undefined — not the seed value of
     // 100. See the note in liquiditySafety.
     if (withCap === 0) {
-      return {
-        value: 0,
-        weight,
-        detail:
-          withSupply === 0
-            ? 'no reserve has any supplied value — utilization headroom cannot be assessed'
-            : `no reserve has a configured utilization cap (max_util) — headroom cannot be assessed across ${withSupply} supplied reserve(s)`,
-      };
+      let detail: string;
+      if (withSupply > 0) {
+        detail = `no reserve has a configured utilization cap (max_util) — headroom cannot be assessed across ${withSupply} supplied reserve(s)`;
+      } else if (excluded.length > 0) {
+        detail = `every reserve with supplied value is below the minimum scorable size — utilization headroom cannot be assessed`;
+      } else {
+        detail = 'no reserve has any supplied value — utilization headroom cannot be assessed';
+      }
+      return { value: 0, weight, detail, ...components };
     }
     return {
       value: Math.round(worst),
       weight,
       detail: `worst reserve (${worstAsset.slice(0, 6)}…) at ${(worstUtil * 100).toFixed(0)}% util vs ${(worstCap * 100).toFixed(0)}% cap`,
+      ...components,
     };
+  }
+
+  /**
+   * The §4/§5 minimum-size filter, resolved for this pool.
+   *
+   * The rule is shared (core's `sizeReserves`); what is per-protocol is only
+   * where its absolute leg is read from — Blend's own `min_collateral`, divided
+   * out of the oracle's base-asset decimals into USD. Exactly the anchoring
+   * pattern §5's `cap` uses.
+   */
+  private reserveSizing(raw: BlendRawData) {
+    const minPositionUsd =
+      raw.minCollateral > 0n ? Number(raw.minCollateral) / 10 ** raw.oracleDecimals : null;
+    return sizeReserves(
+      raw.reserves.map((r) => suppliedUsd(r, raw.oracleDecimals)),
+      minPositionUsd,
+    );
   }
 
   // Delegates to the shared rulebook in @stenion/core. The weighted mean is not

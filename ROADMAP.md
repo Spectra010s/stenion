@@ -69,6 +69,24 @@ Roughly in priority order, but not committed to dates:
   breaking API change (a `v2` under the versioning policy in [`ARCHITECTURE.md`](ARCHITECTURE.md));
   changing only the display `name` is free and additive. Almost certainly the latter, but it should
   be a decision rather than a drift.
+- **Should a dust reserve be able to zero `oracleSafety`?** ([#45](https://github.com/stenion-lab/stenion/issues/45)) Open, and deliberately not resolved
+  alongside the §4/§5 minimum-size filter that prompted it. That filter stops a near-empty reserve
+  binding `liquiditySafety`/`utilizationSafety`; `oracleSafety` selects the worst reserve too and
+  was left untouched, so the same reserve can still set it.
+  - **What was found (2026-08-18, live mainnet).** K2's `oracleSafety` of **0** traces to its PYUSD
+    reserve — **$4.00**, 0.26% of a ~$1,535 pool — carrying a price **29,584s** old against a
+    3,600s dead anchor. That reserve is below the minimum-size filter's line and is excluded from
+    §4/§5, yet it alone sets the factor carrying the heaviest weight (0.25).
+  - **Why it is not obviously the same bug.** A stale feed is plausibly an operational signal about
+    the _oracle_ rather than about the reserve: an oracle that has stopped updating one asset may
+    well be one you cannot trust on the others, regardless of how much value sits behind the stale
+    one. On that reading the current behaviour is correct and no filter belongs here. The opposite
+    reading — that a $4.00 reserve should not set a protocol-wide factor — is equally arguable.
+  - **Why it needs its own design pass.** Applying §4's filter here would be a one-line change and
+    the wrong way to decide it: it moves K2's heaviest factor and the anchor question ("is
+    freshness a per-reserve or a per-oracle property?") is genuinely unsettled. It gets the same
+    threshold-agreed-before-code treatment §4's filter got, not a fold-in at the end of that work.
+
 - **Per-factor history.** `risk_scores` stores the full factor map on every row, so the data is
   already there, but the API exposes only `safetyScore` per history point. Charting a single
   factor over time — watching `oracleSafety` sawtooth on its own axis — is deliberately deferred

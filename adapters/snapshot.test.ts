@@ -39,20 +39,33 @@ describe('Blend — frozen mainnet snapshot', () => {
   it('produces exactly the factor map captured with it', async () => {
     const factors = await new BlendAdapter().computeRiskFactors(blendMainnet);
     assert.deepEqual(values(factors), {
-      collateralSafety: 70,
+      collateralSafety: 71,
       oracleSafety: 100,
       adminKeySafety: 40,
-      liquiditySafety: 21,
-      utilizationSafety: 12,
+      liquiditySafety: 23,
+      utilizationSafety: 15,
     });
   });
 
-  it('scores 53 — and that is the weighted mean of those five', async () => {
+  it('scores 54 — and that is the weighted mean of those five', async () => {
     // Cross-checked by hand so a failure separates "a factor moved" from "the
-    // weighting moved": 70×0.20 + 100×0.25 + 40×0.20 + 21×0.15 + 12×0.20 = 52.55.
+    // weighting moved": 71×0.20 + 100×0.25 + 40×0.20 + 23×0.15 + 15×0.20 = 53.65.
     const adapter = new BlendAdapter();
     const factors = await adapter.computeRiskFactors(blendMainnet);
-    assert.equal(adapter.score(factors).score, 53);
+    assert.equal(adapter.score(factors).score, 54);
+  });
+
+  it('excludes no reserve as too small — every one clears the $5 min_collateral', async () => {
+    // The minimum-size filter (§4/§5) is a genuine no-op on Blend, and this
+    // pins that rather than leaving it to be assumed. The pool declares
+    // min_collateral = 50000000 at 7 oracle decimals = $5.00, and its smallest
+    // reserve holds ~$3.4M, so leg A clears by six orders of magnitude. If a
+    // regenerated fixture ever DOES exclude a Blend reserve, that is a real
+    // finding about the pool and this test should fail loudly first.
+    const factors = await new BlendAdapter().computeRiskFactors(blendMainnet);
+    assert.equal(blendMainnet.minCollateral, 50_000_000n);
+    assert.equal(sub(factors.liquiditySafety!, 'excludedReserves'), undefined);
+    assert.equal(sub(factors.utilizationSafety!, 'excludedReserves'), undefined);
   });
 
   it('reports both oracle sub-signals on real aggregator config', async () => {
@@ -86,16 +99,51 @@ describe('Kinetic — frozen mainnet snapshot', () => {
       collateralSafety: 15,
       oracleSafety: 0,
       adminKeySafety: 60,
-      liquiditySafety: 34,
-      utilizationSafety: 18,
+      liquiditySafety: 44,
+      utilizationSafety: 30,
     });
   });
 
-  it('scores 24', async () => {
-    // 15×0.20 + 0×0.25 + 60×0.20 + 34×0.15 + 18×0.20 = 23.7.
+  it('scores 28', async () => {
+    // 15×0.20 + 0×0.25 + 60×0.20 + 44×0.15 + 30×0.20 = 27.6.
     const adapter = new KineticAdapter();
     const factors = await adapter.computeRiskFactors(kineticMainnet);
-    assert.equal(adapter.score(factors).score, 24);
+    assert.equal(adapter.score(factors).score, 28);
+  });
+
+  it('is the case the minimum-size filter was added for', async () => {
+    // THIS FIXTURE IS DELIBERATELY NOT REGENERATED. It is the only captured
+    // state where the defect is visible: at capture the PYUSD reserve held
+    // $3.00 of a $1,571 pool (0.19%) at 66% utilization, and being the worst
+    // reserve it set BOTH factors — liquiditySafety 34 and utilizationSafety 18
+    // — off a reserve nobody's capital was meaningfully exposed to. Filtered,
+    // the binding reserve becomes SolvBTC at $35.79 (2.28%), which is real:
+    // 44 and 30 above.
+    //
+    // Live K2 has since moved on (PYUSD grew to $4.00 and its utilization fell,
+    // so it stopped binding on its own). Recapturing would lose the only
+    // regression evidence this change has. Leave it frozen.
+    const factors = await new KineticAdapter().computeRiskFactors(kineticMainnet);
+    for (const factor of [factors.liquiditySafety!, factors.utilizationSafety!]) {
+      const excluded = factor.components?.find((c) => c.id === 'excludedReserves');
+      assert.ok(excluded, 'the excluded reserve must be disclosed, not silently dropped');
+      assert.equal(excluded.value, null, 'a disclosure is never graded');
+      assert.match(excluded.detail, /CCCRWH…/, 'names the excluded reserve');
+      assert.match(excluded.detail, /\$3\.00/, 'publishes what it held');
+      assert.match(excluded.detail, /0\.19% of pool/, 'publishes its share');
+      assert.match(excluded.detail, /would have scored/, 'publishes the suppressed number');
+    }
+    // The suppressed numbers are exactly the ones this fixture used to publish.
+    assert.match(
+      factors.liquiditySafety!.components![0].detail,
+      /would have scored 34/,
+      'the old liquiditySafety value must still be readable',
+    );
+    assert.match(
+      factors.utilizationSafety!.components![0].detail,
+      /would have scored 18/,
+      'the old utilizationSafety value must still be readable',
+    );
   });
 
   it('scores oracleSafety 0 on a genuinely stale price, with the breaker armed', async () => {

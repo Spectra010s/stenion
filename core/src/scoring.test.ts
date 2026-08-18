@@ -26,7 +26,14 @@ import { describe, it } from 'node:test';
 // So the factor keys are written as string literals below, and a test asserts
 // those literals still match the enum — see "taxonomy names".
 import type { RiskFactor, RiskFactorMap } from './types.ts';
-import { STALE_CEILING_SECONDS, freshnessWindow, scoreFactors } from './scoring.ts';
+import {
+  MIN_RESERVE_POOL_SHARE,
+  STALE_CEILING_SECONDS,
+  excludedComponent,
+  freshnessWindow,
+  scoreFactors,
+  sizeReserves,
+} from './scoring.ts';
 
 // ---------------------------------------------------------------------------
 // Reading the sources of truth
@@ -319,5 +326,150 @@ describe('freshnessWindow', () => {
     const { fresh, dead } = freshnessWindow(3600, 3600);
     assert.equal(fresh, 3600);
     assert.ok(dead > fresh, 'expected the degenerate case to be widened');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sizeReserves — the §4/§5 minimum-size filter.
+//
+// This lives in core for the same reason scoreFactors does: it is one shared
+// rule, and two adapters implementing it separately would be two rules waiting
+// to drift. The OR structure is the part that needs pinning — each leg exists to
+// cover a failure the other one has, so a "simplification" to a single test
+// would quietly reintroduce one of them.
+// ---------------------------------------------------------------------------
+
+describe('sizeReserves — the minimum-size filter (METHODOLOGY.md §4/§5)', () => {
+  const scored = (usd: (number | null)[], floor: number | null) =>
+    sizeReserves(usd, floor).map((r) => r.scored);
+
+  it('keeps a reserve that passes either leg, and drops only one that fails both', () => {
+    // Pool of 1000. The 50 clears both. The 6 fails the share test (0.6%… wait,
+    // it passes) — so the cases are laid out explicitly instead:
+    //   500 → 50% share, above $5      → kept (both)
+    //   494 → 49.4% share, above $5    → kept (both)
+    //     5 → 0.5% share exactly, = $5 → kept (both, on the boundary)
+    //     1 → 0.1% share, below $5     → DROPPED (neither)
+    assert.deepEqual(scored([500, 494, 5, 1], 5), [true, true, true, false]);
+  });
+
+  it('leg A alone rescues a reserve far below the relative floor', () => {
+    // $10 of a $1,000,010 pool is 0.001%. Relative-only would drop half a
+    // million dollars' worth on a large pool; the protocol's own floor is what
+    // stops that, and this is the error direction that hides real risk.
+    assert.deepEqual(scored([1_000_000, 10], 5), [true, true]);
+    assert.deepEqual(scored([1_000_000, 10], null), [true, false]);
+  });
+
+  it('leg B alone rescues every reserve of a pool smaller than any sane floor', () => {
+    // K2's live pool totals ~$1,500. An absolute-only filter set anywhere
+    // sensible for a real market excludes all of it, sending both factors to
+    // cannot-assess and DROPPING the protocol's score — a worse outcome than
+    // the problem being fixed.
+    assert.deepEqual(scored([1_443, 54, 36, 4], null), [true, true, true, false]);
+  });
+
+  it('stands aside entirely when nothing can be priced', () => {
+    // No denominator, so no filter — §4/§5 degrade to exactly their pre-filter
+    // behaviour rather than refusing to score with the oracle down.
+    assert.deepEqual(scored([null, null, null], 5), [true, true, true]);
+    assert.deepEqual(sizeReserves([null, null], 5)[0], {
+      scored: true,
+      suppliedUsd: null,
+      share: null,
+    });
+  });
+
+  it('keeps an individual unpriced reserve rather than treating it as worthless', () => {
+    // "We could not measure it" is not "it is empty", and the difference decides
+    // whether a reserve gets silently dropped.
+    assert.deepEqual(scored([1_000, null, 1], 5), [true, true, false]);
+  });
+
+  it('ignores a nonsensical floor instead of trusting it', () => {
+    // A zero/negative/NaN min_collateral means the pool declares none. It must
+    // not become a floor everything trivially clears.
+    for (const bad of [0, -5, Number.NaN]) {
+      assert.deepEqual(scored([1_000, 1], bad), [true, false], `floor ${bad}`);
+    }
+  });
+
+  it('reports the share it judged each reserve on', () => {
+    const sized = sizeReserves([750, 250], null);
+    assert.deepEqual(
+      sized.map((r) => r.share),
+      [0.75, 0.25],
+    );
+    assert.deepEqual(
+      sized.map((r) => r.suppliedUsd),
+      [750, 250],
+    );
+  });
+
+  it('cannot empty the scored set on any pool of 200 reserves or fewer', () => {
+    // Shares sum to 1, so the largest is always >= 1/n. That is why the
+    // all-excluded branch in each adapter is unreachable on real data — and why
+    // it is pinned synthetically there rather than left untested.
+    for (const n of [1, 2, 5, 64, 200]) {
+      const sized = sizeReserves(
+        Array.from({ length: n }, () => 1),
+        null,
+      );
+      assert.ok(
+        sized.some((r) => r.scored),
+        `${n} equal reserves: at least one must survive`,
+      );
+    }
+    // 201 is the first count where an even split starves every reserve.
+    const starved = sizeReserves(
+      Array.from({ length: 201 }, () => 1),
+      null,
+    );
+    assert.ok(
+      starved.every((r) => !r.scored),
+      'the boundary is real, and callers must handle it',
+    );
+  });
+
+  it('agrees with the threshold METHODOLOGY.md publishes', () => {
+    // Reading the doc rather than restating its number, for the reason at the
+    // top of this file: a test that hardcodes the threshold is a third copy to
+    // keep in sync, not a guard against drift.
+    const match = METHODOLOGY.match(/([\d.]+)%\s+of\s+the\s+pool['’]s\s+own\s+total\s+supplied/i);
+    assert.ok(match, 'could not find the minimum-size threshold in METHODOLOGY.md §4');
+    assert.equal(Number(match[1]) / 100, MIN_RESERVE_POOL_SHARE);
+  });
+});
+
+describe('excludedComponent — the disclosure for what the filter set aside', () => {
+  it('publishes nothing when nothing was excluded', () => {
+    // Spread by the caller, so an empty object means the factor carries no
+    // components at all rather than an empty array.
+    assert.deepEqual(excludedComponent([], 'free liquidity'), {});
+  });
+
+  it('discloses the reserve, its size, its share and the score it suppressed', () => {
+    const { components } = excludedComponent(
+      [{ asset: 'CDUSTAAAAAA', scored: false, suppliedUsd: 3, share: 0.0019, wouldHaveScored: 34 }],
+      'free liquidity',
+    );
+    const detail = components![0].detail;
+    assert.equal(components![0].value, null, 'measured, shown, deliberately not graded');
+    assert.match(detail, /CDUSTA…/);
+    assert.match(detail, /\$3\.00/);
+    assert.match(detail, /0\.19% of pool/);
+    assert.match(detail, /would have scored 34/);
+    assert.match(detail, /free liquidity/);
+  });
+
+  it('says so plainly when a reserve had no score to suppress', () => {
+    // §5's no-configured-cap case: excluded AND ungradeable. "would have scored
+    // 0" would be a fabricated number for a reserve that had none.
+    const { components } = excludedComponent(
+      [{ asset: 'CNOCAP', scored: false, suppliedUsd: 1, share: 0.001, wouldHaveScored: null }],
+      'utilization headroom',
+    );
+    assert.match(components![0].detail, /would not have scored/);
+    assert.doesNotMatch(components![0].detail, /would have scored \d/);
   });
 });
