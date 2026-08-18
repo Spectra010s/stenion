@@ -147,24 +147,29 @@ export function Nav() {
                     {link.label}
                   </Link>
                 ))}
-                <a
-                  href={GITHUB_URL}
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={() => setOpen(false)}
-                  className="flex items-center gap-2 rounded-md px-3 py-3 text-muted transition-colors hover:bg-surface-2 hover:text-ink"
-                >
-                  <Github className="h-4 w-4" />
-                  GitHub
-                </a>
+                {/* The two icon controls share one row below the links, the same
+                    pairing as the desktop bar — the links are the menu, these
+                    are the utilities. The theme toggle has to live here at all
+                    because the desktop nav is hidden below md, which would
+                    otherwise leave the control unreachable on the viewport where
+                    most people meet the site. Its own menu closes on selection,
+                    but the sheet deliberately stays open so you can see the theme
+                    change against the page behind it.
 
-                {/* The toggle has to live here too — the desktop nav is hidden
-                    below md, so without this the control is unreachable on the
-                    viewport where most people meet the site. Its own menu closes
-                    on selection, but the sheet deliberately stays open so you can
-                    see the theme change against the page behind it. */}
+                    Pushed to opposite edges: they're two unrelated utilities,
+                    not a group, and the split keeps the toggle at the right edge
+                    where its right-pinned menu opens on-screen. */}
                 <div className="mt-1 flex items-center justify-between border-t border-line-soft px-3 pt-3">
-                  <span className="text-xs uppercase tracking-wider text-faint">Theme</span>
+                  <a
+                    href={GITHUB_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label="Stenion on GitHub"
+                    onClick={() => setOpen(false)}
+                    className="grid h-9 w-9 place-items-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-ink"
+                  >
+                    <Github className="h-4 w-4" />
+                  </a>
                   <ThemeToggle />
                 </div>
               </div>

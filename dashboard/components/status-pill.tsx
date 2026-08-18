@@ -1,12 +1,17 @@
-import { CircleCheck, CircleSlash, TriangleAlert } from 'lucide-react';
+import { CircleSlash, RefreshCwOff } from 'lucide-react';
 import { cn } from '../app/lib/cn';
-import { stalenessLabel } from '../app/lib/format';
+import { freshness, freshnessPillClass } from '../app/lib/format';
 import type { RunStatus } from '../app/lib/contract';
 
 /**
  * Freshness indicator. The displayed score is always the latest *ok* run; this
  * pill surfaces whether the newest run of any status succeeded, so a stale
  * number is never presented as current without a flag.
+ *
+ * Colour comes from `freshnessPillClass`, NOT from the score bands — read the
+ * note there before changing it. The pill is a label, not an alert: "update
+ * failed" is a statement about our pipeline, and it must not read as a verdict
+ * on the protocol.
  */
 export function StatusPill({
   lastRunStatus,
@@ -17,36 +22,52 @@ export function StatusPill({
   hasScore: boolean;
   className?: string;
 }) {
-  const { text, tone } = stalenessLabel(lastRunStatus, hasScore);
-
-  // Border and fill use the base band; the LABEL uses `*-ink`. On dark the two
-  // are the same value, but on light the /10 tint darkens the ground under
-  // already-dark text and the base band drops to ~4.1:1 — under AA. See the
-  // `*-ink` note in globals.css before simplifying this back to one token.
-  const styles =
-    tone === 'ok'
-      ? 'border-safe/25 bg-safe/10 text-safe-ink'
-      : tone === 'warn'
-        ? 'border-danger/25 bg-danger/10 text-danger-ink'
-        : 'border-line bg-surface-2 text-faint';
-
-  const Icon = tone === 'ok' ? CircleCheck : tone === 'warn' ? TriangleAlert : CircleSlash;
+  const { label, tone } = freshness(lastRunStatus, hasScore);
 
   return (
     <span
       className={cn(
         'inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-medium',
-        styles,
+        freshnessPillClass(tone),
         className,
       )}
     >
-      {tone === 'ok' && (
+      {tone === 'live' && (
         <span className="relative flex h-1.5 w-1.5">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-safe opacity-60" />
+          {/* The ping is the one piece of motion here; a reader who asked for
+              none gets the same dot, static, rather than a different layout. */}
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-safe opacity-60 motion-reduce:animate-none" />
           <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-safe" />
         </span>
       )}
-      {tone !== 'ok' && <Icon className="h-3.5 w-3.5" strokeWidth={2} />}
+      {tone === 'stale' && <RefreshCwOff className="h-3.5 w-3.5" strokeWidth={2} />}
+      {tone === 'unscored' && <CircleSlash className="h-3.5 w-3.5" strokeWidth={2} />}
+      {label}
+    </span>
+  );
+}
+
+/**
+ * The full sentence behind the pill, revealed on hover or on keyboard focus of
+ * an enclosing `group`.
+ *
+ * It is NOT a focusable trigger of its own on purpose: on the registry the
+ * group is the row's `<Link>`, and a focusable element nested inside an anchor
+ * is invalid HTML. Tying the reveal to the row instead means tabbing to the row
+ * shows it, which is the keyboard equivalent of hovering it.
+ *
+ * The text is always in the DOM (only its opacity changes), so assistive tech
+ * reads it as part of the row regardless of hover.
+ */
+export function FreshnessTooltip({ text, className }: { text: string; className?: string }) {
+  return (
+    <span
+      role="note"
+      className={cn(
+        'pointer-events-none absolute left-0 top-full z-20 mt-2 w-64 rounded-lg border border-line bg-surface p-3 text-left text-xs font-normal leading-relaxed text-muted opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none',
+        className,
+      )}
+    >
       {text}
     </span>
   );

@@ -165,6 +165,14 @@ scoring; readers only shape stored rows.
 scored); the newest run of _any_ status is surfaced separately as `lastRunAt`/`lastRunStatus`. A
 registry that's honest about freshness beats one with holes on a failed cycle.
 
+That honesty has to survive the trip to the screen, so the UI never leaves a failed run as nothing
+but an older timestamp. `dashboard/app/lib/format.ts`'s `freshness()` turns the pair into a tone, a
+short label, and a full explanation; the registry row carries an accent rule plus a pill and caption,
+and the protocol page carries a notice with both timestamps. **Freshness never borrows the score
+bands** — `safe`/`warn`/`danger` mean risk level, so a stale marker in amber or red would report a
+pipeline fault as a verdict on the protocol. `freshnessPillClass` uses the accent and the neutrals
+instead, and `format.test.ts` asserts that mechanically rather than leaving it to review attention.
+
 ## Deploy architecture
 
 **One Vercel project = the `dashboard`.** The indexer and the standalone API are not deployed as
@@ -258,6 +266,10 @@ The worked examples:
   adapter and an in-memory `Store`. The contract is that an adapter throws, the indexer records a
   failed run and continues; as of 2026-08-16 `risk_scores` held 1,683 rows and **zero** failed ones,
   so nothing about this path is evidenced by it having run in production.
+- **`dashboard/app/lib/format.test.ts`** — the freshness descriptor and its colour mapping, on the
+  same footing as the score-series tests below and for the same reason: no run has ever failed, so
+  every string a reader would see on a failed run exists only here. One assertion is a rule rather
+  than a behaviour — that no fault state is dressed in a score-band colour.
 - **`dashboard/app/lib/score-series.test.ts`** — the score-history series builder. As of
   2026-08-14 `risk_scores` held 527 rows and not one failed run, so the failed-run path had to be
   proven against fixtures rather than by looking at the page.

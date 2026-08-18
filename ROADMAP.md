@@ -25,6 +25,12 @@ commitment — priorities shift as protocols launch and as the project finds fun
   real time axis and a fixed 0–100 axis, and the line **breaks** rather than being drawn through
   anything unknown: a failed run, an indexing gap, or a methodology change. Hand-rolled SVG, no
   charting dependency.
+- **Freshness, shown as its own thing.** When the newest indexer run failed, the registry row and
+  the protocol page say so — an accent-toned marker, a plain-English label, and the full sentence on
+  hover or focus: the score is the last one we computed successfully, and the latest attempt to
+  refresh it failed. Deliberately **not** in the score-band colours: amber or red there would say
+  "this protocol is dangerous" when it means "our data is old", so freshness and risk stay two
+  separate vocabularies.
 - **Protocol identity — marks and verification links.** Each protocol carries a logo, the contract
   its score is derived from, and its own site/docs, all in adapter metadata rather than a frontend
   lookup table. Marks are self-hosted (never hotlinked), render in a fixed tile that works in both
