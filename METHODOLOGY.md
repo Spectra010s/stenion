@@ -120,7 +120,7 @@ A factor may publish a **`components`** breakdown — the sub-signals behind its
 Components with a numeric `value` are what the factor was computed from; components with
 a `null` value are **disclosures**: real, readable on-chain quantities we publish but
 deliberately do not grade, because scoring them would invent comparability the data does
-not support (see §2c). A null component is never missing data.
+not support (see §2c and §2d). A null component is never missing data.
 
 ### Methodology versions
 
@@ -289,6 +289,14 @@ the binding constraint is the single weakest reserve, and averaging would hide i
 are published in the factor's `components` array so the composite is never an opaque
 number.
 
+**Every reserve at the binding value is named, not one of them.** When several reserves tie
+on a sub-signal the `detail` lists all of them; when _all_ of them tie it says so rather than
+singling one out. This is reporting only — the published value is the same minimum either way
+— but it is load-bearing for reading a score honestly. Blend prices its whole pool from one
+aggregator publish round, so its reserves carry identical ages and **always** tie on freshness.
+Naming one of them would make an iteration-order artifact read as a diagnosis, and a reserve
+name that is really a tie-break is worse than no name at all.
+
 #### 2a. `priceFreshness` — how stale the worst price is
 
 **Raw on-chain data (Soroban RPC):** per reserve, the price's publish `timestamp` from
@@ -363,7 +371,26 @@ disclosed. (Whether such a peg _holds_ is a real risk — but it is a collateral
 question, not an oracle-robustness one, and inventing a number for it here would be the
 kind of fabrication ground rule 4 forbids.)
 
-#### 2c. Bound tightness is disclosed, never scored
+#### 2c. Per-feed price ages are disclosed, never scored
+
+`priceFreshness` grades the **worst** reserve, which is the right thing to score but hides the
+**spread** — and on real data the spread is the informative part. A factor value of 0 reads as
+a general condition of the oracle. "Two feeds have not updated in hours while two others update
+every few seconds, through one contract and one source" is a specific, checkable statement
+about which feeds are being maintained, and it is the one a depositor can act on.
+
+So every reserve's price age is published as a **disclosure-only component** (`priceAges`,
+`value: null`), ordered oldest-first, alongside a count of how many exceed **the protocol's own
+declared staleness limit** — Blend's aggregator `max_age`, K2's `price_staleness_threshold`.
+The count is therefore a statement about the protocol's own rules, not about a Stenion line. A
+reserve with no usable price at all sorts as the oldest rather than the freshest.
+
+It is not scored, because it would double-count: these are the same ages `priceFreshness` was
+computed from, republished so that the grading can be checked rather than taken on faith. It is
+published on healthy pools as well as unhealthy ones — a disclosure that appears only where
+trouble is expected gives a reader no baseline to compare against.
+
+#### 2d. Bound tightness is disclosed, never scored
 
 The raw bound is published as a **disclosure-only component** (`value: null`) — visible,
 never graded. Grading it would invent comparability the underlying data does not support:
@@ -388,6 +415,22 @@ the February 2026 YieldBlox incident — the test being whether it would have di
 the manipulated price from a legitimate one **at the time**, since a signal that looks
 sophisticated but would not have caught the actual attack is worse than none: it
 manufactures confidence.
+
+- **Filtering `oracleSafety` by reserve size, the way §4/§5 are filtered.**
+  **Rejected on principle, not on impact** — and the distinction it turns on is the reason
+  §4/§5 may be size-filtered while this factor may not:
+
+  > **§4 and §5 measure current state. §2 measures a vulnerability.** How drained a reserve is
+  > right now means little when the reserve holds $4, because the exposure is capped by what is
+  > actually in there. Whether a price can be trusted is not capped that way, because the
+  > attacker's move is to _grow_ a position against the mispriced asset. **A dust reserve with a
+  > stale price is an open door, not a small room.** Its balance today says nothing about what
+  > can be borrowed against it tomorrow.
+
+  And it would blind the factor to the exact scenario it exists for: a newly-listed thin asset
+  with a bad price is the shape the February 2026 YieldBlox incident ran through, which §2b
+  already names. A filter that removes thin assets from an oracle-trust factor removes the
+  attack it was built to catch.
 
 - **A Stenion-computed deviation from the oracle's price history** (calling Reflector's
   `prices(asset, N)` ourselves and comparing the latest price to a trailing mean).
@@ -618,7 +661,7 @@ data:
 
 **Excluded reserves are disclosed, never silently dropped.** Each affected factor publishes an
 `excludedReserves` component with a `null` value — the same "measured, shown, deliberately not
-graded" form as §2c — naming each excluded reserve, its supplied USD, its share of the pool,
+graded" form as §2c/§2d — naming each excluded reserve, its supplied USD, its share of the pool,
 and **the score it would have contributed**. A reader can therefore see the number the filter
 suppressed and disagree with the exclusion, instead of never learning of it.
 

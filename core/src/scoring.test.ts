@@ -29,10 +29,13 @@ import type { RiskFactor, RiskFactorMap } from './types.ts';
 import {
   MIN_RESERVE_POOL_SHARE,
   STALE_CEILING_SECONDS,
+  describePriceAges,
+  describeWorst,
   excludedComponent,
   freshnessWindow,
   scoreFactors,
   sizeReserves,
+  worstReserves,
 } from './scoring.ts';
 
 // ---------------------------------------------------------------------------
@@ -471,5 +474,176 @@ describe('excludedComponent — the disclosure for what the filter set aside', (
     );
     assert.match(components![0].detail, /would not have scored/);
     assert.doesNotMatch(components![0].detail, /would have scored \d/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// worstReserves / describeWorst — every reserve at the binding value, not one.
+//
+// WHY THESE EXIST: the previous selection kept a single reserve and, comparing
+// with `<=`, kept whichever came LAST in iteration order. That produced a
+// detail string that reads like a diagnosis but is really a tie-break, and it
+// caused a real misdiagnosis — issue #45 was filed claiming K2's oracleSafety
+// of 0 traced to a $4.00 dust reserve, when a reserve thirteen times larger was
+// equally dead and simply never named. The score was always right; only the
+// explanation was wrong. These pin the explanation.
+// ---------------------------------------------------------------------------
+
+describe('worstReserves — keeps every reserve at the binding score', () => {
+  const r = (asset: string, score: number, note = `note-${asset}`) => ({ asset, score, note });
+
+  it('reports the minimum, which is what the sub-signal publishes', () => {
+    assert.equal(worstReserves([r('CA', 90), r('CB', 12), r('CC', 40)]).score, 12);
+  });
+
+  it('keeps all reserves tied at the minimum, not the last one seen', () => {
+    // The old behaviour kept exactly one of these — CC, purely because it came
+    // last. Both are equally the binding constraint.
+    const w = worstReserves([r('CA', 90), r('CB', 0), r('CC', 0)]);
+    assert.deepEqual(
+      w.tied.map((t) => t.asset),
+      ['CB', 'CC'],
+    );
+    assert.equal(w.total, 3);
+  });
+
+  it('preserves input order in the tied set', () => {
+    // So the disclosure reads in reserve order rather than in whatever order a
+    // filter happened to produce.
+    const w = worstReserves([r('CA', 0), r('CB', 5), r('CC', 0), r('CD', 0)]);
+    assert.deepEqual(
+      w.tied.map((t) => t.asset),
+      ['CA', 'CC', 'CD'],
+    );
+  });
+
+  it('ties on the exact score, not the published rounded one', () => {
+    // 12.4 and 12.6 both publish as 12 and 13 respectively but are genuinely
+    // different scores; calling them tied would swap one misleading claim for
+    // another. Real ties sit at the clamped ends, where equality is exact.
+    const w = worstReserves([r('CA', 12.4), r('CB', 12.6)]);
+    assert.deepEqual(
+      w.tied.map((t) => t.asset),
+      ['CA'],
+    );
+  });
+
+  it('handles an empty set without inventing a reserve', () => {
+    const w = worstReserves([]);
+    assert.deepEqual(w, { score: 0, tied: [], total: 0 });
+    assert.equal(describeWorst(w), 'no reserves');
+  });
+});
+
+describe('describeWorst — a tie is described as a tie', () => {
+  const r = (asset: string, score: number, note: string) => ({ asset, score, note });
+
+  it('names the reserve when exactly one is worst', () => {
+    const text = describeWorst(worstReserves([r('CAAAAAAA', 0, '900s old'), r('CB', 90, 'fine')]));
+    assert.equal(text, 'worst reserve (CAAAAA…) 900s old');
+  });
+
+  it('does not say "worst" when every reserve scores the same', () => {
+    // Blend's permanent state on freshness: one aggregator publish round prices
+    // every reserve, so all ages are identical. Calling one of them the worst
+    // reads as a finding about that reserve when there is no finding at all.
+    const text = describeWorst(
+      worstReserves([r('CA', 100, '233s old'), r('CB', 100, '233s old'), r('CC', 100, '233s old')]),
+    );
+    assert.equal(text, 'all 3 reserves score the same — 233s old');
+    assert.doesNotMatch(text, /worst/);
+  });
+
+  it('says "worst" when only some tie, because the rest really are better', () => {
+    // K2's case, and the one that produced the misdiagnosis. BOTH dead feeds
+    // must appear — naming only the second is what made a $4.00 reserve look
+    // like the sole cause.
+    const text = describeWorst(
+      worstReserves([
+        r('CUSDCAAA', 0, '19599s old'),
+        r('CXLMAAAA', 96, '167s old'),
+        r('CPYUSDAA', 0, '39955s old'),
+        r('CSOLVAAA', 100, '17s old'),
+      ]),
+    );
+    assert.equal(
+      text,
+      '2 of 4 reserves tied at the worst score — CUSDCA… 19599s old; CPYUSD… 39955s old',
+    );
+  });
+
+  it('prints a shared note once and differing notes per reserve', () => {
+    const shared = describeWorst(worstReserves([r('CA', 0, 'same'), r('CB', 0, 'same')]));
+    assert.equal(shared, 'all 2 reserves score the same — same');
+
+    const differing = describeWorst(worstReserves([r('CA', 0, 'one'), r('CB', 0, 'two')]));
+    assert.match(differing, /CA… one; CB… two$/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// describePriceAges — the per-feed staleness disclosure.
+//
+// WHY IT EXISTS: `priceFreshness` grades the worst reserve, so a reader sees a
+// single number and cannot tell the SPREAD. "oracleSafety 0" reads as a general
+// condition of the oracle; "two feeds untouched for hours while two others
+// update every few seconds, through one contract and one source" is a specific
+// checkable claim about which feeds are maintained. Only the second is
+// actionable, and it was previously unreadable from anything published.
+// ---------------------------------------------------------------------------
+
+describe('describePriceAges — per-feed ages, disclosed not graded', () => {
+  const age = (feed: string | null, ageSeconds: number | null, asset = `C${feed}AAAAAA`) => ({
+    asset,
+    feed,
+    ageSeconds,
+  });
+
+  it('surfaces the spread that a single worst-reserve score hides', () => {
+    // K2's live shape. The point is that both ends are visible at once.
+    const text = describePriceAges(
+      [age('USDC', 21421), age('XLM', 177), age('PYUSD', 41777), age('SolvBTC', 27)],
+      3600,
+    );
+    assert.match(text, /PYUSD 41777s, USDC 21421s, XLM 177s, SolvBTC 27s/, 'oldest first');
+    assert.match(text, /2 of 4 past the protocol's own 3600s staleness limit \(USDC, PYUSD\)/);
+  });
+
+  it('orders oldest-first, because the stale end is the point', () => {
+    const text = describePriceAges([age('A', 1), age('B', 900), age('C', 30)], 3600);
+    assert.match(text, /B 900s, C 30s, A 1s/);
+  });
+
+  it('sorts an unusable price as the oldest, not the freshest', () => {
+    // No price at all is not fresher than a merely old one; ranking it by a
+    // missing number would put the worst case at the top of the list.
+    const text = describePriceAges([age('FRESH', 10), age('MISSING', null)], 3600);
+    assert.match(text, /MISSING no usable price, FRESH 10s/);
+    assert.match(text, /1 of 2 past/, 'an unusable price counts as stale');
+  });
+
+  it('says so plainly when every feed is inside the limit', () => {
+    // Blend's normal state. A disclosure that only appears when something is
+    // wrong gives a reader no healthy baseline to compare against.
+    const text = describePriceAges([age('X', 233), age('Y', 233)], 900);
+    assert.match(text, /all 2 within the protocol's own 900s staleness limit/);
+    assert.doesNotMatch(text, /past the protocol/);
+  });
+
+  it('counts against the protocol’s own limit, never a Stenion one', () => {
+    // The same ages under two different protocol-declared limits give different
+    // counts — the claim is "how many the protocol itself would call stale".
+    const ages = [age('A', 1000), age('B', 100)];
+    assert.match(describePriceAges(ages, 900), /1 of 2 past/);
+    assert.match(describePriceAges(ages, 3600), /all 2 within/);
+  });
+
+  it('falls back to the address when a protocol publishes no feed label', () => {
+    const text = describePriceAges([{ asset: 'CABCDEFGHIJ', feed: null, ageSeconds: 5 }], 900);
+    assert.match(text, /CABCDE… 5s/);
+  });
+
+  it('handles a pool with nothing to report', () => {
+    assert.equal(describePriceAges([], 3600), 'no reserves to report a price age for');
   });
 });

@@ -196,7 +196,7 @@ export interface ExcludedReserve extends ReserveSize {
  * Excluding a reserve from scoring is not the same as it not existing, so the
  * excluded set is published rather than silently dropped — as a `value: null`
  * component, the established form for "measured, shown, deliberately not graded"
- * (METHODOLOGY.md §2c). It names each reserve, its supplied USD, its share of
+ * (METHODOLOGY.md §2c/§2d). It names each reserve, its supplied USD, its share of
  * the pool, and crucially **the score it would have contributed**, so a reader
  * can see the number we suppressed and disagree with us about it.
  *
@@ -234,4 +234,162 @@ export function excludedComponent(
 /** Two decimal places under $1000, none above — enough to tell $3.00 from $36.56. */
 function formatUsd(value: number): string {
   return value >= 1000 ? Math.round(value).toLocaleString('en-US') : value.toFixed(2);
+}
+
+/** One reserve's result on a single sub-signal, before the worst is picked. */
+export interface ScoredReserve {
+  /** the reserve's asset contract address */
+  asset: string;
+  /** 0-100, higher = safer, same convention as everything else */
+  score: number;
+  /** what produced that score, e.g. "38694s old (fresh<30s, dead>3600s)" */
+  note: string;
+}
+
+/** The binding score on a sub-signal, and **every** reserve sitting at it. */
+export interface WorstReserves {
+  /** the minimum score across the reserves — what the sub-signal publishes */
+  score: number;
+  /** every reserve tied at `score`, in input order. Empty only when there were no reserves. */
+  tied: ScoredReserve[];
+  /** how many reserves were considered, so "2 of 4" can be said */
+  total: number;
+}
+
+/**
+ * Take the worst reserve on a sub-signal — and keep **all** of them when several
+ * tie, rather than one arbitrary winner.
+ *
+ * Worst-reserve selection is the house convention across factors: the binding
+ * constraint is the single weakest reserve, and averaging would hide it. What
+ * changed here is only the *reporting*, never the score — `score` is the same
+ * minimum it always was.
+ *
+ * **Why keeping the whole tied set matters.** The previous version kept one
+ * reserve, and because it compared with `<=`, the one it kept was whichever
+ * happened to come last in iteration order. That is not a diagnosis, but it
+ * reads exactly like one:
+ *
+ * - On Blend, all reserves share a single aggregator publish round, so their
+ *   ages are *identical* and they always tie. The reserve named across ~1,459
+ *   stored runs was therefore pure iteration order, carrying no information at
+ *   all while looking like a specific finding.
+ * - On K2 it caused a real misdiagnosis. With USDC and PYUSD both pinned at 0,
+ *   the detail named only PYUSD — a $4.00 dust reserve — which made
+ *   `oracleSafety` look like it hinged on a reserve too small to matter. It did
+ *   not: USDC, thirteen times larger, was equally dead. An issue was filed on
+ *   that wrong premise and had to be corrected from chain data.
+ *
+ * A name that is really a tie-break is worse than no name, so ties are now
+ * disclosed as ties.
+ *
+ * Ties are compared on the **exact** score, not a rounded one. Two reserves that
+ * round to the same published integer from genuinely different scores are not
+ * tied, and saying they are would trade one misleading claim for another. In
+ * practice the real ties sit at the clamped ends (0 and 100), where equality is
+ * exact.
+ */
+export function worstReserves(scored: readonly ScoredReserve[]): WorstReserves {
+  if (scored.length === 0) return { score: 0, tied: [], total: 0 };
+  let min = Number.POSITIVE_INFINITY;
+  for (const r of scored) if (r.score < min) min = r.score;
+  return { score: min, tied: scored.filter((r) => r.score === min), total: scored.length };
+}
+
+/**
+ * The human-readable phrase for a `worstReserves` result, shared so two adapters
+ * cannot describe the same situation two different ways.
+ *
+ * Shapes, because genuinely different things can be true:
+ *
+ * - one reserve is worst -> names it, as before
+ * - EVERY reserve ties -> "all N reserves score the same". Deliberately not
+ *   worded as "worst": when nothing is worse than anything, calling the shared
+ *   value the worst reads as a finding about one reserve, which is the exact
+ *   misreading this function exists to stop. Blend sits here permanently on
+ *   freshness, since one publish round prices every reserve.
+ * - SOME reserves tie -> "k of n tied at the worst score", where "worst" is
+ *   accurate because reserves outside the tie really are better.
+ *
+ * In each multi-reserve case the note is printed once if every tied reserve
+ * shares it (repeating one identical age three times is noise), and per-reserve
+ * otherwise — K2's two dead feeds have the same score and very different ages,
+ * and both numbers matter.
+ */
+export function describeWorst(worst: WorstReserves): string {
+  const { tied, total } = worst;
+  if (tied.length === 0) return 'no reserves';
+  if (tied.length === 1) return `worst reserve (${shortAsset(tied[0].asset)}) ${tied[0].note}`;
+
+  const uniform = tied.every((r) => r.note === tied[0].note);
+  const scope =
+    tied.length === total
+      ? `all ${total} reserves score the same`
+      : `${tied.length} of ${total} reserves tied at the worst score`;
+  return uniform
+    ? `${scope} — ${tied[0].note}`
+    : `${scope} — ${tied.map((r) => `${shortAsset(r.asset)} ${r.note}`).join('; ')}`;
+}
+
+/** First 6 characters of a contract address, the shared convention in detail strings. */
+function shortAsset(asset: string): string {
+  return `${asset.slice(0, 6)}\u2026`;
+}
+
+/** One reserve's price age, for the per-feed staleness disclosure. */
+export interface ReserveAge {
+  /** the reserve's asset contract address */
+  asset: string;
+  /**
+   * The protocol's own label for the upstream feed this asset is priced from —
+   * K2's `feedId` ("USDC"), Blend's aggregator `upstreamAsset` ("Other:XLM").
+   * Null when the protocol publishes no label; the address is used instead.
+   */
+  feed: string | null;
+  /** seconds since the price was published, or null when there is no usable price */
+  ageSeconds: number | null;
+}
+
+/**
+ * Per-feed price ages, published as a disclosure and never graded.
+ *
+ * `priceFreshness` grades the worst reserve, and its detail names every reserve
+ * tied at that worst value. Neither tells a reader what the SPREAD looks like —
+ * and the spread is the informative part. A factor value of 0 reads as a
+ * general condition of the oracle; "two feeds have not updated in hours while
+ * the other two update every few seconds, through one contract and one source"
+ * is a specific, checkable statement about which feeds are maintained. The
+ * second is what a depositor can act on, and it was previously unreadable from
+ * anything we publish.
+ *
+ * Disclosure, not a score (`value: null`, per METHODOLOGY.md §2c): these are the
+ * raw inputs `priceFreshness` was computed from, republished so the grading can
+ * be checked rather than taken on faith. Grading the spread separately would
+ * double-count the same staleness the factor already measures.
+ *
+ * Ordered oldest-first, because the disclosure exists to surface the stale end.
+ * `staleAfterSeconds` is the protocol's OWN declared limit, never a Stenion
+ * constant — the count it produces is "how many feeds the protocol itself would
+ * consider stale", which is a claim about the protocol's own rules.
+ */
+export function describePriceAges(ages: readonly ReserveAge[], staleAfterSeconds: number): string {
+  if (ages.length === 0) return 'no reserves to report a price age for';
+
+  const label = (a: ReserveAge) => a.feed ?? shortAsset(a.asset);
+  // Unpriced sorts oldest: a feed with no usable price at all is not fresher
+  // than one that is merely old.
+  const rank = (a: ReserveAge) => (a.ageSeconds === null ? Number.POSITIVE_INFINITY : a.ageSeconds);
+  const sorted = [...ages].sort((x, y) => rank(y) - rank(x));
+
+  const listed = sorted
+    .map((a) => `${label(a)} ${a.ageSeconds === null ? 'no usable price' : `${a.ageSeconds}s`}`)
+    .join(', ');
+  const stale = ages.filter((a) => a.ageSeconds === null || a.ageSeconds > staleAfterSeconds);
+
+  const summary =
+    stale.length === 0
+      ? `all ${ages.length} within the protocol's own ${staleAfterSeconds}s staleness limit`
+      : `${stale.length} of ${ages.length} past the protocol's own ${staleAfterSeconds}s staleness limit (${stale.map(label).join(', ')})`;
+
+  return `${listed} — ${summary}. Reported, not graded: priceFreshness already scores the worst of these.`;
 }

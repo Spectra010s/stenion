@@ -28,24 +28,25 @@ export const PROTOCOL_NOTES: Record<string, ProtocolNote[]> = {
     {
       title: "The price feed is older than K2's own staleness threshold in most observed runs",
       body: [
-        'Between 2026-08-11 18:16 and 2026-08-14 11:45 UTC, Stenion recorded 267 scored ' +
-          "runs against K2. In 243 of them — 91% — the worst-priced reserve's price was " +
-          'older than 3600 seconds, which is price_staleness_threshold: K2’s own ' +
-          'on-chain limit, not a Stenion constant. The oldest price observed in that ' +
-          'window was 43,147 seconds (11h 59m), within a minute of the per-asset max_age ' +
-          'of 43,200 seconds.',
+        'Between 2026-08-11 18:16 and 2026-08-18 15:55 UTC, Stenion recorded 1,469 scored ' +
+          'runs against K2. In 1,370 of them — 93% — oracleSafety was 0. The distribution ' +
+          'is close to all-or-nothing: 1,370 runs at 0 against 3 runs at 100, rather than ' +
+          'spread across the range. In every run of that window where the sub-signals ' +
+          'were recorded separately, the deviation-bound signal was 100 — so the zeroes ' +
+          'are price age, not a missing circuit breaker.',
+        'The threshold behind that is 3600 seconds: price_staleness_threshold, K2’s own ' +
+          'on-chain limit, not a Stenion constant. The oldest single price observed in ' +
+          'the window was 41,777 seconds (11h 36m).',
         'It is not a continuous outage. The feed refreshes to an age of a few hundred ' +
           'seconds, climbs back past the threshold over roughly an hour, and then sits ' +
           'there for hours before refreshing again. That cycle is what makes the overall ' +
           'score oscillate, and it is visible as a repeating sawtooth in the score ' +
           'history above — the oscillation is the price ageing out and being renewed, ' +
           'not the pool’s risk genuinely changing every few minutes.',
-        'The runs behind this were recorded during development, and that stored history ' +
-          'has since been discarded — Stenion’s score history now starts fresh under the ' +
-          'published methodology, so these counts cannot be re-derived from the API. What ' +
-          'is stated here is an observation that was made, not a claim about rows you can ' +
-          'still fetch. The condition itself is checkable on-chain today by anyone, by the ' +
-          'steps below.',
+        'These counts come from the live scored history the API serves, over the closed ' +
+          'window stated above — they are a snapshot of that window and do not update as ' +
+          'new runs land. The condition itself is checkable on-chain directly, by the ' +
+          'steps below, without taking our history on trust.',
         'What is not being claimed: the circuit breaker was scored 100 throughout, so ' +
           'the bound on a single-step price move is armed — this is purely about ' +
           'freshness. And a price past a staleness threshold does not by itself mean the ' +
@@ -66,6 +67,52 @@ export const PROTOCOL_NOTES: Record<string, ProtocolNote[]> = {
         'that oracle and compare each PriceData.timestamp against the current ledger ' +
         'close time. Read the thresholds from the same contract: get_oracle_config for ' +
         'price_staleness_threshold, and get_asset_config per asset for max_age.',
+    },
+    {
+      title: 'Individual price feeds go stale for hours while others update in seconds',
+      body: [
+        'All four of K2’s reserves are priced by the same oracle contract ' +
+          '(CCHRZE2K…) through the same batchAdapter source. Their prices do not age ' +
+          'together. In one reading on 2026-08-18, SolvBTC was 27 seconds old and XLM 177 ' +
+          'seconds old, while USDC was 21,421 seconds old (5h 57m) and PYUSD 41,777 ' +
+          'seconds old (11h 36m). Repeated readings minutes apart showed the same split, ' +
+          'with the two stale ages advancing in step with wall-clock time — meaning those ' +
+          'entries were not being refreshed at all during the observation, rather than ' +
+          'being sampled at an unlucky moment.',
+        'For scale against K2’s own limits: price_staleness_threshold is 3600 seconds, so ' +
+          'the USDC reading exceeded it roughly sixfold and the PYUSD reading elevenfold. ' +
+          'The per-asset max_age values are looser — 43,200 seconds for XLM and SolvBTC, ' +
+          '86,400 for USDC and PYUSD — and neither stale reading had reached those.',
+        'What this changes about the picture above: the staleness is not the whole oracle ' +
+          'going quiet and coming back. The oracle is demonstrably alive and serving some ' +
+          'assets within seconds while others sit untouched for hours, through one ' +
+          'contract and one source. Freshness here is a property of the individual feed ' +
+          'entry, not of the oracle as a whole.',
+        'USDC is the reading worth noting rather than PYUSD. PYUSD held about $4 of ' +
+          'supplied value at the time and USDC about $54 — both small in absolute terms, ' +
+          'but USDC is well above the size line Stenion uses elsewhere, so this is not a ' +
+          'question of an abandoned dust market. A lending protocol valuing a stablecoin ' +
+          'position off a six-hour-old reading is the observable condition.',
+        'What is not being claimed: nothing here says the protocol acted on a stale ' +
+          'price. K2’s own code may reject it and revert whatever operation depended on ' +
+          'it — that is the same limit noted above, and it applies equally here. What is ' +
+          'observable from outside is the age of the price the oracle serves. Nor is any ' +
+          'cause implied: an upstream feed pausing, a per-asset configuration, and a ' +
+          'deliberate choice all look identical from here.',
+        'Every reserve’s price age is now published on each run in the oracleSafety ' +
+          'factor’s priceAges component, alongside a count of how many exceed K2’s own ' +
+          'threshold. It is reported, not scored — the freshness score already grades the ' +
+          'worst of them, and grading the spread again would count the same staleness ' +
+          'twice.',
+      ],
+      verify:
+        'Call get_asset_prices_vec_fresh on CCHRZE2K…5BNOMQRMU for the four assets in ' +
+        'get_reserves_list on the router (CCTUJZLY…AWNXOJIV6J7) and compare each ' +
+        'PriceData.timestamp against the current ledger close time — read them together ' +
+        'in one call so the ages are directly comparable. Repeat a few minutes later: an ' +
+        'age that grows by the elapsed wall-clock time is an entry that is not being ' +
+        'refreshed. Read get_asset_config per asset for source and max_age, and ' +
+        'get_oracle_config for price_staleness_threshold.',
     },
     {
       title: 'The deployed price oracle is a superset of its audited version',

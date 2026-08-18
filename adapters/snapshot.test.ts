@@ -76,6 +76,19 @@ describe('Blend — frozen mainnet snapshot', () => {
     assert.equal(sub(factors.oracleSafety!, 'deviationTightness'), null);
   });
 
+  it('reports its reserves as the tie they actually are', async () => {
+    // All three captured reserves carry the SAME publish timestamp (1787055300)
+    // because one aggregator round prices the whole pool. On real data, then,
+    // Blend's freshness signal never has a distinguished worst reserve — and the
+    // detail must not imply otherwise, as it did for ~1,459 stored runs.
+    const stamps = new Set(blendMainnet.reserves.map((r) => r.price?.timestamp));
+    assert.equal(stamps.size, 1, 'fixture should capture one shared publish round');
+
+    const factors = await new BlendAdapter().computeRiskFactors(blendMainnet);
+    assert.match(factors.oracleSafety!.detail, /all 3 reserves score the same/);
+    assert.doesNotMatch(factors.oracleSafety!.detail, /worst reserve/);
+  });
+
   it('still exercises non-unit interest rates — the reason this fixture exists', async () => {
     // A guard on the fixture rather than on the adapter. If a regenerated
     // snapshot ever landed with every rate at exactly SCALAR_12, this file would
@@ -135,15 +148,25 @@ describe('Kinetic — frozen mainnet snapshot', () => {
     }
     // The suppressed numbers are exactly the ones this fixture used to publish.
     assert.match(
-      factors.liquiditySafety!.components![0].detail,
+      factors.liquiditySafety!.components!.find((c) => c.id === 'excludedReserves')!.detail,
       /would have scored 34/,
       'the old liquiditySafety value must still be readable',
     );
     assert.match(
-      factors.utilizationSafety!.components![0].detail,
+      factors.utilizationSafety!.components!.find((c) => c.id === 'excludedReserves')!.detail,
       /would have scored 18/,
       'the old utilizationSafety value must still be readable',
     );
+  });
+
+  it('names the one genuinely worst reserve when there is no tie', async () => {
+    // At capture, XLM — 94% of the pool — was the sole reserve at freshness 0,
+    // with PYUSD at 31. This is the fixture that disproves #45's premise that
+    // oracleSafety traced to the dust reserve: the dust reserve was not even the
+    // worst one here.
+    const factors = await new KineticAdapter().computeRiskFactors(kineticMainnet);
+    assert.match(factors.oracleSafety!.detail, /^worst reserve \(CAS3J7…\)/);
+    assert.doesNotMatch(factors.oracleSafety!.detail, /CCCRWH/);
   });
 
   it('scores oracleSafety 0 on a genuinely stale price, with the breaker armed', async () => {

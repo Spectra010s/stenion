@@ -281,7 +281,8 @@ describe('oracleSafety — base assets are excluded, not scored 0 (§2b)', () =>
         reserves: [reserve({ asset: BASE }), reserve({ asset: 'CGRADED…' })],
       }),
     );
-    assert.match(f.oracleSafety!.components![2].detail, /1 base asset\(s\) excluded/);
+    const tightness = f.oracleSafety!.components!.find((c) => c.id === 'deviationTightness')!;
+    assert.match(tightness.detail, /1 base asset\(s\) excluded/);
   });
 
   it('scores 0 when every reserve is a base asset — nothing left to grade', async () => {
@@ -291,7 +292,7 @@ describe('oracleSafety — base assets are excluded, not scored 0 (§2b)', () =>
   });
 });
 
-describe('oracleSafety — bound tightness is disclosed, never scored (§2c)', () => {
+describe('oracleSafety — bound tightness is disclosed, never scored (§2d)', () => {
   it('publishes the raw max_dev as a null-valued disclosure component', async () => {
     // A null component value means "measured, shown, deliberately not graded" —
     // never missing data. Grading tightness would invent comparability between
@@ -577,7 +578,8 @@ describe('minimum-size filter — leg A, the pool’s own min_collateral (§4/§
     // side by side with the test above, this is exactly what leg A buys.
     const f = await factors(lopsided(0));
     assert.equal(f.liquiditySafety!.value, 100);
-    assert.match(f.liquiditySafety!.components![0].detail, /CSMALL/);
+    const excluded = f.liquiditySafety!.components!.find((c) => c.id === 'excludedReserves')!;
+    assert.match(excluded.detail, /CSMALL/);
   });
 });
 
@@ -683,5 +685,71 @@ describe('minimum-size filter — excluding everything still cannot publish 100'
     // other property of a 201-reserve fixture.
     const f = await factors(starved(0.001));
     assert.equal(f.liquiditySafety!.value, 100);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// oracleSafety reporting: Blend's reserves are priced in one publish round, so
+// their ages are identical and they ALWAYS tie on freshness. Naming one of them
+// "worst" was pure iteration order across the whole stored history — a string
+// that reads as a finding while carrying no information. See #45.
+// ---------------------------------------------------------------------------
+
+describe('oracleSafety — identical reserves are reported as identical', () => {
+  it('does not single out a reserve when every one scores the same', async () => {
+    const f = await factors(
+      makeRaw({
+        reserves: [
+          reserve({ asset: 'CAAAAAAAA', ageSeconds: 233 }),
+          reserve({ asset: 'CBBBBBBBB', ageSeconds: 233 }),
+          reserve({ asset: 'CCCCCCCCC', ageSeconds: 233 }),
+        ],
+      }),
+    );
+    const freshness = f.oracleSafety!.components!.find((c) => c.id === 'priceFreshness')!;
+    assert.match(freshness.detail, /all 3 reserves score the same/);
+    assert.doesNotMatch(freshness.detail, /worst reserve/);
+  });
+
+  it('still isolates a genuinely worse reserve', async () => {
+    // The all-tie wording must not swallow a real outlier.
+    const f = await factors(
+      makeRaw({
+        reserves: [
+          reserve({ asset: 'CFRESHAAA', ageSeconds: 100 }),
+          reserve({ asset: 'CFRESHBBB', ageSeconds: 100 }),
+          reserve({ asset: 'CSTALEAAA', ageSeconds: 880 }),
+        ],
+      }),
+    );
+    const freshness = f.oracleSafety!.components!.find((c) => c.id === 'priceFreshness')!;
+    assert.match(freshness.detail, /^worst reserve \(CSTALE…\)/);
+  });
+});
+
+describe('oracleSafety — per-feed price ages are disclosed (#47/#48)', () => {
+  it('publishes the disclosure on a healthy pool too, not only a stale one', async () => {
+    // Blend prices every reserve in one aggregator round, so this is normally
+    // unremarkable. Publishing it anyway is the point: a disclosure that only
+    // appears where trouble is expected gives a reader no healthy baseline.
+    const f = await factors(
+      makeRaw({
+        reserves: [
+          reserve({ asset: 'CAAAAAAAA', ageSeconds: 233 }),
+          reserve({ asset: 'CBBBBBBBB', ageSeconds: 233 }),
+        ],
+      }),
+    );
+    const ages = f.oracleSafety!.components!.find((c) => c.id === 'priceAges')!;
+    assert.equal(ages.value, null);
+    assert.match(ages.detail, /all 2 within the protocol's own 900s staleness limit/);
+  });
+
+  it('reports ages against the aggregator’s own max_age', async () => {
+    const f = await factors(
+      makeRaw({ maxAge: 900, reserves: [reserve({ asset: 'CSTALEAAA', ageSeconds: 1_200 })] }),
+    );
+    const ages = f.oracleSafety!.components!.find((c) => c.id === 'priceAges')!;
+    assert.match(ages.detail, /1 of 1 past the protocol's own 900s staleness limit/);
   });
 });

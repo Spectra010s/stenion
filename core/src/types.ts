@@ -132,7 +132,7 @@ export enum RiskFactorType {
  * - **Disclosure** (`value` null): a real, readable on-chain quantity we
  *   publish but deliberately do *not* score, because scoring it would invent
  *   comparability the underlying data doesn't support. `detail` carries the raw
- *   figure. See METHODOLOGY.md §2 on why deviation-bound *tightness* is
+ *   figure. See METHODOLOGY.md §2d on why deviation-bound *tightness* is
  *   disclosed rather than graded.
  *
  * A null `value` is therefore never "missing data" — it means "measured, shown,

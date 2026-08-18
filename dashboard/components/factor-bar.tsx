@@ -80,7 +80,7 @@ export function FactorCard({
 }
 
 /**
- * A factor's sub-signals, split the way METHODOLOGY.md §2c splits them: the
+ * A factor's sub-signals, split the way METHODOLOGY.md §2c/§2d split them: the
  * scored components the value was computed from, then the disclosures
  * (`value: null`) that are published but deliberately not graded. Rendering
  * them as one flat list made a disclosure look like a component that had simply
