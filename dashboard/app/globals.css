@@ -278,6 +278,27 @@
 
 html {
   scroll-behavior: smooth;
+
+  /* Reserve the scrollbar's gutter so a page that scrolls and a page that
+     doesn't lay out at the same width.
+
+     Without this, every `mx-auto` container on the site — including the nav's
+     inner max-w-6xl — shifts sideways by half the scrollbar width whenever the
+     scrollbar appears or disappears. /methodology renders the whole of
+     METHODOLOGY.md and always scrolls; shorter routes may not, so navigating
+     between them visibly moves the navbar.
+
+     It also covers a second shift: the mobile menu sets body.overflow =
+     'hidden' while open (see nav.tsx), which propagates to the viewport and
+     removes the scrollbar. The gutter is reserved either way, so the page
+     underneath no longer jumps.
+
+     Costs nothing where scrollbars overlay the content instead of taking
+     layout space (macOS, iOS, Android): `scrollbar-gutter` applies only to
+     classic scrollbars, so those platforms are unaffected. Where it does
+     apply, the strip is invisible — html has no background of its own, so the
+     canvas paints body's background across it. */
+  scrollbar-gutter: stable;
 }
 
 body {

@@ -326,3 +326,92 @@ describe('toLeaderboardEntry', () => {
     assert.equal(entry.lastRunStatus, 'failed');
   });
 });
+
+// ---------------------------------------------------------------------------
+// The shape an EMPTY `risk_scores` table produces.
+//
+// WHY THIS EXISTS: both read queries LEFT JOIN LATERAL onto `risk_scores`, so
+// wiping that table does not remove protocols from the API — it returns every
+// protocol with every score-derived column null, including `last_run_at` and
+// `last_run_status`, which the never-scored tests above still populate. That is
+// a distinct row shape, it is what the site serves for the whole window between
+// a history wipe and the next indexer run, and it is otherwise only reachable in
+// production for a few minutes at a time. Pin it here rather than discover it
+// there.
+// ---------------------------------------------------------------------------
+
+describe('an empty risk_scores table', () => {
+  /** Exactly what the LATERAL joins yield when the table has no rows at all. */
+  const wipedDetail = (): ProtocolDetailRow =>
+    detailRow({
+      safety_score: null,
+      computed_at: null,
+      factors: null,
+      methodology_version: null,
+      last_run_at: null,
+      last_run_status: null,
+    });
+
+  it('still returns the protocol, rather than dropping or 404ing it', () => {
+    // The API 404s on an unknown id. A known protocol with no scores is not
+    // unknown, and must not become so — the detail route reads `!detail`, which
+    // is only null when the `protocols` row itself is missing.
+    const detail = toProtocolDetail(wipedDetail(), []);
+    assert.equal(detail.id, 'blend');
+    assert.equal(detail.name, 'Blend');
+    assert.equal(detail.adapter, 'BlendAdapter');
+  });
+
+  it('nulls every score-derived field and empties the history', () => {
+    const detail = toProtocolDetail(wipedDetail(), []);
+    assert.deepEqual(
+      {
+        safetyScore: detail.safetyScore,
+        computedAt: detail.computedAt,
+        factors: detail.factors,
+        methodologyVersion: detail.methodologyVersion,
+        lastRunAt: detail.lastRunAt,
+        lastRunStatus: detail.lastRunStatus,
+        history: detail.history,
+      },
+      {
+        safetyScore: null,
+        computedAt: null,
+        factors: null,
+        methodologyVersion: null,
+        lastRunAt: null,
+        lastRunStatus: null,
+        history: [],
+      },
+    );
+  });
+
+  it('keeps the verification links a reader needs precisely when there is no score', () => {
+    // With no number to show, the contract link is the only thing on the page
+    // that still lets someone check the protocol themselves.
+    const detail = toProtocolDetail(wipedDetail(), []);
+    assert.equal(detail.contractId, 'CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD');
+    assert.equal(detail.site, 'https://www.blend.capital');
+    assert.equal(detail.logo, '/assets/protocols/blend.svg');
+  });
+
+  it('produces a leaderboard entry the UI reads as "never run"', () => {
+    // `lastRunStatus: null` is what drives freshness() to the "never run"
+    // branch, and `safetyScore: null` is what makes ScoreRing render an em dash
+    // instead of a zero. A wiped table must not look like a pool that scored 0.
+    const entry = toLeaderboardEntry({
+      id: 'blend',
+      name: 'Blend',
+      chain: 'stellar',
+      logo: '/assets/protocols/blend.svg',
+      safety_score: null,
+      computed_at: null,
+      last_run_at: null,
+      last_run_status: null,
+    });
+    assert.equal(entry.safetyScore, null, 'null, never 0 — 0 means "scored, and unsafe"');
+    assert.equal(entry.lastRunStatus, null);
+    assert.equal(entry.computedAt, null);
+    assert.equal(entry.name, 'Blend');
+  });
+});
