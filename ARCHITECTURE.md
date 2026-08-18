@@ -90,7 +90,12 @@ on-chain inputs, so an old row genuinely cannot be recomputed under new rules. T
 surfaced on the protocol detail and on each history point so the dashboard marks the break
 rather than rendering an unexplained step change. Migrations that add such a column must stay
 writable by the _currently deployed_ indexer: `main` keeps running the old code until it's
-promoted, and both share one Neon database.
+promoted, and both share one Neon database. That is why 0002 shipped the column with a
+`DEFAULT 1` and enforced only the `ok` half of its CHECK; 0004 drops the default and tightens the
+CHECK to the full union, now that the deployed indexer names the column explicitly on both arms.
+The column is therefore required rather than defaulted: a future writer that bumps
+`METHODOLOGY_VERSION` and forgets it fails loudly instead of being silently stamped with the old
+version — a mis-stamp that could never be repaired, since the raw inputs are not stored.
 
 Migrations are raw `.sql` files plus a ~40-line runner (`db/src/migrate.ts`) — no ORM.
 
