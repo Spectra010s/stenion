@@ -131,8 +131,8 @@ export function MarkAttribution({ className }: { className?: string }) {
   return (
     <p className={cn('text-xs leading-relaxed text-faint', className)}>
       Protocol names, logos and trademarks belong to their respective owners and are shown for
-      identification only. Their presence here — and any link to a protocol&apos;s own site or
-      documentation — does not imply endorsement, partnership, or any relationship with Stenion, in
+      identification only. Their presence here and any link to a protocol&apos;s own site or
+      documentation does not imply endorsement, partnership, or any relationship with Stenion, in
       either direction.
     </p>
   );

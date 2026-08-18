@@ -2,8 +2,9 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowUpRight, ServerCrash, ShieldCheck } from 'lucide-react';
 import { getProtocols, type LeaderboardEntry } from '../lib/api';
-import { bandColor, bandTextClass, formatTimestamp, scoreBand } from '../lib/format';
-import { StatusPill } from '../../components/status-pill';
+import { bandColor, bandTextClass, formatTimestamp, freshness, scoreBand } from '../lib/format';
+import { cn } from '../lib/cn';
+import { FreshnessTooltip, StatusPill } from '../../components/status-pill';
 import { MarkAttribution, ProtocolLogo } from '../../components/protocol-logo';
 import { Reveal, RevealGroup, RevealItem } from '../../components/reveal';
 
@@ -47,7 +48,7 @@ export default async function RegistryPage() {
       ) : (
         <Reveal delay={0.05} className="mt-10">
           {/* header row (desktop) */}
-          <div className="hidden grid-cols-[3rem_1fr_8rem_10rem_9rem] gap-4 border-b border-line px-4 pb-3 text-xs uppercase tracking-wider text-faint md:grid">
+          <div className="hidden grid-cols-[3rem_1fr_8rem_10rem_11rem] gap-4 border-b border-line px-4 pb-3 text-xs uppercase tracking-wider text-faint md:grid">
             <span>#</span>
             <span>Protocol</span>
             <span>Chain</span>
@@ -73,11 +74,20 @@ export default async function RegistryPage() {
 function ProtocolRow({ entry, rank }: { entry: LeaderboardEntry; rank: number }) {
   const band = scoreBand(entry.safetyScore);
   const pct = entry.safetyScore ?? 0;
+  const fresh = freshness(entry.lastRunStatus, entry.safetyScore !== null);
+  // A failed last run has to be visible while SCANNING, not only on the row you
+  // happen to read: the row itself carries an accent rule and a faint accent
+  // wash, so the exception is findable without comparing timestamps. Accent,
+  // never a band colour — see freshnessPillClass.
+  const stale = fresh.tone === 'stale';
 
   return (
     <Link
       href={`/protocol/${entry.id}`}
-      className="group grid grid-cols-1 gap-3 px-4 py-5 transition-colors hover:bg-surface/50 md:grid-cols-[3rem_1fr_8rem_10rem_9rem] md:items-center md:gap-4"
+      className={cn(
+        'group grid grid-cols-1 gap-3 px-4 py-5 transition-colors hover:bg-surface/50 md:grid-cols-[3rem_1fr_8rem_10rem_11rem] md:items-center md:gap-4',
+        stale && 'bg-accent/5 shadow-[inset_3px_0_0_0_var(--color-accent)] hover:bg-accent/9',
+      )}
     >
       <div className="tnum hidden text-sm text-faint md:block">{String(rank).padStart(2, '0')}</div>
 
@@ -86,10 +96,20 @@ function ProtocolRow({ entry, rank }: { entry: LeaderboardEntry; rank: number })
           {String(rank).padStart(2, '0')}
         </span>
         {/* Mark first, then the name as text — the logo is an aid to scanning,
-            never the identifier. A row stays fully readable with images off. */}
-        <ProtocolLogo name={entry.name} logo={entry.logo} size={36} className="mr-1" />
+            never the identifier. A row stays fully readable with images off.
+
+            The tilt and the arrow's nudge are `motion-safe:` rather than plain
+            hover states: they're decoration, so under prefers-reduced-motion the
+            row still highlights and the arrow still recolours, with nothing
+            moving. */}
+        <ProtocolLogo
+          name={entry.name}
+          logo={entry.logo}
+          size={36}
+          className="mr-1 transition-transform duration-200 ease-out motion-safe:group-hover:-rotate-6"
+        />
         <span className="font-display text-lg font-semibold text-ink">{entry.name}</span>
-        <ArrowUpRight className="h-4 w-4 text-faint transition-colors group-hover:text-accent-ink" />
+        <ArrowUpRight className="h-4 w-4 text-faint transition duration-200 ease-out group-hover:text-accent-ink motion-safe:group-hover:translate-x-0.5 motion-safe:group-hover:-translate-y-0.5" />
       </div>
 
       <div className="text-sm text-muted">
@@ -112,9 +132,19 @@ function ProtocolRow({ entry, rank }: { entry: LeaderboardEntry; rank: number })
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
+      {/* `relative` anchors the tooltip; the tooltip itself reveals on hover or
+          keyboard focus of the row (this whole cell's `group` is the <Link>). */}
+      <div className="relative flex flex-wrap items-center gap-x-2 gap-y-1">
         <StatusPill lastRunStatus={entry.lastRunStatus} hasScore={entry.safetyScore !== null} />
+        {/* The always-visible half of the explanation. A tooltip alone would
+            leave a touch user with nothing but the word "failed". */}
+        {stale && (
+          <span className="w-full text-xs leading-snug text-muted">
+            {entry.safetyScore !== null ? 'showing last good score' : 'no score to show'}
+          </span>
+        )}
         <span className="text-xs text-faint md:hidden">{formatTimestamp(entry.lastRunAt)}</span>
+        {stale && <FreshnessTooltip text={fresh.explanation} />}
       </div>
     </Link>
   );

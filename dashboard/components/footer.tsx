@@ -11,7 +11,7 @@ export function Footer() {
             <div className="font-display text-base font-semibold text-ink">Stenion</div>
             <p className="mt-2 text-sm leading-relaxed text-muted">
               Continuous, on-chain-derived risk intelligence for Stellar / Soroban DeFi. The score
-              is public, free, and payment-blind — always.
+              is public, free, and payment-blind always.
             </p>
           </div>
 

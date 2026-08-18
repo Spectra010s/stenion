@@ -7,6 +7,7 @@ import {
   BookText,
   ExternalLink,
   Globe,
+  RefreshCwOff,
   Search,
 } from 'lucide-react';
 import { notesFor, type ProtocolNote } from '../../lib/protocol-notes';
@@ -18,7 +19,7 @@ import {
   type RiskFactorKey,
   type RiskFactorMap,
 } from '../../lib/api';
-import { formatTimestamp } from '../../lib/format';
+import { formatTimestamp, freshness } from '../../lib/format';
 import { contractExplorerUrl, shortenContractId } from '../../lib/explorer';
 import { MarkAttribution, ProtocolLogo } from '../../../components/protocol-logo';
 import { ScoreRing } from '../../../components/score-ring';
@@ -66,6 +67,8 @@ export default async function ProtocolDetailPage({ params }: { params: Promise<{
       </Reveal>
 
       <Hero detail={detail} />
+
+      <FreshnessNotice detail={detail} />
 
       <ExternalRefs detail={detail} />
 
@@ -226,6 +229,46 @@ function Hero({ detail }: { detail: ProtocolDetail }) {
           </div>
           <p className="mt-1.5 text-xs text-faint">
             Last run {formatTimestamp(detail.lastRunAt)} · updated on every indexer cycle
+          </p>
+        </div>
+      </div>
+    </Reveal>
+  );
+}
+
+/**
+ * The failed-last-run explanation, in full, directly under the hero.
+ *
+ * The registry gets a compressed version of this (pill + one line + tooltip);
+ * a detail page has room to say the whole thing, so it does — including both
+ * timestamps, which is what lets a reader see HOW old the number is rather
+ * than just that it's old.
+ *
+ * Accent, not a band colour: this panel is about our pipeline, and a red or
+ * amber panel on a protocol page would read as a risk verdict. It renders
+ * nothing when the last run succeeded — a page that says "data is current" on
+ * every visit trains people to stop reading it.
+ */
+function FreshnessNotice({ detail }: { detail: ProtocolDetail }) {
+  const fresh = freshness(detail.lastRunStatus, detail.safetyScore !== null);
+  if (fresh.tone !== 'stale') return null;
+
+  return (
+    <Reveal delay={0.08} className="mt-4">
+      <div className="flex items-start gap-3 rounded-xl border border-accent/40 bg-accent/5 p-5">
+        <RefreshCwOff className="mt-0.5 h-4 w-4 shrink-0 text-accent-ink" strokeWidth={2} />
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold text-ink">
+            {detail.safetyScore !== null
+              ? 'This score has not refreshed — our last update attempt failed'
+              : 'No score to show — our last scoring attempt failed'}
+          </h2>
+          <p className="mt-1.5 text-sm leading-relaxed text-muted">{fresh.explanation}</p>
+          <p className="mt-2 text-xs leading-relaxed text-faint">
+            {detail.computedAt
+              ? `Last successful score ${formatTimestamp(detail.computedAt)} · last attempt ${formatTimestamp(detail.lastRunAt)}`
+              : `Last attempt ${formatTimestamp(detail.lastRunAt)}`}
+            . The failure itself is in Recent runs below.
           </p>
         </div>
       </div>

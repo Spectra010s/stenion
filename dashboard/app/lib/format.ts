@@ -67,22 +67,85 @@ export function formatUtcRange(startIso: string, endIso: string): string {
 }
 
 /**
- * A staleness label for the last run. The displayed score is always the latest
- * *ok* run, but if the newest run of any status failed, that's worth flagging —
- * the number on screen may be older than the last attempt.
+ * Freshness — how current the number on screen is. Deliberately a SEPARATE
+ * vocabulary from the score bands below.
+ *
+ * The displayed score is always the latest *ok* run; `lastRunAt`/`lastRunStatus`
+ * describe the newest run of any status (see the staleness model in
+ * ARCHITECTURE.md). When the newest run failed, the score on screen is the last
+ * one we computed successfully — an age problem in OUR pipeline, not a risk
+ * finding about the protocol. `explanation` exists so the UI never has to make
+ * the reader infer that distinction from the word "stale".
+ *
+ * Tone names are `live`/`stale`/`unscored` rather than ok/warn/none so they
+ * can't be mistaken for — or quietly wired to — the risk bands.
  */
-export function stalenessLabel(
-  lastRunStatus: RunStatus | null,
-  hasScore: boolean,
-): { text: string; tone: 'ok' | 'warn' | 'none' } {
-  if (lastRunStatus === null) return { text: 'never run', tone: 'none' };
-  if (lastRunStatus === 'failed') {
+export type FreshnessTone = 'live' | 'stale' | 'unscored';
+
+export interface Freshness {
+  /** Short pill text. Must stay short enough for the registry's freshness column. */
+  label: string;
+  tone: FreshnessTone;
+  /** Plain-English expansion of `label`, for a tooltip or a notice. */
+  explanation: string;
+}
+
+export function freshness(lastRunStatus: RunStatus | null, hasScore: boolean): Freshness {
+  if (lastRunStatus === null) {
     return {
-      text: hasScore ? 'last run failed (score is stale)' : 'last run failed',
-      tone: 'warn',
+      label: 'never run',
+      tone: 'unscored',
+      explanation:
+        'Stenion has not completed a scoring run for this protocol yet, so there is no score to show. This says nothing about the protocol — it is a gap in our coverage.',
     };
   }
-  return { text: 'live', tone: 'ok' };
+
+  if (lastRunStatus === 'failed') {
+    return hasScore
+      ? {
+          label: 'update failed',
+          tone: 'stale',
+          explanation:
+            'The score shown is the last one Stenion computed successfully; our most recent attempt to refresh it failed, so the number may be out of date. This is a problem with our data collection, not a change in the protocol’s risk.',
+        }
+      : {
+          label: 'update failed',
+          tone: 'stale',
+          explanation:
+            'Our most recent attempt to score this protocol failed, and there is no earlier successful run to fall back on — so there is no score to show. This is a gap in our data, not a risk finding.',
+        };
+  }
+
+  return {
+    label: 'live',
+    tone: 'live',
+    explanation: 'The most recent indexer run succeeded, so this score is current.',
+  };
+}
+
+/**
+ * Pill classes for a freshness tone.
+ *
+ * `stale` and `unscored` use the ACCENT and the neutral greys respectively, and
+ * must never use `safe`/`warn`/`danger`: those are the score bands and mean risk
+ * level. A stale marker in amber or red would tell a reader the protocol is
+ * dangerous when it means our data is old. `dashboard/app/lib/format.test.ts`
+ * enforces that mechanically — don't "unify" these with `bandTextClass`.
+ *
+ * `live` keeps the `safe` band: green-as-a-heartbeat is a different claim from
+ * green-as-a-score, and no band colour is being borrowed to describe a fault.
+ */
+export function freshnessPillClass(tone: FreshnessTone): string {
+  switch (tone) {
+    case 'live':
+      // See the `*-ink` note in globals.css: the label needs `safe-ink`, not
+      // `safe`, to clear AA on the /10 tint in light mode.
+      return 'border-safe/25 bg-safe/10 text-safe-ink';
+    case 'stale':
+      return 'border-accent/40 bg-accent/10 text-accent-ink';
+    default:
+      return 'border-line bg-surface-2 text-faint';
+  }
 }
 
 export type ScoreBand = 'high' | 'mid' | 'low' | 'none';
