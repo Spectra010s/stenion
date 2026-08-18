@@ -419,3 +419,82 @@ describe('no measurable reserves — cannot assess, so 0 not 100', () => {
     assert.doesNotMatch(f.utilizationSafety!.detail, /worst reserve/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The minimum-size filter (METHODOLOGY.md §4/§5).
+//
+// Same shared rule as Blend, but K2 declares no minimum-exposure parameter
+// anywhere on chain, so leg A is unavailable and the 0.5% relative floor is the
+// only test a K2 reserve faces. These pin that difference as a property of K2's
+// DATA rather than of K2's rules — the formula is identical, and if K2 ever
+// ships an equivalent of Blend's min_collateral, leg A turns on here too.
+// ---------------------------------------------------------------------------
+
+describe('minimum-size filter — K2 has only the relative leg (§4/§5)', () => {
+  /** The live shape the filter was added for: one dominant reserve, one dust one. */
+  const withDust = (supplied: number, borrowed: number) =>
+    makeRaw({
+      reserves: [
+        reserve({ asset: 'CXLM…', supplied: 1_000, borrowed: 0 }),
+        reserve({ asset: 'CDUST…', supplied, borrowed }),
+      ],
+    });
+
+  it('stops a dust reserve setting both factors', async () => {
+    // $3 of a $1,003 pool is 0.30% — under the line, and with no K2 floor to
+    // rescue it. This is the 2026-08-16 K2 snapshot in miniature.
+    const f = await factors(withDust(3, 2));
+    assert.equal(f.liquiditySafety!.value, 100, 'the surviving reserve is undrawn');
+    assert.equal(f.utilizationSafety!.value, 100);
+  });
+
+  it('keeps a reserve that clears 0.5% even though it is still small', async () => {
+    // $8 of a $1,008 pool is 0.79%. Small in absolute terms and kept anyway —
+    // an absolute-only filter sized for a real market would have thrown away
+    // every reserve K2 has. 4/8 drawn → free 50, headroom (0.8−0.5)/0.8 = 37.5.
+    const f = await factors(withDust(8, 4));
+    assert.equal(f.liquiditySafety!.value, 50, 'the small reserve still binds');
+    assert.equal(f.utilizationSafety!.value, 38);
+  });
+
+  it('publishes what it excluded, including the score it suppressed', async () => {
+    // A reserve being excluded from scoring is not the same as it not existing.
+    // The disclosure carries the number we chose not to publish so a reader can
+    // disagree with the exclusion rather than never learning of it.
+    const f = await factors(withDust(3, 2));
+    const excluded = f.liquiditySafety!.components!.find((c) => c.id === 'excludedReserves')!;
+    assert.equal(excluded.value, null, 'a disclosure is measured and shown, never graded');
+    assert.match(excluded.detail, /CDUST…/);
+    assert.match(excluded.detail, /\$3\.00/);
+    assert.match(excluded.detail, /0\.30% of pool/);
+    assert.match(excluded.detail, /would have scored 33/, '2 of 3 drawn → 33% free');
+  });
+});
+
+describe('minimum-size filter — excluding everything still cannot publish 100', () => {
+  // Unreachable on a real pool for the reason spelled out in blend.test.ts — the
+  // largest of n reserves always holds >= 1/n — so it takes 201 equal reserves
+  // to starve the relative leg everywhere. Pinned because this is precisely
+  // where the filter could smuggle back the "0 not 100" defect.
+  const starved = makeRaw({
+    reserves: Array.from({ length: 201 }, (_, i) =>
+      reserve({ asset: `C${i}`.padEnd(56, 'X'), supplied: 1, borrowed: 0 }),
+    ),
+  });
+
+  it('both factors report cannot-assess, not maximally safe', async () => {
+    const f = await factors(starved);
+    assert.equal(f.liquiditySafety!.value, 0, 'a filtered-empty set is undefined, not 100');
+    assert.equal(f.utilizationSafety!.value, 0);
+  });
+
+  it('distinguishes "all too small" from "the pool is empty"', async () => {
+    const filtered = await factors(starved);
+    const empty = await factors(makeRaw({ reserves: [] }));
+    for (const key of ['liquiditySafety', 'utilizationSafety'] as const) {
+      assert.notEqual(filtered[key]!.detail, empty[key]!.detail);
+      assert.match(filtered[key]!.detail, /below the minimum scorable size/);
+      assert.doesNotMatch(filtered[key]!.detail, /worst reserve/);
+    }
+  });
+});

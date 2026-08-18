@@ -23,7 +23,8 @@ If the code and this document ever disagree, that is a bug — open an issue (se
 ## Current version
 
 **Methodology v1** — the rulebook described by this document, in full, including `oracleSafety`
-scoring both price freshness and manipulation resistance (§2).
+scoring both price freshness and manipulation resistance (§2), and the minimum-size filter §4
+and §5 select reserves through ([The minimum-size filter](#the-minimum-size-filter)).
 
 **Versioning begins here.** Every score in `risk_scores` carries
 `methodology_version = 1`, because that is the only version any stored row has ever been
@@ -128,9 +129,9 @@ Every scored run is stamped with the rulebook version that produced it
 [`core/src/types.ts`](core/src/types.ts)), and it is surfaced on the API's protocol detail
 and on each history point. The changelog:
 
-| Version | Effective | Change                                                                                                                |
-| ------- | --------- | --------------------------------------------------------------------------------------------------------------------- |
-| **1**   | initial   | The five-factor model as documented here. `oracleSafety` scores price freshness **and** manipulation resistance (§2). |
+| Version | Effective | Change                                                                                                                                                                                                                 |
+| ------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **1**   | initial   | The five-factor model as documented here. `oracleSafety` scores price freshness **and** manipulation resistance (§2); `liquiditySafety`/`utilizationSafety` score only reserves clearing the minimum-size filter (§4). |
 
 One row, and that is the point: v1 is where versioning starts, not where it started counting
 again. Development-era history under earlier iterations of these rules was discarded rather
@@ -152,6 +153,23 @@ even if no published number moved.
 | Date (UTC)   | Correction                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `2026-08-16` | `liquiditySafety` (§4) and `utilizationSafety` (§5) returned **100** when no reserve qualified for their minimum, in both adapters. Both are a minimum over a filtered set of reserves; over an empty set that is undefined, not the top of the scale — so an unassessable pool published "maximally safe" from no data, contrary to ground rule 4. Both now return **0**, matching `collateralSafety`'s existing treatment of the same case. **No published score was affected:** the path had never executed — verified by scanning the entire stored history of both protocols for the signature the defect leaves in a factor's `detail` (a `worst reserve (…)` naming no asset, since `worstAsset` stayed empty when nothing was measured), with zero matches. Re-checked on `2026-08-16` against 1,923 rows; `liquiditySafety` has ranged 20–34 and `utilizationSafety` 10–18 across that history, never approaching the 100 the empty path would have published. |
+
+#### Amendments folded into v1
+
+Changes to the rulebook made **while v1 was still being finalized as the comparability
+baseline.** These are not version boundaries: v1 is defined as the rulebook this document
+describes, and these are part of that definition rather than a departure from it. But each one
+moved a number that had already been stored, so each gets a row here. "No bump required" does
+not mean "no record required" — a step in a history chart with nothing marking it is exactly
+what the version stamp exists to prevent.
+
+**This section closes when the next change lands.** From that point the rule in
+[What bumps the version](#what-bumps-the-version-going-forward) applies without exception, and
+a change that alters what a number means bumps to v2.
+
+| Date (UTC)   | Amendment                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `2026-08-18` | §4 and §5 gained the [minimum-size filter](#the-minimum-size-filter): both now select the worst reserve only among reserves clearing the protocol's own declared minimum exposure **or** 0.5% of the pool's supplied USD. This changes what the two factors measure, which is why it is recorded rather than treated as a correction. **No live score moved when it landed** — verified against both protocols on the day: Blend excludes nothing (its smallest reserve is ~$3.4M against a $5.00 `min_collateral`), and K2's dust reserve had already stopped being its worst reserve. **Stored K2 rows from before it are not comparable on these two factors:** on the frozen 2026-08-16 snapshot the filter moves `liquiditySafety` 34 → 44 and `utilizationSafety` 18 → 30 (score 24 → 28), by excluding a $3.00 reserve holding 0.19% of a $1,571 pool. |
 
 **History is not backfilled across a version bump, and cannot be.** `risk_scores` stores
 only outputs — the score and the factor map — never the raw on-chain inputs a run was
@@ -519,19 +537,104 @@ proximity to the _configured cap_ rather than absolute headroom.
 `d_supply`, `d_rate`) and `ResConfig` (`decimals`), used to compute `supplied` and
 `borrowed` per the totals formula above.
 
-**Formula** — free-liquidity share of the **worst** reserve:
+**Formula** — free-liquidity share of the **worst** reserve, over reserves large enough to be
+scored (see [The minimum-size filter](#the-minimum-size-filter) below):
 
 ```
-For each reserve with supplied > 0:
+For each reserve with supplied > 0 that passes the minimum-size filter:
     free = clamp( (supplied − borrowed) / supplied × 100 , 0, 100 )
 
 liquiditySafety = min(free) across all such reserves     # worst reserve wins
 ```
 
-Edge case: **no reserve with `supplied > 0` → 0.** A minimum over an empty set is undefined,
-not the top of the scale — an unassessable pool is reported as unassessable, the same way §1
-treats having nothing to price. Returning 100 here would publish "maximally safe" derived from
-no data, which ground rule 4 forbids.
+Edge cases, both → **0**: **no reserve with `supplied > 0`**, and **every reserve excluded by
+the minimum-size filter**. A minimum over an empty set is undefined, not the top of the scale
+— an unassessable pool is reported as unassessable, the same way §1 treats having nothing to
+price. Returning 100 here would publish "maximally safe" derived from no data, which ground
+rule 4 forbids. The two are reported with different `detail` strings: "the pool is empty" and
+"everything in it is too small to grade" are different findings.
+
+---
+
+### The minimum-size filter
+
+Applies to **`liquiditySafety` (§4) and `utilizationSafety` (§5) only**, identically for every
+protocol.
+
+**The problem it solves.** Both factors select the _worst_ reserve, so a reserve holding
+effectively nothing can set a protocol's published number. On the 2026-08-16 Kinetic snapshot a
+**$3.00** PYUSD reserve — 0.19% of a $1,571 pool — was the worst reserve on both factors and
+set `liquiditySafety` to 34 and `utilizationSafety` to 18. Nobody's capital was meaningfully
+exposed to it. That is a misleading number, not a conservative one.
+
+**The rule.** A reserve is scored if **either** test passes, and excluded only when **both**
+fail:
+
+| Leg   | Test                                                                | Anchor                                                       |
+| ----- | ------------------------------------------------------------------- | ------------------------------------------------------------ |
+| **A** | `suppliedUsd ≥` the protocol's own declared minimum viable exposure | the protocol's own on-chain parameter, where it declares one |
+| **B** | `suppliedUsd ≥` **0.5% of the pool's own total supplied USD**       | none — an unvalidated judgment call (see below)              |
+
+Leg A is per-protocol in exactly the sense §5's `cap` is: the _pattern_ ("grade against a
+parameter the protocol set itself") is the invariant, and which parameter it resolves to is a
+documented per-protocol fact.
+
+| Protocol         | Leg A source                                                                                                                        | Value                  |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| **Blend**        | `PoolConfig.min_collateral`, read live from pool instance storage, denominated in the oracle's base asset (`Other:USD`, 7 decimals) | `50000000` = **$5.00** |
+| **Kinetic (K2)** | **none — K2 declares no minimum-exposure parameter on chain.** Leg B alone applies.                                                 | n/a                    |
+
+`min_collateral` is Blend's _own_ dust guard: the smallest collateral a position may hold and
+still borrow, set where liquidating a position stops being economically worthwhile. A reserve
+whose entire supplied value sits below it cannot host even one position the protocol itself
+considers viable. That is the same question this filter asks, which is why it is borrowed
+rather than invented.
+
+**K2's absence is verified, not assumed.** The router's instance storage and every reserve's
+`ReserveConfiguration` bitmap were read looking for an equivalent. What K2 exposes is `MINSWAP`
+(a slippage bound), `FLPREMMAX`, `HFLIQTH`/`PLIQHF` (health-factor lines) and a supply/borrow
+cap pair in `data_high` — all maxima or unrelated. If K2 ever ships a minimum, leg A turns on
+for it with no rule change.
+
+**Why both legs, and not one.** Each covers a failure the other has, both demonstrated on live
+data:
+
+- **Absolute-only breaks a small pool.** Any floor sized for a real market ($1k, $10k) excludes
+  _all four_ of K2's reserves — its entire pool is ~$1,500. Both factors would go to
+  cannot-assess and K2's score would **drop**, from 28 to 15. Worse than the problem.
+- **Relative-only breaks a large pool.** 0.5% of Blend's $186M is ~$928,000, so a reserve
+  holding half a million dollars of real capital would be silently dropped. Leg A keeps it at
+  $5.
+
+> **The 0.5% in leg B is an unvalidated judgment call.** There is no external or on-chain
+> framework fixing it; with `STALE_CEILING_SECONDS` (§2) it is one of only two Stenion-chosen
+> constants left in the continuous factors, and it is open to challenge like any threshold here.
+>
+> It is deliberately set at the **low** end of the band that works, because the two directions
+> of error are not symmetric. Too low leaves a dust reserve in, which reports a misleading
+> number. Too high excludes a small but genuinely-used reserve, which **hides real risk** —
+> strictly worse. 0.25% would have flipped on the live K2 reserve between two consecutive days
+> ($3.00, then $4.00, against a $3.85 line); 0.5% clears it both times with margin.
+
+**Excluded reserves are disclosed, never silently dropped.** Each affected factor publishes an
+`excludedReserves` component with a `null` value — the same "measured, shown, deliberately not
+graded" form as §2c — naming each excluded reserve, its supplied USD, its share of the pool,
+and **the score it would have contributed**. A reader can therefore see the number the filter
+suppressed and disagree with the exclusion, instead of never learning of it.
+
+> **⚠️ This filter gives §4 and §5 an oracle dependency they did not previously have.** Both are
+> otherwise pure balance ratios that need no price at all; the filter is USD-denominated.
+> **When no reserve can be priced, the filter does not run and every reserve is scored** — the
+> two factors degrade to exactly their pre-filter behaviour rather than refusing to score. That
+> is the right fallback, but it means a pool's liquidity and utilization numbers mean something
+> slightly different during an oracle outage: they are unfiltered, and a dust reserve can bind
+> them again. An individual unpriced reserve is likewise kept, never read as worthless —
+> "could not measure" is not "empty".
+
+**The filter cannot empty the scored set on a real pool.** Shares sum to 1, so the largest
+reserve always holds at least `1/n`, which clears 0.5% for any `n ≤ 200`. The all-excluded
+branch above is therefore unreachable in practice — it is implemented and tested synthetically
+anyway, because that is precisely where a "cannot assess" could quietly become a 100 again.
 
 **Why this shape / this anchor:** `(supplied − borrowed) / supplied` is `1 − utilization`,
 i.e. the fraction of supplied value that is actually withdrawable _right now_. That is a
@@ -552,15 +655,18 @@ growing here." Approaching it is a concrete, protocol-defined stress signal.
 **Formula** — headroom below the protocol's utilization line, worst reserve:
 
 ```
-For each reserve with supplied > 0 and cap > 0:
+For each reserve with supplied > 0 and cap > 0 that passes the minimum-size filter:
     util = borrowed / supplied            # computed LIVE from balances, not a config field
     headroom = clamp( (cap − util) / cap × 100 , 0, 100 )
 
 utilizationSafety = min(headroom) across all such reserves    # worst reserve wins
 ```
 
-Edge cases, both → **0**, for the same reason as §4: **no reserve with `supplied > 0`**, and
-**no reserve with `cap > 0`**. The second is the sharper one — reserves can hold real debt while
+The [minimum-size filter](#the-minimum-size-filter) is §4's, unchanged and applied identically
+here — one rule, both factors.
+
+Edge cases, all → **0**, for the same reason as §4: **no reserve with `supplied > 0`**, **every
+reserve excluded by the minimum-size filter**, and **no reserve with `cap > 0`**. The second is the sharper one — reserves can hold real debt while
 declaring no utilization ceiling at all, and grading that as full headroom would measure distance
 to a line nobody set. The two are reported with different `detail` strings, since "the pool is
 empty" and "the pool declares no ceiling" are different findings.

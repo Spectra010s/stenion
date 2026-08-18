@@ -105,8 +105,10 @@ export default async function ProtocolDetailPage({ params }: { params: Promise<{
  * The five factors, laid out by how much each one actually has to say.
  *
  * A factor that publishes a `components` breakdown carries several times the
- * content of one that doesn't — today `oracleSafety` is the only one, with three
- * sub-signals and roughly six times the text of any other factor. In a uniform
+ * content of one that doesn't — `oracleSafety` always does, with three
+ * sub-signals and roughly six times the text of any other factor, and
+ * `liquiditySafety`/`utilizationSafety` do whenever the minimum-size filter
+ * excluded a reserve they then have to disclose. In a uniform
  * two-column grid that forced its row partner to stretch to match, leaving a
  * tall empty gap beside it (and, with five cards in two columns, an orphan on
  * the last row). Factors with a breakdown get the full width instead; the rest

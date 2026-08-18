@@ -13,9 +13,16 @@ import { rpc } from '@stellar/stellar-sdk';
 // Types and values are imported separately — see the note in blend.ts: native
 // type stripping is syntactic, so type-only names left in a value import
 // survive into the running module and fail against core's CommonJS output.
-import { RiskFactorType, freshnessWindow, scoreFactors } from '@stenion/core';
+import {
+  RiskFactorType,
+  excludedComponent,
+  freshnessWindow,
+  scoreFactors,
+  sizeReserves,
+} from '@stenion/core';
 import type {
   Adapter,
+  ExcludedReserve,
   ProtocolMetadata,
   RiskFactor,
   RiskFactorMap,
@@ -805,32 +812,48 @@ export class KineticAdapter implements Adapter<KineticRawData> {
   // cushion, distinct from utilizationSafety's proximity-to-cap.
   private liquiditySafety(raw: KineticRawData): RiskFactor {
     const weight = 0.15;
+    const sizing = this.reserveSizing(raw);
+    const excluded: ExcludedReserve[] = [];
     let worstRatio = 1;
     let worstAsset = '';
     let measured = 0;
-    for (const r of raw.reserves) {
+    for (const [i, r] of raw.reserves.entries()) {
       const { supplied, borrowed } = reserveTotals(r);
       if (supplied <= 0) continue;
-      measured++;
       const free = clamp(((supplied - borrowed) / supplied) * 100);
+      // Ahead of `measured++` deliberately: a pool where the filter excludes
+      // everything must fall through to the can't-assess branch below, not into
+      // a separate path that could report the accumulator's seed. Same
+      // placement as Blend, for the same reason.
+      if (!sizing[i].scored) {
+        excluded.push({ asset: r.asset, ...sizing[i], wouldHaveScored: Math.round(free) });
+        continue;
+      }
+      measured++;
       if (free <= worstRatio * 100) {
         worstRatio = free / 100;
         worstAsset = r.asset;
       }
     }
+    const components = excludedComponent(excluded, 'free liquidity');
     // METHODOLOGY.md §4 is a minimum over reserves with supplied > 0; over none
     // it is undefined, not 100. Same rule and same reasoning as Blend.
     if (measured === 0) {
       return {
         value: 0,
         weight,
-        detail: 'no reserve has any supplied value — free liquidity cannot be assessed',
+        detail:
+          excluded.length > 0
+            ? `every reserve with supplied value is below the minimum scorable size — free liquidity cannot be assessed`
+            : 'no reserve has any supplied value — free liquidity cannot be assessed',
+        ...components,
       };
     }
     return {
       value: Math.round(worstRatio * 100),
       weight,
       detail: `worst reserve (${worstAsset.slice(0, 6)}…) has ${(worstRatio * 100).toFixed(0)}% of supply as free liquidity`,
+      ...components,
     };
   }
 
@@ -843,16 +866,23 @@ export class KineticAdapter implements Adapter<KineticRawData> {
   // headroom = (0.8 − util)/0.8, worst reserve wins.
   private utilizationSafety(raw: KineticRawData): RiskFactor {
     const weight = 0.2;
+    const sizing = this.reserveSizing(raw);
+    const excluded: ExcludedReserve[] = [];
     let worst = 100;
     let worstAsset = '';
     let worstUtil = 0;
     let measured = 0;
-    for (const r of raw.reserves) {
+    for (const [i, r] of raw.reserves.entries()) {
       const { supplied, borrowed } = reserveTotals(r);
       if (supplied <= 0) continue;
-      measured++;
       const util = borrowed / supplied;
       const headroom = clamp(((OPTIMAL_UTIL - util) / OPTIMAL_UTIL) * 100);
+      // Ahead of `measured++`, as in liquiditySafety.
+      if (!sizing[i].scored) {
+        excluded.push({ asset: r.asset, ...sizing[i], wouldHaveScored: Math.round(headroom) });
+        continue;
+      }
+      measured++;
       if (headroom <= worst) {
         worst = headroom;
         worstAsset = r.asset;
@@ -865,18 +895,47 @@ export class KineticAdapter implements Adapter<KineticRawData> {
     // — it would be unreachable. If K2 ever exposes a readable per-reserve
     // optimal-util (see METHODOLOGY.md §5's second caveat), this needs Blend's
     // two-branch treatment.
+    const components = excludedComponent(excluded, 'utilization headroom');
     if (measured === 0) {
       return {
         value: 0,
         weight,
-        detail: 'no reserve has any supplied value — utilization headroom cannot be assessed',
+        detail:
+          excluded.length > 0
+            ? `every reserve with supplied value is below the minimum scorable size — utilization headroom cannot be assessed`
+            : 'no reserve has any supplied value — utilization headroom cannot be assessed',
+        ...components,
       };
     }
     return {
       value: Math.round(worst),
       weight,
       detail: `worst reserve (${worstAsset.slice(0, 6)}…) at ${(worstUtil * 100).toFixed(0)}% util vs ${(OPTIMAL_UTIL * 100).toFixed(0)}% optimal-utilization kink`,
+      ...components,
     };
+  }
+
+  /**
+   * The §4/§5 minimum-size filter, resolved for K2.
+   *
+   * The rule is core's, identical to Blend's. What differs is only where its
+   * absolute leg is read from — and K2 declares nothing to read it from, so the
+   * leg is passed null and the relative floor alone applies.
+   *
+   * That is a verified absence, not an unchecked one: the router's instance
+   * storage and every reserve's ReserveConfiguration bitmap were read looking
+   * for a minimum-exposure parameter. What K2 exposes is MINSWAP (a slippage
+   * bound), FLPREMMAX, HFLIQTH/PLIQHF (health-factor lines) and a supply/borrow
+   * cap pair in `data_high` — all maxima or unrelated. There is no K2 equivalent
+   * of Blend's `min_collateral`. If K2 ever ships one, wire it in here; until
+   * then the relative floor is the only leg protecting a small-but-real K2
+   * reserve, which METHODOLOGY.md §4 flags.
+   */
+  private reserveSizing(raw: KineticRawData) {
+    return sizeReserves(
+      raw.reserves.map((r) => suppliedUsd(r, raw.oraclePriceDecimals)),
+      null,
+    );
   }
 
   // Delegates to the shared rulebook in @stenion/core. The weighted mean is not
