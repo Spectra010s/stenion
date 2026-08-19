@@ -630,6 +630,11 @@ body {
   padding: 0.1em 0.4em;
   font-size: 0.85em;
   font-weight: 500;
+  /* Inline code in METHODOLOGY.md includes contract ids and full Horizon paths,
+     which have no break opportunity: on a phone one such token sets a floor on
+     the page width and scrolls the whole document sideways. Break inside the
+     token only when it genuinely doesn't fit. */
+  overflow-wrap: anywhere;
 }
 .prose-stenion :where(code):not(:where(pre code))::before,
 .prose-stenion :where(code):not(:where(pre code))::after {

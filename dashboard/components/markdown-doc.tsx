@@ -34,6 +34,15 @@ const components: Components = {
   // from elsewhere in the doc. Without an id those anchors work on GitHub and
   // silently dead-end on the site.
   h4: ({ children }) => <h4 id={slug(toText(children))}>{children}</h4>,
+  // METHODOLOGY.md has several wide multi-column tables. A prose table is
+  // width:100%, but its min-content width is set by its longest cell, so on a
+  // narrow screen the table sets a floor on the page width and scrolls the whole
+  // document sideways. Give each table its own horizontal scroll container.
+  table: ({ children }) => (
+    <div className="overflow-x-auto">
+      <table>{children}</table>
+    </div>
+  ),
   a: ({ href, children }) => {
     const h = href ?? '';
     if (h.startsWith('#')) return <a href={h}>{children}</a>;
@@ -49,7 +58,7 @@ const components: Components = {
 /** Render a markdown string with the Stenion dark prose theme. */
 export function MarkdownDoc({ source }: { source: string }) {
   return (
-    <div className="prose prose-stenion max-w-none prose-headings:font-display prose-headings:tracking-tight prose-h1:text-3xl prose-h2:mt-12 prose-h2:border-t prose-h2:border-line prose-h2:pt-8 prose-a:no-underline hover:prose-a:underline prose-table:overflow-hidden">
+    <div className="prose prose-stenion max-w-none prose-headings:font-display prose-headings:tracking-tight prose-h1:text-3xl prose-h2:mt-12 prose-h2:border-t prose-h2:border-line prose-h2:pt-8 prose-a:no-underline hover:prose-a:underline">
       <Markdown remarkPlugins={[remarkGfm]} components={components}>
         {source}
       </Markdown>
