@@ -20,12 +20,14 @@ const nextConfig = {
   // the supported path for the Node.js runtime.
   serverExternalPackages: ['pg', '@stellar/stellar-sdk'],
 
-  // The /methodology route reads the repo-root METHODOLOGY.md at request time
-  // (single source of truth, not duplicated). It lives outside the dashboard dir,
-  // so include it explicitly in that route's serverless bundle or the read 404s
-  // on Vercel.
+  // The /methodology and /docs/api routes read their repo-root markdown file at
+  // request time (single source of truth, not duplicated). Those files live
+  // outside the dashboard dir, so include each explicitly in its route's
+  // serverless bundle or the read 404s on Vercel — the failure is silent in dev,
+  // where the file is simply there on disk.
   outputFileTracingIncludes: {
     '/methodology': ['../METHODOLOGY.md'],
+    '/docs/api': ['../API.md'],
   },
 };
 

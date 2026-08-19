@@ -1,6 +1,7 @@
 import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { GITHUB_URL } from '../app/lib/site';
+import { GITHUB_URL, RENDERED_DOC_ROUTES } from '../app/lib/site';
+import { CodeBlock } from './code-block';
 
 const REPO_BLOB = `${GITHUB_URL}/blob/main`;
 
@@ -43,12 +44,33 @@ const components: Components = {
       <table>{children}</table>
     </div>
   ),
+  // Fenced code blocks get a copy button. react-markdown hands `pre` a single
+  // `code` child, so the raw text is flattened here rather than inside the client
+  // component — it has the React nodes, and a DOM read-back would be at the mercy
+  // of whatever whitespace the browser reports.
+  pre: ({ children }) => <CodeBlock raw={toText(children)}>{children}</CodeBlock>,
   a: ({ href, children }) => {
     const h = href ?? '';
     if (h.startsWith('#')) return <a href={h}>{children}</a>;
-    const url = /^https?:\/\//.test(h) ? h : `${REPO_BLOB}/${h.replace(/^\.?\//, '')}`;
+    if (/^https?:\/\//.test(h)) {
+      return (
+        <a href={h} target="_blank" rel="noreferrer">
+          {children}
+        </a>
+      );
+    }
+    // A repo-relative link. Most resolve to the GitHub source, because most of
+    // the docs a rendered page references (ARCHITECTURE.md, an adapter file) only
+    // exist there. The exception is a doc that IS rendered on this site: sending
+    // a reader from /docs/api out to raw markdown on GitHub for the methodology
+    // is worse than keeping them here, so those few map to their own route.
+    // Written as one relative link so the same file still resolves on GitHub.
+    const bare = h.replace(/^\.?\//, '');
+    const [file, hash] = bare.split('#');
+    const route = RENDERED_DOC_ROUTES[file];
+    if (route) return <a href={hash ? `${route}#${hash}` : route}>{children}</a>;
     return (
-      <a href={url} target="_blank" rel="noreferrer">
+      <a href={`${REPO_BLOB}/${bare}`} target="_blank" rel="noreferrer">
         {children}
       </a>
     );

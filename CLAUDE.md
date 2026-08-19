@@ -7,6 +7,8 @@ here** — each public doc owns its content:
 - **[`README.md`](README.md)** — what Stenion is, the pitch, local quick-start.
 - **[`ARCHITECTURE.md`](ARCHITECTURE.md)** — monorepo layout, what each package does, data flow, deploy.
 - **[`METHODOLOGY.md`](METHODOLOGY.md)** — the source of truth for every factor's formula, thresholds, weights.
+- **[`API.md`](API.md)** — the public API contract as a consumer meets it: endpoints, live example
+  responses, the `ok`/`failed` union, staleness, rate limits, errors. Rendered at `/docs/api`.
 - **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — how to write an adapter, conventions, PR expectations.
 - **[`ROADMAP.md`](ROADMAP.md)** — what's live, what's planned, what's out of scope, and open taxonomy questions.
 
@@ -27,6 +29,9 @@ These override any default behavior and are enforced in code and review:
 - **Adapters read trustless on-chain data** (Soroban RPC + Horizon) — never self-reported figures.
 - **No fabricated numbers.** When real data isn't available for a factor, use a clearly-flagged
   neutral baseline (e.g. `adminKeySafety`'s contract-admin `60`) — never an invented value.
+- **`API.md`'s example responses are captured live, never written from the types.** A doc written
+  from `db/src/store.ts` reproduces the type rather than the truth, and what a client observes is
+  not always what a route sets (the CDN eats `s-maxage`). Re-`curl` them when a shape changes.
 - **Code and `METHODOLOGY.md` are not allowed to drift.** Any change to a formula/threshold/weight
   changes both together, at the same review bar. Shared rulebook logic that two adapters would
   otherwise duplicate lives in [`core/src/scoring.ts`](core/src/scoring.ts), so it can't drift
@@ -101,7 +106,10 @@ These override any default behavior and are enforced in code and review:
 
 ## Deploy architecture (summary — full detail in `ARCHITECTURE.md`)
 
-One Vercel project = the `dashboard`. The API lives as Next.js Route Handlers
+One Vercel project = the `dashboard`. A page that renders a repo-root markdown file (`/methodology`
+→ `METHODOLOGY.md`, `/docs/api` → `API.md`) **must** have an `outputFileTracingIncludes` entry in
+`next.config.mjs` — the file is outside the dashboard dir, and without it the route works in
+`next dev` and fails only in production. The API lives as Next.js Route Handlers
 (`/api/v1/protocols`, `/api/v1/protocol/[id]` — versioned; there are **no** unversioned paths, the
 former transitional aliases were removed and now 404, and the versioning policy lives in
 `ARCHITECTURE.md`); the dashboard's own pages read `@stenion/db`'s `Store`

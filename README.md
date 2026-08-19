@@ -2,7 +2,7 @@
 
 **Live, on-chain risk intelligence for Stellar/Soroban DeFi.**
 
-[stenion.vercel.app](https://stenion.vercel.app) · [Methodology](METHODOLOGY.md) · [Architecture](ARCHITECTURE.md) · [Contributing](CONTRIBUTING.md) · [Roadmap](ROADMAP.md)
+[stenion.vercel.app](https://stenion.vercel.app) · [API](API.md) · [Methodology](METHODOLOGY.md) · [Architecture](ARCHITECTURE.md) · [Contributing](CONTRIBUTING.md) · [Roadmap](ROADMAP.md)
 
 ---
 
@@ -91,13 +91,19 @@ real scores at `http://localhost:3000`. The public API is served by the dashboar
 
 ### Using the public API
 
+**The full reference is [`API.md`](API.md)** — both endpoints with live example responses, the
+`ok`/`failed` history union, the staleness model, error shapes, and the versioning commitment. It's
+also rendered on the site at [/docs/api](https://stenion.vercel.app/docs/api). The summary:
+
 It's free, open, needs no key, and allows any origin. Two things to know before you build against
 it:
 
-- **It's cached, briefly.** Responses carry `Cache-Control` with an `s-maxage` between 10 and 45
-  seconds, computed per response so a cached body can never hide a newer indexer run by more than
-  10 seconds. Check the `Age` header if you need to know exactly how old a response is. Scores only
-  change every ~5 minutes, so **polling faster than once a minute gains you nothing.**
+- **It's cached, briefly.** The TTL is computed per response, between 10 and 45 seconds, so a
+  cached body can never hide a newer indexer run by more than 10 seconds. The `s-maxage` that
+  drives it is consumed by the CDN and never reaches you — what you see is
+  `Cache-Control: public, max-age=0` plus an `Age` header, which is the one to read if you need to
+  know exactly how old a response is. Scores only change every ~5 minutes, so **polling faster than
+  once a minute gains you nothing.**
 - **It's rate limited: 60 requests/minute per client, with a burst of 60.** Only requests that miss
   the cache count, so ordinary polling will never come close. Over the limit you get a `429` with a
   `Retry-After` header in seconds — honour it and you'll be served immediately. `X-RateLimit-Limit`
