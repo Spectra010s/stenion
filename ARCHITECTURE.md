@@ -71,7 +71,8 @@ factors using the formulas in `METHODOLOGY.md`, and produces a weighted `safetyS
 **`@stenion/db`** — the single, typed storage layer, shared by both the indexer (writes) and the
 dashboard/API (reads) so there's no duplicated connection logic. Exposes a lazy singleton `pg`
 `Pool` (`getPool`/`closePool`), a `createStore(pool)` factory with all read/write methods, env
-loading, and the persisted `RunRecord` type. Two tables:
+loading, and the persisted `RunRecord` type. Three tables — two that hold the product, and one that
+holds no product data at all:
 
 - `protocols` — one row per protocol (slug PK, name, chain, adapter class name) plus its identity:
   `logo` (a root-relative path into the dashboard's own `public/` tree — we host every mark, never
@@ -87,6 +88,13 @@ loading, and the persisted `RunRecord` type. Two tables:
   ranked, and growing the taxonomy then needs no migration). `methodology_version` records which
   rulebook produced the score — see below. A DB-level CHECK enforces the `ok`/`failed`
   discriminated union.
+- `api_rate_limits` — one token bucket per public-API client, and the odd one out: it is
+  infrastructure, not data. It exists in Postgres only because serverless has no shared memory, so
+  there is nowhere else every instance can see (`createRateLimiter`, deliberately not part of
+  `Store` — the domain layer has no business knowing about it). The key is a salted hash of the
+  client IP, never the address, so the table cannot become a log of who reads the API; rows idle for
+  an hour are pruned. Nothing here is read by any scoring or serving path. See "Caching and rate
+  limits".
 
 **Methodology versioning.** The rulebook is at **v1**, and versioning starts there: every stored
 row carries `methodology_version = 1`, and no second version exists yet. Development-era history
@@ -292,11 +300,13 @@ separate services. Everything runs from the single Next.js app:
   `app/api/v1/protocol/[id]`). Same `Store` methods, same JSON as the original standalone API — a
   transport change, not a rewrite. CORS (`access-control-allow-origin: *`) is set on these two
   routes only, for future browser/wallet/third-party clients reading public, payment-blind data.
-  `/api/v1/*` is the only public API surface — see "API versioning" below.
+  `/api/v1/*` is the only public API surface — see "API versioning" below. Both routes are
+  CDN-cached and rate limited — see "Caching and rate limits" below.
 - **Indexer** → triggered by `POST /api/cron/run-indexer`, which calls `runIndexerCycle()` once.
   The route is secret-gated (`Authorization: Bearer <CRON_SECRET>`, compared with
   `crypto.timingSafeEqual`); if `CRON_SECRET` is unset it refuses to run, so it's never open. No
-  CORS on this route.
+  CORS on this route, and **no rate limiting** — it's authenticated and internal, and limiting it
+  could only ever block a scheduled run.
 - **Scheduling is external** — a [cron-job.org](https://cron-job.org) job POSTs to the cron route
   every 5 minutes with `Authorization: Bearer <CRON_SECRET>`. The route itself is stateless about
   cadence: it runs exactly one cycle per request, so the interval is entirely the caller's.
@@ -372,6 +382,19 @@ The worked examples:
 - **`dashboard/app/api/_http.test.ts`** — the response envelope: status, content type, and CORS.
   These fail only in a third party's browser, never on our own pages (which read the Store
   in-process), so nothing else would catch a regression.
+- **`dashboard/app/api/_cache.test.ts`** — the cache TTL policy, and specifically the invariant that
+  a cached response can never hide a newer indexer run by more than the 10s floor. That promise is
+  arithmetic over a clock and is unobservable everywhere we can look: locally there is no cache, and
+  on Vercel a violation looks like a correct-shaped JSON body that is quietly minutes old. Nothing
+  goes red, so the bound is asserted here or nowhere.
+- **`dashboard/app/api/_rate-limit.test.ts`** — client identity, config parsing, refusal headers, and
+  the per-instance deny memo. Every branch decides whether to refuse someone, and none of it runs in
+  normal operation: the first time it matters is either an abuse incident or an integrator's launch,
+  and a mistake that pools clients together makes the second look like the first.
+- **`db/src/rate-limit.test.ts`** — what a token balance _means_, including the wait an integrator is
+  told to back off by. Production runs this at `tokens = 59.9997` and `tokens = -0.0001`; the
+  interesting cases are exactly the ones a real request never lands on. The refill itself is
+  Postgres arithmetic and is not covered here.
 - **`indexer/src/cycle.test.ts`** — the run loop's error model, against a deliberately throwing
   adapter and an in-memory `Store`. The contract is that an adapter throws, the indexer records a
   failed run and continues; `risk_scores` has **never** held a failed row (1,683 rows as of
@@ -401,6 +424,127 @@ threshold knobs — `STENION_RETRY_ATTEMPTS`, `STENION_RETRY_BASE_DELAY_MS`,
 `STENION_ATTEMPT_TIMEOUT_MS`, `STENION_CYCLE_BUDGET_MS`, `STENION_ALERT_THRESHOLD` — all have
 defaults and only need setting to override them; every one is documented in `.env.example`.
 Locally, every package reads these from a single repo-root `.env` via a walk-up loader.
+
+### Caching and rate limits
+
+The public API had neither, deliberately, until it was deployed and about to be pitched to wallet
+integrators. Both exist for one reason: **the whole system runs on Neon's free tier, and an
+aggressive client could exhaust it.** The data behind these routes only changes every ~5 minutes, so
+caching is nearly free; rate limiting covers the client that defeats the cache.
+
+Neither changed the JSON. Existing consumers see the same bodies with a `Cache-Control` header
+added, plus a `429` status that did not exist before.
+
+**What is actually doing the caching:** Vercel's CDN, driven by a `Cache-Control` header the route
+handlers set per response. Not an in-process cache — the API is serverless, each invocation is its
+own process, so a module-level cache would miss on every cold start and hold a different answer per
+warm instance. Being honest about the limits of that:
+
+- The CDN caches **per edge region**, so the origin sees roughly one request per TTL _per region
+  with traffic_, not one globally.
+- The cache key includes the **query string**, so `?anything=1` is a fresh key and a guaranteed
+  miss. The cache reduces cost for well-behaved clients; it does not protect the database from a
+  hostile one. That is the rate limiter's job, and it is why the limiter has to be accurate rather
+  than decorative.
+
+**The TTL, and why it is computed per response.** `lastRunAt` / `lastRunStatus` are how a consumer
+knows whether our data is stale (see "Staleness model" above). A fixed TTL of _N_ seconds serves a
+body claiming "the last run succeeded at T" for up to _N_ seconds after a later run has already
+failed — the cache would be lying in exactly the field that exists to stop us lying about freshness.
+Shortening _N_ bounds that window; it does not remove it.
+
+So the TTL is derived from the data in the body (`dashboard/app/api/_cache.ts`): **cache until the
+earliest moment the next indexer run could plausibly land, and no further.**
+
+| Constant                   | Value | Why                                                                                                                                                                                                                    |
+| -------------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `INDEXER_INTERVAL_SECONDS` | 300   | The cron-job.org cadence; observed median `run_at` spacing is 4m59s.                                                                                                                                                   |
+| `CYCLE_JITTER_SECONDS`     | 45    | `run_at` is stamped when a protocol's _turn_ begins, not when cron fires, so its spacing shifts by however much the protocols ahead of it sped up or slowed down — bounded by `STENION_CYCLE_BUDGET_MS` (default 42s). |
+| `MAX_TTL_SECONDS`          | 45    | Blast radius, not load. See below.                                                                                                                                                                                     |
+| `MIN_TTL_SECONDS`          | 10    | Floor, so the moment around a landing run isn't an uncached hole every client stampedes through.                                                                                                                       |
+
+The deadline is `lastRunAt + 300 − 45 = lastRunAt + 255`, clamped into `[10, 45]`. On a leaderboard
+response every protocol's `lastRunAt` counts and the tightest deadline wins, because any of them
+landing changes the body. A `null` or unparseable `lastRunAt` collapses to the floor.
+
+**Why the ceiling is 45 and not 255.** It is not a load number. A continuously-requested route hits
+the origin `1/TTL` times per second whatever the traffic is, so 45s is ~1.3 origin requests per
+minute per region and 255s would be ~0.24 — a difference of nothing to Neon. It is a blast-radius
+number: `INDEXER_INTERVAL_SECONDS` is an assumption about a schedule that lives in the cron-job.org
+dashboard and **not in this repo**, so nothing here fails if someone changes the cadence. The
+ceiling caps what a wrong assumption costs at 45s of staleness instead of a full cycle's worth.
+
+**The guarantee this buys.** A cached response can hide a newer run for at most `MIN_TTL_SECONDS`
+(10s) — asserted mechanically over every run age in `_cache.test.ts`, because the property is
+invisible in every environment we can look at: locally there is no cache, and on Vercel a failure
+looks like a correct-shaped JSON body that is quietly a few minutes old. Nothing goes red. On top of
+that bound, the CDN's own `Age` header makes the residual window _visible_ rather than merely small:
+a consumer that cares can subtract it.
+
+Two deliberate omissions:
+
+- **No `stale-while-revalidate`.** It is the standard fix for the stampede at expiry, and it works
+  by serving a body _past_ its deadline — precisely the masking above. The stampede it would prevent
+  is bounded by the rate limiter and by this project's traffic; the staleness it would reintroduce
+  is not bounded by anything.
+- **`max-age=0` for private caches.** A copy in someone's browser is one we cannot see, cannot
+  expire, and gain nothing from — the shared tier already absorbs the load — and it would put a
+  response's real age beyond what `Age` reports.
+
+Errors and 404s are `no-store`. A cached 500 outlives the outage that caused it, and a cached 404
+would keep 404ing for a protocol added in the next cycle.
+
+**The rate limiter.** A **token bucket, one row per client, in Postgres** (`api_rate_limits`,
+migration 0005; `db/src/rate-limit.ts`). Postgres and not memory for the reason above: an
+in-memory counter is per-instance, so N warm instances would allow N × the intended rate _while
+reporting that the limit was enforced_. False confidence is worse than no limiter.
+
+- **The limits: 60 requests/minute sustained, 60 of burst, per client.** Sized against what is
+  actually counted — cache **misses**. A wallet polling every 5 seconds produces roughly one miss
+  per TTL because the CDN serves everything in between, so 60 is an order of magnitude above any
+  legitimate integrator. What it does bite is the case it is for: a client defeating the cache with
+  a varying query string, where every request is a database query. That client is capped at ~1
+  query/second instead of unbounded.
+- **A cache hit does not count**, and this is structural rather than a policy choice: a hit never
+  invokes the function. It is also the right policy — the limit protects the database, and a hit
+  costs the database nothing. The consequence, stated plainly: the documented limit is **not** a cap
+  on total requests. A client polling a cached endpoint can exceed it all day.
+- **Per client IP**, taken from `x-real-ip` (Vercel sets it, single-valued) falling back to the first
+  `x-forwarded-for` hop. **Behind a shared NAT** — a corporate office, a mobile carrier — everyone
+  shares one bucket. That is survivable here only because of the previous point: NAT'd browser
+  traffic overwhelmingly hits the CDN, so a thousand users behind one address still generate roughly
+  one miss per TTL between them. The case that would genuinely break is a thousand NAT'd clients
+  each cache-busting, which is indistinguishable from the abuse this is meant to stop.
+- **Not an IP log.** The stored key is a salted SHA-256 prefix, never the address
+  (`STENION_RATE_LIMIT_SALT` — set it in production, or the hash is reversible by enumerating IPv4).
+  Rows idle for an hour are pruned opportunistically on ~1 in 256 served requests, so the table stays
+  proportional to _active_ clients.
+- **A 429 carries `Retry-After` (seconds), `X-RateLimit-Limit`, `X-RateLimit-Remaining`,
+  `X-RateLimit-Reset` (unix epoch seconds), and `Cache-Control: no-store`.** The last is
+  load-bearing: the CDN keys on URL, not client, so a cacheable 429 would be replayed to every other
+  client that asked next — one scraper's limit becoming everyone's outage. Those headers ship on
+  **refusals only**: a 200 is shared-cached and served to many clients, so an
+  `X-RateLimit-Remaining` baked into it would be one client's balance, frozen, replayed to
+  everybody — wrong for every reader including the one it came from.
+- **It fails open.** If the limiter's own query throws — table missing because the migration has not
+  run, pool exhausted, Neon down — the request is allowed and the error is logged. A broken guard
+  rail must not become a broken API, and it means migration 0005 and the deploy can land in either
+  order.
+- **The cron trigger is not rate limited.** It is secret-gated and internal; limiting it could only
+  ever block a scheduled run.
+
+**What this does not protect against.** A distributed attack. The limiter is per-client-key, so a
+thousand hosts each staying under the limit are a thousand clients as far as it is concerned.
+Stopping that is a network-edge job (Vercel's firewall), not an application one. It also trusts the
+platform's proxy headers — true on Vercel, which overwrites them, but a proxy that passed a
+client-supplied `x-forwarded-for` through would let a client split itself across unlimited buckets.
+That is a property of the deployment, not something this code can detect.
+
+**What it costs.** One database round trip per cache miss. Deliberate — it is the price of a counter
+that is genuinely shared. A per-instance memo short-circuits clients that have _already_ been
+refused, so a flood costs one write per block window rather than one per request; that memo may only
+ever refuse faster, never allow, which is what makes a per-instance structure sound there when it
+isn't for the counter itself.
 
 ### API versioning
 

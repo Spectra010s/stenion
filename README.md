@@ -89,6 +89,26 @@ real scores at `http://localhost:3000`. The public API is served by the dashboar
 `/api/v1/protocols` and `/api/v1/protocol/:id` — versioned, with the policy in
 [`ARCHITECTURE.md`](ARCHITECTURE.md#api-versioning).
 
+### Using the public API
+
+It's free, open, needs no key, and allows any origin. Two things to know before you build against
+it:
+
+- **It's cached, briefly.** Responses carry `Cache-Control` with an `s-maxage` between 10 and 45
+  seconds, computed per response so a cached body can never hide a newer indexer run by more than
+  10 seconds. Check the `Age` header if you need to know exactly how old a response is. Scores only
+  change every ~5 minutes, so **polling faster than once a minute gains you nothing.**
+- **It's rate limited: 60 requests/minute per client, with a burst of 60.** Only requests that miss
+  the cache count, so ordinary polling will never come close. Over the limit you get a `429` with a
+  `Retry-After` header in seconds — honour it and you'll be served immediately. `X-RateLimit-Limit`
+  and `X-RateLimit-Reset` (unix epoch seconds) come with it.
+
+Behind a shared NAT you share a bucket with everyone on that address; cached responses don't count,
+which is what makes that workable in practice. If you're building something that genuinely needs
+more, open an issue — the numbers are policy, not physics. Full reasoning, and what the limiter
+does and doesn't protect against, is in
+[`ARCHITECTURE.md`](ARCHITECTURE.md#caching-and-rate-limits).
+
 To smoke-test the deployed 404 behaviour for an unknown protocol id, run:
 
 ```bash
