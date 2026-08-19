@@ -592,3 +592,14 @@ dashboard (same `Store` methods, identical JSON contract).
 The package is kept in the tree — as the reference for the original bare-Node implementation and in
 case a standalone API service is ever wanted again — but it is **legacy and not deployed**. The
 live API is the dashboard's routes.
+
+**It is not at parity, deliberately.** It has no caching and no rate limiting, and those were not
+back-ported when the dashboard routes gained them. Both are deployment concerns rather than API
+concerns: the cache is a `Cache-Control` header that only means something with a CDN in front, and
+the rate limiter's counter lives in Postgres _specifically because_ serverless has no shared memory
+— a single long-lived Node process has memory, so paying a database round trip per request there
+would be the wrong trade. Whoever revives it owns both decisions afresh; the JSON contract and the
+versioned paths are what must not change. The one rule that does carry over is a property of the
+data rather than the transport: **whatever caches it must not mask `lastRunAt`/`lastRunStatus`.**
+The header comment in `api/src/index.ts` says all of this at the point someone would actually read
+it.
