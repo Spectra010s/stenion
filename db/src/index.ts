@@ -8,4 +8,5 @@ export {
   type LeaderboardEntry,
   type HistoryEntry,
   type ProtocolDetail,
+  type RecentRun,
 } from './store';

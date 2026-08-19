@@ -127,6 +127,18 @@ export interface ProtocolDetail {
 /** How many recent history rows GET /api/v1/protocol/:id returns. */
 export const DETAIL_HISTORY_LIMIT = 50;
 
+/**
+ * One run's status and error, newest-first, for the indexer's consecutive-failure
+ * check. Deliberately narrower than `HistoryEntry`: the streak logic needs only
+ * whether a run failed, what it said, and when — never a score or a factor map.
+ */
+export interface RecentRun {
+  status: 'ok' | 'failed';
+  /** the failure message on a failed run; null on an ok one */
+  error: string | null;
+  runAt: string;
+}
+
 export interface Store {
   /**
    * Insert-or-update the protocol row from adapter metadata. Idempotent.
@@ -142,6 +154,14 @@ export interface Store {
   listProtocolsWithLatestScore(): Promise<LeaderboardEntry[]>;
   /** One protocol's detail + recent history, or null if the id is unknown. */
   getProtocolDetail(id: string): Promise<ProtocolDetail | null>;
+  /**
+   * The newest `limit` runs for one protocol, newest first — status/error/runAt
+   * only. This is what the indexer derives a consecutive-failure streak from
+   * rather than persisting a counter: the history IS the streak, so the two
+   * cannot disagree. An unknown protocol, or one with no runs yet, returns `[]`
+   * — and an empty array must read as "no failures", never as "never succeeded".
+   */
+  listRecentRuns(protocolId: string, limit: number): Promise<RecentRun[]>;
 }
 
 /** timestamptz comes back from pg as a Date; the API contract is ISO strings. */
@@ -420,6 +440,30 @@ export function createStore(pool: Pool): Store {
       );
 
       return toProtocolDetail(row, historyRows);
+    },
+
+    async listRecentRuns(protocolId, limit) {
+      // Same (protocol_id, run_at DESC) index the LATERAL joins above walk, with
+      // a small LIMIT — this runs once per protocol per cycle, so it has to stay
+      // an index walk rather than anything that touches the whole partition.
+      const { rows } = await pool.query<{
+        status: 'ok' | 'failed';
+        error: string | null;
+        run_at: Date;
+      }>(
+        `SELECT status, error, run_at
+           FROM risk_scores
+          WHERE protocol_id = $1
+          ORDER BY run_at DESC
+          LIMIT $2`,
+        [protocolId, limit],
+      );
+
+      return rows.map((row) => ({
+        status: row.status,
+        error: row.error,
+        runAt: row.run_at.toISOString(),
+      }));
     },
   };
 }
