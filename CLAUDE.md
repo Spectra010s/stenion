@@ -111,8 +111,17 @@ in-process (no HTTP hop). The indexer is triggered by a secret-gated cron route
 this repo** — there is no workflow or `vercel.json` `crons` entry to find. `@stenion/api` is legacy —
 kept but not deployed. Env vars: `DATABASE_URL` (Neon pooled), `STENION_RPC_URL`,
 `STENION_HORIZON_URL`, `CRON_SECRET`, plus optional `STENION_ALERT_WEBHOOK_URL` (indexer failure
-alerts; unset = off) and the retry/threshold knobs, which all have defaults. Every variable the repo
-understands is documented in `.env.example`.
+alerts; unset = off), `STENION_RATE_LIMIT_SALT`, and the retry/threshold and rate-limit knobs, which
+all have defaults. Every variable the repo understands is documented in `.env.example`.
+
+The two `/v1` read routes are CDN-cached and rate limited; the cron route is **neither**, and must
+stay that way — rate limiting an authenticated internal trigger can only block a scheduled run.
+Caching there is meaningless (it's a POST that does work). The rate limiter's counter lives in
+Postgres because serverless has no shared memory, and it **fails open**: a limiter that can 429 the
+whole API when its own query breaks is worse than no limiter. Policy, limits and the
+staleness-vs-cache reasoning live in `ARCHITECTURE.md` "Caching and rate limits" — the load-bearing
+rule here is that **caching must never mask `lastRunAt`/`lastRunStatus`**, which is why the TTL is
+computed per response from the body rather than being a constant.
 
 > **The 60s ceiling is load-bearing.** `maxDuration` is capped at 60 on Vercel's Hobby tier and
 > cannot be raised. The indexer's retry budget (`STENION_CYCLE_BUDGET_MS`, default 42s, divided per

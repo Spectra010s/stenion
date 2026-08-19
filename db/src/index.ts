@@ -10,3 +10,11 @@ export {
   type ProtocolDetail,
   type RecentRun,
 } from './store';
+export {
+  createRateLimiter,
+  decisionFromTokens,
+  type RateLimiter,
+  type RateLimitDecision,
+  type RateLimitPolicy,
+  type RateLimiterOptions,
+} from './rate-limit';

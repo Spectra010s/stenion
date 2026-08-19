@@ -51,6 +51,17 @@ describe('jsonResponse', () => {
     assert.equal(await res.text(), 'null');
   });
 
+  it('lets a caller state the caching decision without losing CORS', async () => {
+    // The caching decision is per-response (it is computed from the body's
+    // lastRunAt values), so it arrives as an extra header. If that spread ever
+    // clobbered the CORS or content-type entries, every browser client would
+    // break at exactly the moment caching was turned on.
+    const res = jsonResponse({ protocols: [] }, 200, { 'cache-control': 'public, s-maxage=45' });
+    assert.equal(res.headers.get('cache-control'), 'public, s-maxage=45');
+    assert.equal(res.headers.get('access-control-allow-origin'), '*');
+    assert.equal(res.headers.get('content-type'), 'application/json; charset=utf-8');
+  });
+
   it('does not mutate the shared CORS header object', async () => {
     // jsonResponse spreads CORS_HEADERS into a new object; if that ever became
     // a mutation, one route's status or content-type would leak into every

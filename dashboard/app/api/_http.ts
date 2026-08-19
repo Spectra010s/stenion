@@ -19,10 +19,25 @@ export const CORS_HEADERS: Record<string, string> = {
   'access-control-allow-headers': 'content-type',
 };
 
-/** JSON response carrying the CORS headers, matching the shipped API contract. */
-export function jsonResponse(body: unknown, status = 200): Response {
+/**
+ * JSON response carrying the CORS headers, matching the shipped API contract.
+ *
+ * `extraHeaders` is spread LAST so a caller can set `cache-control` (and only
+ * really that — see ./_cache and ./_rate-limit). It comes last on purpose: the
+ * caching decision is per-response and depends on the body, so a route has to be
+ * able to state it here rather than have a default silently win.
+ */
+export function jsonResponse(
+  body: unknown,
+  status = 200,
+  extraHeaders: Record<string, string> = {},
+): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'content-type': 'application/json; charset=utf-8', ...CORS_HEADERS },
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      ...CORS_HEADERS,
+      ...extraHeaders,
+    },
   });
 }
