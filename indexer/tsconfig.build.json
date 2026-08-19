@@ -1,10 +1,23 @@
 {
   // The emitting config. Excludes tests so they're typechecked but never
   // compiled into dist/.
+  //
+  // `allowImportingTsExtensions` + `rewriteRelativeImportExtensions` are here
+  // because cycle.ts is BOTH imported by a test and importing siblings of its
+  // own — the first package where those two overlap. Node's type-stripping ESM
+  // loader resolves a test's import graph literally, so cycle.ts must name
+  // `./retry.ts`, while the emitted CommonJS must say `./retry.js`; the rewrite
+  // flag is what lets one source satisfy both. Without it the choice is a test
+  // that cannot load the module or a build that cannot emit it.
+  //
+  // Scoped to this package deliberately: everywhere else, a tested module is a
+  // leaf with no relative imports, and that stays the simpler default.
   "extends": "../tsconfig.node.json",
   "compilerOptions": {
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "src",
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true
   },
   "include": ["src"],
   "exclude": ["src/**/*.test.ts"]

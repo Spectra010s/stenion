@@ -71,6 +71,12 @@ These override any default behavior and are enforced in code and review:
   and the editor red-underlines every `.ts` import while the CLI stays green. Verify with
   `pnpm -r exec tsc --showConfig` if something looks off (restart the TS server before assuming a
   config bug — editor squiggles can be stale cache).
+- **A tested module should be a leaf.** Node's type-stripping loader resolves a test's import graph
+  literally, so a module a test imports cannot use extensionless relative imports. Keep such modules
+  free of relative imports and the question never arises. `indexer/src/cycle.ts` is the one
+  exception — it imports `./retry.ts` / `./alerts.ts` with explicit extensions, and
+  `indexer/tsconfig.build.json` adds `rewriteRelativeImportExtensions` so tsc emits `.js`. Prefer
+  the leaf shape; reach for the flag only when a tested module genuinely needs siblings.
 - **Error handling:** adapters throw on failure; the indexer wraps each run in try/catch and records
   a failed/stale run. Error handling lives in the indexer, not duplicated per adapter. The indexer
   runs adapters through the `toTarget<T>()` wrapper (see [`indexer/src/index.ts`](indexer/src/index.ts))
@@ -104,7 +110,15 @@ in-process (no HTTP hop). The indexer is triggered by a secret-gated cron route
 `Authorization: Bearer <CRON_SECRET>`. That schedule lives in the cron-job.org dashboard, **not in
 this repo** — there is no workflow or `vercel.json` `crons` entry to find. `@stenion/api` is legacy —
 kept but not deployed. Env vars: `DATABASE_URL` (Neon pooled), `STENION_RPC_URL`,
-`STENION_HORIZON_URL`, `CRON_SECRET`.
+`STENION_HORIZON_URL`, `CRON_SECRET`, plus optional `STENION_ALERT_WEBHOOK_URL` (indexer failure
+alerts; unset = off) and the retry/threshold knobs, which all have defaults. Every variable the repo
+understands is documented in `.env.example`.
+
+> **The 60s ceiling is load-bearing.** `maxDuration` is capped at 60 on Vercel's Hobby tier and
+> cannot be raised. The indexer's retry budget (`STENION_CYCLE_BUDGET_MS`, default 42s, divided per
+> protocol) exists to stay inside it: a cycle killed mid-flight can leave one protocol scored and the
+> other neither scored nor recorded as failed, which is worse than a clean failure. Raise the budget
+> only against observed cycle durations, never by arithmetic alone.
 
 > **Local hazard:** never run `next build`/`next start`/a second `next dev` against the same checkout
 > while a dev server is up — they share one `.next` and corrupt each other. Vercel builds in

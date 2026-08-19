@@ -2,10 +2,14 @@
 //
 // Runs each adapter on a fixed interval, wraps every run in try/catch, and
 // writes the outcome to Postgres (via @stenion/db): safetyScore + factors +
-// timestamps on success, or a failed marker on error. Deliberately dumb —
-// one interval, no retries, no alerting, no backfill. Step 4 wrote these same
-// records to a JSONL file; step 5 swaps only the sink (writeRecord → the DB
-// store), the run loop and RunRecord shape are unchanged.
+// timestamps on success, or a failed marker on error. No backfill, ever.
+//
+// It retries a failing protocol within a wall-clock budget and notifies a
+// webhook when one fails N consecutive cycles (see ./retry and ./alerts). That
+// makes failures LOUDER AND RARER — it does not change what a failure is:
+// adapters still throw, the indexer still catches, and a run that ultimately
+// fails is still recorded as `failed`. A protocol that is genuinely down still
+// shows as down.
 //
 // All configuration comes from validated env (see config.ts) — no silent
 // fallbacks for the RPC/Horizon/pool that decide what and where we index, and
@@ -17,15 +21,17 @@
 import { BlendAdapter, KineticAdapter } from '@stenion/adapters';
 import { closePool, createStore, getPool, type Store } from '@stenion/db';
 
+import { webhookNotifier } from './alerts';
 import { ConfigError, loadConfig, type IndexerConfig } from './config';
-import { runCycle, toTarget, type IndexTarget } from './cycle';
+import { runCycle, toTarget, type CycleOptions, type IndexTarget } from './cycle';
 
 // The run loop itself lives in ./cycle so it can be tested without this file's
 // CLI concerns (the require.main guard below is CommonJS-only). Re-exported here
 // because @stenion/indexer's entry point is this module — the package's public
 // surface is unchanged.
 export { runCycle, toTarget } from './cycle';
-export type { CycleRunResult, CycleSummary, IndexTarget } from './cycle';
+export type { CycleOptions, CycleRunResult, CycleSummary, IndexTarget } from './cycle';
+export type { StreakAlert } from './alerts';
 import type { CycleSummary } from './cycle';
 
 function buildTargets(config: IndexerConfig): IndexTarget[] {
@@ -63,6 +69,28 @@ async function prepare(config: IndexerConfig): Promise<{ targets: IndexTarget[];
 }
 
 /**
+ * Turn validated env into the run loop's injected behaviour. This is the only
+ * place config and the run loop meet — cycle.ts reaches for no env of its own,
+ * which is what keeps its retry and alerting logic testable.
+ *
+ * With STENION_ALERT_WEBHOOK_URL unset (the default) there is no notifier, so
+ * alerting is off while retries and failed-run recording carry on exactly as
+ * before. Alerting is the optional half.
+ */
+function cycleOptions(config: IndexerConfig): CycleOptions {
+  return {
+    retry: {
+      attempts: config.retryAttempts,
+      baseDelayMs: config.retryBaseDelayMs,
+      attemptTimeoutMs: config.attemptTimeoutMs,
+    },
+    budgetMs: config.cycleBudgetMs,
+    alertThreshold: config.alertThreshold,
+    notifier: config.alertWebhookUrl ? webhookNotifier(config.alertWebhookUrl) : undefined,
+  };
+}
+
+/**
  * Run exactly one scoring cycle and return a summary. This is the entry point the
  * dashboard's cron route (app/api/cron/run-indexer) calls: external scheduling
  * (a cron-job.org job, every 5 min) triggers the route, the route calls this, one
@@ -74,7 +102,7 @@ async function prepare(config: IndexerConfig): Promise<{ targets: IndexTarget[];
 export async function runIndexerCycle(): Promise<CycleSummary> {
   const config = loadConfig();
   const { targets, store } = await prepare(config);
-  return runCycle(targets, store);
+  return runCycle(targets, store, cycleOptions(config));
 }
 
 async function main(): Promise<void> {
@@ -109,15 +137,18 @@ async function main(): Promise<void> {
   const { targets, store } = prepared;
 
   console.log(
-    `stenion indexer: ${targets.length} target(s), interval ${config.intervalMs}ms → Postgres`,
+    `stenion indexer: ${targets.length} target(s), interval ${config.intervalMs}ms → Postgres` +
+      ` (up to ${config.retryAttempts} attempt(s)/protocol within a ${config.cycleBudgetMs}ms budget; ` +
+      `alerting ${config.alertWebhookUrl ? `on after ${config.alertThreshold} consecutive failures` : 'off'})`,
   );
-  await runCycle(targets, store);
+  const options = cycleOptions(config);
+  await runCycle(targets, store, options);
   if (config.runOnce) {
     await closePool();
     return;
   }
   setInterval(() => {
-    void runCycle(targets, store);
+    void runCycle(targets, store, options);
   }, config.intervalMs);
 }
 

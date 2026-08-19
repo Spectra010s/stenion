@@ -38,6 +38,13 @@ commitment — priorities shift as protocols launch and as the project finds fun
   themes, and fall back to an initials tile for protocols with no usable mark. The protocol page
   links the scored contract on stellar.expert — the point being that a score should be checkable,
   not merely readable. Marks and links carry an explicit note that neither implies endorsement.
+- **Indexer retry and failure alerting.** A transient RPC blip used to record a failed run silently,
+  and nobody found out until they happened to look at the data. The indexer now retries a failing
+  protocol within a wall-clock budget and POSTs to a webhook when one fails four consecutive cycles
+  (~20 minutes), with a recovery message when it comes back. Failures are **louder and rarer, not
+  hidden**: a run that ultimately fails is still recorded as `failed`. The consecutive-failure
+  streak is derived from `risk_scores` rather than stored in a counter, so it needs no new table and
+  cannot disagree with the history it describes. See [`ARCHITECTURE.md`](ARCHITECTURE.md).
 - **The full stack:** on-chain adapters → indexer → Postgres → API → dashboard, deployed as a single
   Vercel project with external (cron-job.org) scheduling. See [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
@@ -73,6 +80,55 @@ Roughly in priority order, but not committed to dates:
   already there, but the API exposes only `safetyScore` per history point. Charting a single
   factor over time — watching `oracleSafety` sawtooth on its own axis — is deliberately deferred
   until the window question above is settled, because it multiplies the same payload by five.
+- **Concurrent protocols within a cycle — and the protocol-count ceiling that forces it.**
+  **Trigger condition, stated plainly: this becomes necessary at four protocols.** The indexer runs
+  protocols sequentially and divides one wall-clock budget between them, so each protocol's share is
+  `STENION_CYCLE_BUDGET_MS / protocolCount`. At the 42s default that is 21s each for two protocols
+  and 14s each for three — but at four it is 10.5s, which is **below the 15s attempt timeout**, and
+  retries stop happening at all. Nothing breaks loudly when that happens: cycles still run, failures
+  are still recorded, and the retry that this whole feature exists for has simply, silently, stopped.
+  That is the failure mode worth writing down, because it degrades invisibly as the project grows.
+
+  The fix is running protocols concurrently (each then gets the full budget), not a longer budget —
+  the 60s `maxDuration` ceiling on Vercel Hobby cannot be raised. It is deliberately not done yet:
+  concurrency doubles simultaneous load on a shared, rate-limited public RPC, which is itself a
+  source of the failures being retried. **Before adding a fourth adapter, check this.**
+
+- **An `AbortSignal` through `Adapter.fetchRawData`.** The per-attempt timeout is currently _soft_ —
+  it races the attempt against a timer and abandons the loser rather than cancelling it, because no
+  adapter accepts a cancellation signal and Node's `fetch` has no default timeout. That bounds the
+  observed attempt duration, which is what the retry budget needs.
+
+  **Abandoned sockets are harmless only under serverless**, where the invocation ends and takes them
+  with it. `@stenion/indexer` also ships a long-lived standalone loop (`node dist/index.js`,
+  `setInterval`), and there an abandoned attempt is a real leak: the socket and its parsed response
+  stay alive with nothing waiting on them, accumulating one per timed-out attempt for the life of the
+  process. Nothing runs that way in production today, which is why this is filed rather than fixed —
+  but a move to a long-running host makes it a genuine bug, not a tidiness item.
+
+  The fix is a breaking `Adapter` interface change (an optional `signal` on `fetchRawData`, threaded
+  to every RPC and Horizon call in both adapters), so it goes through `ADAPTER_INTERFACE_VERSION`
+  rather than being slipped in.
+
+- **A typed `PermanentAdapterError` in `@stenion/core`.** The indexer deliberately does **not**
+  distinguish transient failures from permanent ones, and retries everything. Today every adapter
+  failure is a bare `new Error(string)` with no typed error and no preserved status code, so the only
+  available classifier is regex over message text — which drifts silently the moment a message is
+  reworded, and drifts _toward retrying nothing_, a failure nobody would notice. It would also buy
+  little: structural failures (a missing storage key, a malformed decode) throw fast, while the slow
+  failures are exactly the transient ones, so classification saves budget precisely where budget is
+  not at risk.
+
+  If it is ever wanted, the clean path is a typed error exported from `core` and thrown by adapters
+  at their structural-decode sites, checked with `instanceof` — never string matching. That touches
+  `core` and every adapter, so it is a deliberate change, flagged here rather than guessed at.
+
+- **Alerting on infrastructure failure, not just protocol failure.** A total database outage is
+  currently silent on the alerting path: no run row is written, so no streak advances and no alert
+  fires — and the streak query would fail too. It surfaces as the cron route returning 500, which
+  nothing watches. Naming what the alerting does _not_ cover matters as much as what it does; closing
+  it means a second, differently-shaped signal (the cycle could not run at all, as distinct from a
+  protocol that could not be scored), which is a separate feature rather than a wider threshold.
 - **Scam / fake-asset warning API.** A real-time, queryable warning layer for wallets, built on top
   of [StellarExpert](https://stellar.expert)'s existing scam directory. A secondary feature, not the
   core pitch — but a natural fit for the "read the chain, warn users" mission.

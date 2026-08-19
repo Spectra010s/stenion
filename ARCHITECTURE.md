@@ -36,6 +36,16 @@ TypeScript is configured in four layers (see [`CLAUDE.md`](CLAUDE.md) for the ra
   underlines every `.ts` import. All four backend packages (`core`, `adapters`, `db`, `indexer`)
   use this split.
 
+  **One package needs more: `indexer`.** Everywhere else a tested module is a _leaf_ with no
+  relative imports of its own, so the question never arises. `indexer/src/cycle.ts` is the first
+  module that is both imported by a test and importing siblings (`./retry`, `./alerts`). Node's
+  type-stripping ESM loader resolves a test's import graph literally, so the source must say
+  `./retry.ts`; the emitted CommonJS must say `./retry.js`. `indexer/tsconfig.build.json` therefore
+  adds `allowImportingTsExtensions` + `rewriteRelativeImportExtensions` (TS 5.7+), which rewrites
+  the extension on emit and lets one source satisfy both. Without it the choice is a test that
+  cannot load the module or a build that cannot emit it. Scoped to that package on purpose —
+  leaf-only tested modules remain the simpler default.
+
 - `dashboard` has its own Next.js-generated config (bundler resolution) — it does **not** extend
   the Node config. It needs no split: it's already `noEmit` and sets the flag directly.
 
@@ -97,23 +107,116 @@ The column is therefore required rather than defaulted: a future writer that bum
 `METHODOLOGY_VERSION` and forgets it fails loudly instead of being silently stamped with the old
 version — a mis-stamp that could never be repaired, since the raw inputs are not stored.
 
-Migrations are raw `.sql` files plus a ~40-line runner (`db/src/migrate.ts`) — no ORM.
+`Store` also exposes `listRecentRuns(protocolId, limit)` — status/error/`runAt` for the newest N
+runs of one protocol, newest first. It exists for the indexer's consecutive-failure alerting, which
+derives a streak from this history rather than persisting a counter (see the indexer section). It is
+deliberately narrower than `HistoryEntry`: the streak logic needs only whether a run failed, what it
+said, and when — never a score or a factor map.
+
+Migrations are raw `.sql` files plus a ~40-line runner (`db/src/migrate.ts`) — no ORM. Alerting
+added **no** migration and no new table: that was the point of deriving the streak.
 
 **`@stenion/indexer`** — the scheduler. On an interval it runs every adapter through a small
 `toTarget<T>()` wrapper (which hides each adapter's `TRawData` so a heterogeneous adapter list can
 share one typed run loop), wraps each run in try/catch, and writes the outcome — score + factors,
-or a failed marker — to Postgres. Deliberately dumb: one interval, no retries, no alerting. It
-exports `runIndexerCycle()` (one cycle, used by the cron route) and guards its standalone loop
-behind `require.main === module` so importing it doesn't start the loop.
+or a failed marker — to Postgres. It exports `runIndexerCycle()` (one cycle, used by the cron route)
+and guards its standalone loop behind `require.main === module` so importing it doesn't start the
+loop.
 
-The package is two modules, split along a line worth preserving. `src/cycle.ts` holds the run loop
-(`runCycle`, `toTarget`) and is a pure function of its arguments — it takes the targets and the
-`Store` to write to, and reaches for no env, no pool, and no config. `src/index.ts` is the process
-entry point: env loading, pool construction, the interval, and the `require.main` guard. The split
-exists because the error model is the part most worth testing and least exercised in production, and
-the entry point cannot be imported from a test at all — its `require.main` guard and extensionless
-relative imports are both CommonJS-only, which Node's ESM type-stripping loader rejects. Keep new
-run-loop logic in `cycle.ts`.
+The package is four modules, split along lines worth preserving. `src/cycle.ts` holds the run loop
+(`runCycle`, `toTarget`) and is a pure function of its arguments — it takes the targets, the `Store`
+to write to, and its retry/alerting behaviour as an argument, reaching for no env, no pool, and no
+config. `src/retry.ts` and `src/alerts.ts` are pure leaf modules (below). `src/index.ts` is the
+process entry point: env loading, pool construction, the interval, and the `require.main` guard —
+and it is the only place config and the run loop meet. The split exists because the error model is
+the part most worth testing and least exercised in production, and the entry point cannot be
+imported from a test at all — its `require.main` guard and extensionless relative imports are both
+CommonJS-only, which Node's ESM type-stripping loader rejects. Keep new run-loop logic in
+`cycle.ts`.
+
+**Retry and failure alerting.** The indexer used to be deliberately dumb — one interval, no retries,
+no alerting — so a transient RPC blip recorded a failed run silently and nobody found out until they
+looked. It now retries and notifies. This makes failures **louder and rarer; it does not change what
+a failure is**. Adapters still throw, the indexer still catches, and a run that ultimately fails is
+still recorded as `failed` — a protocol that is genuinely down still shows as down.
+
+- **Bounded retry against a wall-clock deadline, not a fixed schedule.** `src/retry.ts`'s
+  `withRetry` takes an absolute deadline and never runs past it: each attempt is capped at whatever
+  time is actually left, and a retry starts only if the remaining budget covers the backoff plus an
+  attempt worth making. The attempt count and delays are the ceiling; the deadline is the guarantee.
+  This is deliberate — a fixed schedule only stays inside 60s if you know how long an attempt takes,
+  and nothing does: every RPC call in both adapters is a bare `await` with no `AbortSignal`, and
+  Node's `fetch` has no default timeout.
+- **The 60s ceiling is the binding constraint.** `maxDuration` is capped at 60 on Vercel's Hobby
+  tier and cannot be raised, and a cycle killed mid-flight is worse than one that fails cleanly — it
+  can leave one protocol scored and the other neither scored nor recorded as failed. The run loop's
+  budget (`STENION_CYCLE_BUDGET_MS`, default 42s) is divided **per protocol**, as a share of what is
+  left rather than a fixed split, so one protocol failing cannot spend the other's retries while a
+  protocol that finishes early hands its slack on. Worst-case cycle ≈ 42s in the run loop plus cold
+  start, pool connect, upserts, streak queries and a 3s-capped alert POST — comfortably inside 60s.
+  Measured live `fetchRawData` on 2026-08-19: Blend 6.0–7.5s, Kinetic 7.7–10.5s.
+- **The attempt timeout is soft.** It races the attempt against a timer, abandoning the in-flight
+  work rather than cancelling it. That bounds the observed attempt duration, which is what the
+  budget needs, and is harmless under serverless where the socket dies with the invocation. True
+  cancellation needs an `AbortSignal` threaded through `Adapter.fetchRawData` — a breaking interface
+  change, tracked in [`ROADMAP.md`](ROADMAP.md).
+- **Transient and permanent failures are deliberately not distinguished.** Every adapter failure is
+  a bare `new Error(string)` with no typed error and no preserved status code, so the only available
+  classifier is regex over message text — which drifts silently when a message is reworded, and
+  drifts toward retrying nothing. It also buys little: the structural failures (a missing storage
+  key, a malformed decode) throw fast, while the slow failures are exactly the transient ones, so
+  classification would save budget precisely where budget is not at risk. The wall-clock deadline
+  protects the case that matters. A typed `PermanentAdapterError` in `core` is the clean path if
+  this is ever wanted; it is in `ROADMAP.md`, not guessed at here.
+- **Alerting fires after N consecutive failures** (`STENION_ALERT_THRESHOLD`, default 4 ≈ 20 minutes
+  at the 5-minute cadence), POSTed to `STENION_ALERT_WEBHOOK_URL` as a plain `fetch` — no
+  dependency, and unset means alerting is simply off. Both arms are edge-triggered: `failing` fires
+  at **exactly** N so a six-hour outage is one message rather than seventy-two, and a `recovered`
+  message follows when the protocol scores again. The recovery half is what makes silence after an
+  alert unambiguous; resolving that ambiguity by re-alerting every cycle would need dedup state this
+  deliberately doesn't have. An alert names the protocol, the streak length, how long it has been
+  going, the latest error verbatim, and every distinct message in the streak — four identical errors
+  and four different ones usually mean "the protocol changed" versus "the RPC provider is flaky".
+- **The rendered message is capped at 2,000 characters** (`MAX_MESSAGE_CHARS`). Discord _rejects_ a
+  longer `content` with a 400 rather than truncating it, and the case that reaches the limit is the
+  worst one available: an RPC-wide outage takes out every protocol, they all cross the threshold on
+  the same cycle, and their alerts batch into one POST — two protocols with four distinct Soroban
+  `HostError` messages each renders to ~2,500 characters. Without the cap, the alert for the biggest
+  possible outage is the one that silently never arrives. The structured `alerts` array is never
+  truncated, so nothing is lost for a machine consumer.
+- **Verifying delivery without waiting for a real outage:** `pnpm smoke:alert-webhook` drives the
+  real path — a seeded failure streak through `runCycle`, `decideAlert`, `formatAlert` and the real
+  `webhookNotifier` — at a live webhook URL, reporting the HTTP status and body that
+  `webhookNotifier` itself discards. It uses an in-memory store (Postgres is untouched) and an
+  obviously fake protocol id, so a message landing in a shared channel cannot be mistaken for a real
+  outage. `--dry-run` prints the payload without sending; `--mode failing|recovered` picks one arm.
+  Confirmed against a live Discord webhook on 2026-08-19: both arms accepted, HTTP 204.
+
+**Where the streak lives: derived, not counted.** The indexer is invoked per-cycle by an external
+scheduler, so there is no long-running process to hold a counter. The streak is read back out of
+`risk_scores` each cycle (`Store.listRecentRuns`, a bounded walk of the
+`(protocol_id, run_at DESC)` index the leaderboard's LATERAL joins already use). A persisted counter
+would be a second source of truth that can disagree with the history it describes — `insertRunRecord`
+failure is caught and logged rather than fatal, so a counter could increment beside a row that never
+landed, and the alert would claim a streak the database cannot show you. Derivation cannot
+desynchronize, because it _is_ the history.
+
+The predicate is **"count `failed` rows from the newest backwards until the first non-failed one"**,
+and it is deliberately _not_ "no ok run in the last N". The two agree on a populated table and
+disagree catastrophically on an empty one: a protocol with no history at all satisfies the second
+immediately, so a freshly-truncated `risk_scores` would page someone on the first cycle. Counting
+backwards yields 0 on an empty history, so an alert requires N rows that actually exist and actually
+failed, and a newly-added protocol is protected by the same arithmetic with no special case. This
+stopped being hypothetical on **2026-08-19**, when `risk_scores` was truncated — the streak
+derivation now genuinely starts from an empty table. Both cases are asserted in
+`indexer/src/alerts.test.ts` and `indexer/src/cycle.test.ts`.
+
+**What this does NOT cover: a total database outage.** If Postgres is unreachable, no run row is
+written, so no streak advances and no alert fires — and the streak query would fail too. That
+surfaces as the cron route returning 500 (`prepare()` throws before the loop), not as a webhook
+message. Reading "the indexer alerts on failure" as including "the database is gone" would be wrong.
+Alerting on infrastructure failure as well as protocol failure is a separate feature, deliberately
+not folded in here.
 
 **`@stenion/dashboard`** — a Next.js 15 (App Router) site, and the actual deployment target. It's
 three things in one Vercel project:
@@ -271,8 +374,18 @@ The worked examples:
   in-process), so nothing else would catch a regression.
 - **`indexer/src/cycle.test.ts`** — the run loop's error model, against a deliberately throwing
   adapter and an in-memory `Store`. The contract is that an adapter throws, the indexer records a
-  failed run and continues; as of 2026-08-16 `risk_scores` held 1,683 rows and **zero** failed ones,
-  so nothing about this path is evidenced by it having run in production.
+  failed run and continues; `risk_scores` has **never** held a failed row (1,683 rows as of
+  2026-08-16, and truncated on 2026-08-19), so nothing about this path is evidenced by it having run
+  in production. Also covers retry inside the loop (a transient failure clearing on a later attempt;
+  an exhausted retry still recording `failed` with the adapter's own message), the per-protocol
+  budget share, and alerting against a **seeded** failure streak — including the case that matters
+  most now, that an empty history raises nothing on the first cycle.
+- **`indexer/src/retry.test.ts`** — the backoff schedule and the deadline, driven by a fake clock so
+  the timing is asserted rather than waited on. Pins the two properties the design rests on: it
+  never runs past its deadline, and it rejects with the _last_ error rather than swallowing it.
+- **`indexer/src/alerts.test.ts`** — streak counting, the edge-triggered fire/recover decision, and
+  the message text. The first assertions are the empty- and near-empty-history guarantee: a fresh
+  `risk_scores` and a first-ever failed cycle must both raise nothing.
 - **`dashboard/app/lib/format.test.ts`** — the freshness descriptor and its colour mapping, on the
   same footing as the score-series tests below and for the same reason: no run has ever failed, so
   every string a reader would see on a failed run exists only here. One assertion is a rule rather
@@ -282,8 +395,12 @@ The worked examples:
   proven against fixtures rather than by looking at the page.
 
 **Environment variables** (all on the one Vercel project, Production + Preview): `DATABASE_URL`
-(Neon pooled), `STENION_RPC_URL`, `STENION_HORIZON_URL`, `CRON_SECRET`. Locally, every package
-reads these from a single repo-root `.env` via a walk-up loader.
+(Neon pooled), `STENION_RPC_URL`, `STENION_HORIZON_URL`, `CRON_SECRET`, and optionally
+`STENION_ALERT_WEBHOOK_URL` (failure/recovery alerts; unset = alerting off). The retry and
+threshold knobs — `STENION_RETRY_ATTEMPTS`, `STENION_RETRY_BASE_DELAY_MS`,
+`STENION_ATTEMPT_TIMEOUT_MS`, `STENION_CYCLE_BUDGET_MS`, `STENION_ALERT_THRESHOLD` — all have
+defaults and only need setting to override them; every one is documented in `.env.example`.
+Locally, every package reads these from a single repo-root `.env` via a walk-up loader.
 
 ### API versioning
 

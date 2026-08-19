@@ -17,6 +17,26 @@ export interface IndexerConfig {
   databaseUrl: string;
   /** Run a single cycle then exit instead of looping. */
   runOnce: boolean;
+  /** Total attempts per protocol per cycle, including the first. 1 disables retry. */
+  retryAttempts: number;
+  /** Delay before the 2nd attempt, doubling for each one after. */
+  retryBaseDelayMs: number;
+  /** Soft cap on a single attempt — see RetryPolicy.attemptTimeoutMs. */
+  attemptTimeoutMs: number;
+  /**
+   * Wall-clock budget for one cycle's run loop, split between protocols.
+   *
+   * The ceiling is Vercel Hobby's `maxDuration = 60`, which cannot be raised, so
+   * this must leave room for cold start, pool connect, the protocol upserts, the
+   * streak queries and the alert POST on top. Conservative by choice: a cycle
+   * killed mid-flight can leave one protocol scored and another neither scored
+   * nor recorded as failed, which is worse than a retry that never happened.
+   */
+  cycleBudgetMs: number;
+  /** Consecutive failed cycles before a protocol raises an alert. */
+  alertThreshold: number;
+  /** Webhook alerts are POSTed to, or null when alerting is disabled. */
+  alertWebhookUrl: string | null;
 }
 
 /** Thrown when env validation fails; carries every problem so all are shown at once. */
@@ -115,6 +135,29 @@ function optionalPositiveInt(name: string, fallback: number): number {
   return n;
 }
 
+/**
+ * An http(s) URL if set, null if not. Unlike requiredUrl, absence is a valid
+ * answer — an unset alert webhook means "alerting is off", which is the default
+ * and must not stop the indexer. A malformed one is still a problem, though:
+ * silently not alerting because of a typo is the failure this whole change
+ * exists to prevent.
+ */
+function optionalUrl(name: string): string | null {
+  const raw = process.env[name]?.trim();
+  if (!raw) return null;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    problems.push(`${name} must be a valid URL, got "${raw}"`);
+    return null;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    problems.push(`${name} must be an http(s) URL, got "${raw}"`);
+  }
+  return raw;
+}
+
 function optionalBool(name: string, fallback: boolean): boolean {
   const raw = process.env[name]?.trim().toLowerCase();
   if (raw === undefined || raw === '') return fallback;
@@ -139,6 +182,18 @@ export function loadConfig(cwd: string = process.cwd()): IndexerConfig {
     intervalMs: optionalPositiveInt('STENION_INTERVAL_MS', 5 * 60 * 1000),
     databaseUrl: requiredPostgresUrl('DATABASE_URL'),
     runOnce: process.argv.includes('--once') || optionalBool('STENION_RUN_ONCE', false),
+    retryAttempts: optionalPositiveInt('STENION_RETRY_ATTEMPTS', 3),
+    retryBaseDelayMs: optionalPositiveInt('STENION_RETRY_BASE_DELAY_MS', 1000),
+    attemptTimeoutMs: optionalPositiveInt('STENION_ATTEMPT_TIMEOUT_MS', 15_000),
+    // 42s, not the 48s the arithmetic alone allows: there are no observed cycle
+    // durations from the deployed function yet, so this errs toward the ceiling
+    // being safe. Raise it once the Vercel logs show real headroom.
+    cycleBudgetMs: optionalPositiveInt('STENION_CYCLE_BUDGET_MS', 42_000),
+    // 4 cycles ≈ 20 minutes at the 5-minute cadence. One blip must not page
+    // anyone, and a score 20 minutes stale is not an emergency — false pages are
+    // how people learn to ignore alerts.
+    alertThreshold: optionalPositiveInt('STENION_ALERT_THRESHOLD', 4),
+    alertWebhookUrl: optionalUrl('STENION_ALERT_WEBHOOK_URL'),
   };
 
   if (problems.length > 0) throw new ConfigError([...problems]);
