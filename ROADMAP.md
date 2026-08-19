@@ -45,6 +45,12 @@ commitment — priorities shift as protocols launch and as the project finds fun
   hidden**: a run that ultimately fails is still recorded as `failed`. The consecutive-failure
   streak is derived from `risk_scores` rather than stored in a counter, so it needs no new table and
   cannot disagree with the history it describes. See [`ARCHITECTURE.md`](ARCHITECTURE.md).
+- **Public API documentation.** [`API.md`](API.md), rendered on the site at `/docs/api`. Until now
+  the only way to learn the contract was reading the route handlers on GitHub, which is a barrier
+  for exactly the wallet-integrator audience the API exists for. Covers both endpoints with live
+  captured examples, the versioning commitment (additive stays on `v1`, breaking gets a `v2`), the
+  `ok`/`failed` history union, the staleness model, rate limits, and error shapes. Every example is
+  a verbatim capture from production rather than written from the types.
 - **The full stack:** on-chain adapters → indexer → Postgres → API → dashboard, deployed as a single
   Vercel project with external (cron-job.org) scheduling. See [`ARCHITECTURE.md`](ARCHITECTURE.md).
 

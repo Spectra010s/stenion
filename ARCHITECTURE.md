@@ -229,9 +229,19 @@ not folded in here.
 **`@stenion/dashboard`** — a Next.js 15 (App Router) site, and the actual deployment target. It's
 three things in one Vercel project:
 
-1. The public site (homepage, registry, on-site methodology, about, per-protocol detail pages).
-   Data pages are async Server Components that read `@stenion/db`'s `Store` **in-process** — no
-   HTTP hop.
+1. The public site (homepage, registry, on-site methodology, on-site API docs, about, per-protocol
+   detail pages). Data pages are async Server Components that read `@stenion/db`'s `Store`
+   **in-process** — no HTTP hop.
+
+   **Rendered docs** (`/methodology`, `/docs/api`) are a second, separate kind of page: they read a
+   repo-root markdown file at request time and render it through `components/markdown-doc.tsx`, so
+   the file stays the single source of truth and is readable both on GitHub and on the site. Each
+   such route needs an `outputFileTracingIncludes` entry in `next.config.mjs`, because the file
+   lives outside the dashboard directory and would otherwise be missing from the serverless bundle
+   — a failure that is invisible in `next dev`, where the file is simply on disk. `MarkdownDoc`
+   adds heading anchors, wraps tables in their own scroll container, gives code fences a copy
+   button, and rewrites repo-relative links to the GitHub source **except** for files that are
+   themselves rendered here (`app/lib/site.ts`'s `RENDERED_DOC_ROUTES`), which stay on-site.
 
    The protocol page's **score-history chart** is a client component drawing hand-rolled SVG (no
    charting library) over the `history` array the detail response already carries — it adds no
@@ -554,6 +564,16 @@ The public API is versioned in the URL. The documented, canonical paths are:
 | -------------------------- | --------------------------------------------------- |
 | `GET /api/v1/protocols`    | The leaderboard: every protocol + its latest score. |
 | `GET /api/v1/protocol/:id` | One protocol's detail, factors, and run history.    |
+
+**The consumer-facing reference is [`API.md`](API.md)**, rendered on the site at `/docs/api`. This
+section owns the _policy_; that document owns the contract as an integrator meets it — request and
+response examples, the `ok`/`failed` history union, the staleness model, error shapes, and the
+observable caching/rate-limit headers. Its examples are captured from the live production API
+rather than written from the types, deliberately: a doc written from `db/src/store.ts` would
+reproduce the type rather than the truth. **Re-capture them when a response shape changes** —
+and note that what a client actually observes is not always what a route sets (Vercel's CDN
+consumes `s-maxage`, so a `200` reaches the client as `Cache-Control: public, max-age=0` plus
+`Age`).
 
 **The policy:**
 

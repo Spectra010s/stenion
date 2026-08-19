@@ -37,6 +37,9 @@ export function Footer() {
               <Link href="/methodology" className="text-muted hover:text-ink">
                 Methodology
               </Link>
+              <Link href="/docs/api" className="text-muted hover:text-ink">
+                API docs
+              </Link>
             </nav>
           </div>
         </div>
