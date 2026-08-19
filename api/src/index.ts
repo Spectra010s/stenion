@@ -22,6 +22,36 @@
 // those are separate concerns, not built speculatively. The leaderboard ranks
 // purely on safety_score (payment-blind, a non-negotiable rule).
 //
+// ---------------------------------------------------------------------------
+// NOT AT PARITY WITH THE DEPLOYED ROUTES. READ THIS BEFORE SPINNING IT BACK UP.
+//
+// The dashboard's route handlers gained CDN caching and a rate limiter; this
+// server has NEITHER, and that gap is deliberate rather than an oversight to
+// port across. Both of those are deployment concerns, not API concerns:
+//
+//   - The cache is a `Cache-Control` header interpreted by Vercel's CDN. A
+//     standalone service has no CDN in front of it by default, so the same
+//     header would be a no-op — the shared cache tier has to come from wherever
+//     this is actually deployed (a reverse proxy, a CDN, or an in-process cache,
+//     which only becomes viable once there is a single long-lived process).
+//   - The rate limiter's counter lives in Postgres SPECIFICALLY because
+//     serverless has no shared memory. A single long-lived Node process does,
+//     so paying a database round trip per request here would be the wrong
+//     trade — this is exactly the case where an in-memory bucket is correct.
+//
+// So: whoever revives this owns both decisions afresh. What must NOT change on
+// the way is the JSON contract or the versioned paths, which are shared.
+//
+// One rule does carry over verbatim, because it is a correctness property of the
+// data rather than of the transport: WHATEVER CACHES THIS, IT MUST NOT MASK
+// `lastRunAt` / `lastRunStatus`. Those two fields are how a consumer knows our
+// data is stale, so a cache that serves a stale `lastRunStatus` is lying about
+// freshness in the one place we promise not to. The deployed routes solve it by
+// deriving each response's TTL from the `lastRunAt` values in its own body
+// (dashboard/app/api/_cache.ts) rather than using a fixed TTL — the reasoning,
+// and the bound it buys, are in ARCHITECTURE.md "Caching and rate limits".
+// ---------------------------------------------------------------------------
+//
 // Connection: reuses @stenion/db's getPool(), which reads the same repo-root
 // DATABASE_URL the indexer uses — Neon's *pooled* (-pooler / PgBouncer)
 // endpoint. That's the right one under Vercel serverless: many short-lived
