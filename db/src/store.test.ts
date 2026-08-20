@@ -473,9 +473,13 @@ describe('the deployment label on both public responses', () => {
     // to be present, so `adapter: 'BlendAdapter'` reads as the point rather than
     // as a bug.
     adapter: 'BlendAdapter',
-    logo: null,
+    // Mirrors the real row rather than a plausible-looking one, so a reader
+    // comparing this fixture against the live entry finds them agreeing. The
+    // null-logo path has its own coverage on the leaderboard mapping above and
+    // does not need to be smuggled in here.
+    logo: '/assets/protocols/yieldblox.png',
     contract_id: 'CCCCIQSDILITHMM7PBSLVDT5MISSY7R26MNZXCX4H7J5JQ5FPIYOGYFS',
-    site_url: 'https://yieldblox.finance',
+    site_url: 'https://www.yieldblox.xyz',
     docs_url: null,
     deployment_host: 'Blend',
     deployment_label: 'Blend V2 pool',
