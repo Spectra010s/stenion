@@ -108,6 +108,16 @@ export const PROTOCOL_NOTES: Record<string, ProtocolNote[]> = {
           'threshold. It is reported, not scored — the freshness score already grades the ' +
           'worst of them, and grading the spread again would count the same staleness ' +
           'twice.',
+        'Still running as of 2026-08-20. A fresh reading two days after the one above found ' +
+          'SolvBTC at 26 seconds, XLM at 71, USDC at 618 and PYUSD at 23,304 (6h 28m) — the ' +
+          'same split, from the same oracle, in the same call. Two things are worth taking ' +
+          'from the repeat rather than from either reading alone. The condition is a standing ' +
+          'property of these feeds and not a moment we happened to catch. And WHICH feed is ' +
+          'stale moves: USDC was 21,421 seconds old on 2026-08-18 and 618 seconds old on ' +
+          '2026-08-20, while PYUSD exceeded K2’s 3,600-second threshold on both. So a reader ' +
+          'should not take the specific assets named here as the affected set — the pattern is ' +
+          'that some entry is hours behind while others are seconds behind, not that it is ' +
+          'always this one.',
       ],
       verify:
         'Call get_asset_prices_vec_fresh on CCHRZE2K…5BNOMQRMU for the four assets in ' +
@@ -148,6 +158,51 @@ export const PROTOCOL_NOTES: Record<string, ProtocolNote[]> = {
         'Fetch the contract code for CCHRZE2K…5BNOMQRMU and CCTUJZLY…AWNXOJIV6J7 via ' +
         'Soroban RPC getLedgerEntries and read the wasm export section; compare against ' +
         'contracts/price-oracle/src/contract.rs in code-423n4/2026-04-k2.',
+    },
+    {
+      title: 'Two of K2’s live contracts are missing or out of date in its published contract list',
+      body: [
+        'K2 runs its markets as separate router contracts rather than as configurations inside ' +
+          'one pool. Three are live on Stellar mainnet, all deployed from byte-identical code ' +
+          '(wasm df2831cf…), sharing one price oracle, one pool admin and one treasury, each ' +
+          'with its own configurator: the primary pooled market (CCTUJZLY…), a SolvBTC/xSolvBTC ' +
+          'isolated market (CCGXGXIL…), and an Earn market for earnUSDC/USDC (CDWPVHKB…) ' +
+          'operated by a third party, Gami/Upshift.',
+        'The isolated market’s router does not appear on K2’s contracts page. That page lists ' +
+          'the xSolvBTC market as a set of reserve token addresses with no router among them, ' +
+          'and repeats the primary market’s SolvBTC aToken and debt ledger beside them — which ' +
+          'reads as though the market sits inside the primary pool. It does not. The router ' +
+          'address above was not read from any documentation: it came from the pool_address ' +
+          'field in the xSolvBTC aToken’s own instance storage, whose State also names it ' +
+          '"K2 Iso Interest Bearing SolvBTC" (kiSolvBTC). Calling get_reserve_data for xSolvBTC ' +
+          'on the primary router returns Error(Contract, #24) — it is not a reserve there.',
+        'The Earn market’s contract table is out of date in the other direction. It gives the ' +
+          'earnUSDC aToken and debt ledger as "TBA" and says they "will be added once ' +
+          'deployed". Both are deployed and wired: the Earn router’s get_reserves_list returns ' +
+          'earnUSDC alongside USDC, and get_current_reserve_data resolves an aToken at ' +
+          'CCOPG2ZQ… and a debt ledger at CBO4TOFT….',
+        'What this changes for Stenion’s coverage, stated plainly: this entry scores the ' +
+          'primary market only. It is not a score for K2 as a whole, and the two other markets ' +
+          'are unscored rather than assessed and passed over. Neither holds enough to be ' +
+          'scorable — the isolated market held $3.62 and the Earn market held nothing at all ' +
+          'when read on 2026-08-20 — so they fall below the market-size floor in the ' +
+          'methodology, which is why there is no entry for either.',
+        'What is not being claimed: nothing here says the documentation is wrong about what ' +
+          'the contracts do, that anything is hidden, or that any market is unsafe. ' +
+          'Documentation lagging deployment is ordinary, and an empty market is an empty ' +
+          'market rather than a defective one. What is reported is the divergence itself — ' +
+          'a live market reachable only by reading contract storage, and a deployed pair ' +
+          'described as pending — because a reader who takes the published list as complete ' +
+          'gets a different picture of the protocol than the chain gives.',
+      ],
+      verify:
+        'Read the instance storage of the xSolvBTC aToken (CBMGL7ZL…HGYJ6JALVY) via Soroban ' +
+        'RPC getLedgerEntries and take pool_address from its State; call get_reserves_list and ' +
+        'is_paused on the router it names. Compare against the tables at ' +
+        'docs.k2lend.com/contracts and docs.k2lend.com/third-party-markets/contract-addresses. ' +
+        'For the Earn market, call get_reserves_list on CDWPVHKB…KTPF6TZE and ' +
+        'get_current_reserve_data for each asset, and compare the a_token_address it returns ' +
+        'against the "TBA" row. Balances come from total_supply on each aToken and debt ledger.',
     },
     {
       title: 'get_price_with_protection provides no protection',

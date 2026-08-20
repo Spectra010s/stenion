@@ -24,8 +24,11 @@ If the code and this document ever disagree, that is a bug — open an issue (se
 ## Current version
 
 **Methodology v1** — the rulebook described by this document, in full, including `oracleSafety`
-scoring both price freshness and manipulation resistance (§2), and the minimum-size filter §4
-and §5 select reserves through ([The minimum-size filter](#the-minimum-size-filter)).
+scoring both price freshness and manipulation resistance (§2), the minimum-size filter §4
+and §5 select reserves through ([The minimum-size filter](#the-minimum-size-filter)), and the
+[market-size floor](#the-market-size-floor) that decides whether a market is scorable at all.
+The floor is a precondition rather than a formula — it moves no number and did not bump this
+version.
 
 **Versioning begins here.** `methodology_version = 1` is the only version this rulebook
 defines, and the only one any stored row will carry. A version 2 was briefly live in the code
@@ -733,6 +736,118 @@ the **worst reserve** rather than a pool-wide average is deliberate: liquidity c
 in the single most-drained reserve, and averaging would hide it. The mapping (free % → score
 %) is 1:1 and intentionally has no free parameters to tune, so there is nothing arbitrary to
 anchor.
+
+---
+
+### The market-size floor
+
+The [minimum-size filter](#the-minimum-size-filter) one level up. That filter asks whether a
+_reserve_ is big enough for its number to mean anything; this asks the same of a whole
+**market**. They are two halves of one idea — a size below which a published number stops
+carrying information — and they are written together so neither looks like an afterthought.
+
+**The problem it solves.** K2 deploys its markets as separate router contracts running
+identical code, the same way Blend's factory deploys pools. Three are live on mainnet as of
+2026-08-20, and two of them are empty:
+
+| Market                                | Reserves                  | Total priced supplied value |
+| ------------------------------------- | ------------------------- | --------------------------- |
+| K2 primary (`CCTUJZLY…`)              | USDC, XLM, PYUSD, SolvBTC | **$1,781**                  |
+| K2 SolvBTC/xSolvBTC iso (`CCGXGXIL…`) | SolvBTC, xSolvBTC         | **$3.62**                   |
+| K2 Earn / earnUSDC (`CDWPVHKB…`)      | USDC, earnUSDC            | **$0.00**                   |
+
+Point the shipped rulebook at either of the bottom two and it does not fail — it returns a
+**score**. Every factor falls to its can't-assess branch, and every one of those branches is
+**0**. So a market holding nothing publishes 0, in the danger band, reading "this is
+dangerous" to anyone scanning the registry when what is true is "there is nothing in here."
+That is the same misleading-number failure §4 and §5 were filtered for, one level up, and it
+is worse at this level: a filtered reserve still leaves a scored market with a disclosure
+beside it, whereas this is the market's entire published number.
+
+**The rule.** A market is scorable only if it can hold **at least one position the protocol
+itself considers viable**:
+
+| Leg   | Test                                                                                            | Anchor                                                       |
+| ----- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| **A** | total priced supplied USD `≥` the protocol's own declared minimum viable position               | the protocol's own on-chain parameter, where it declares one |
+| **B** | **none — no relative leg exists at this scale.** See below; this is a real gap, not an omission | —                                                            |
+
+| Protocol / market      | Leg A source                                                                                                                  | Value                  |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| **Blend** (both pools) | `PoolConfig.min_collateral`, read per pool                                                                                    | `50000000` = **$5.00** |
+| **Kinetic (K2)**       | **none declared on chain** — the $5.00 above is borrowed as an analogue, and is a flagged judgment call for K2, not an anchor | **$5.00**              |
+
+This is the same parameter, and the same reasoning, that §4/§5's leg A already uses:
+`min_collateral` is the protocol's own statement of the smallest collateral a position may
+hold and still borrow. A market whose **entire** supplied value sits below it cannot host even
+one position the protocol itself would let borrow. There is nothing there to assess, and the
+number is not a measurement of risk — it is a measurement of absence.
+
+Against the table above: K2 Earn fails on total supplied value of exactly zero. The
+SolvBTC/xSolvBTC market fails at $3.62. K2's primary market clears by three orders of
+magnitude, as do both Blend pools.
+
+**Why there is no relative leg, unlike §4/§5.** The reserve filter has two legs because each
+covers a failure the other has. No such second leg exists here. Relative to the market's own
+reserves is what §4 and §5 already do. Relative to the other markets in the registry would
+make one market's listing depend on **another market's** size — a market could become
+unlistable because a different one grew, while nothing about its own on-chain state changed.
+A rule about a market's own data must not have that property. So this floor is absolute-only,
+which is precisely the shape §4/§5 rejected as insufficient on its own, and that limitation is
+the reason it is set low rather than at a number that sounds meaningful.
+
+> **The direction of error is deliberately toward keeping markets in.** Two reasons, and the
+> asymmetry is not the same one §4/§5 reasoned about:
+>
+> - **Raising it buys nothing against the failure it exists for.** A score computed from no
+>   data is fully prevented at $5. Every dollar above that excludes markets that genuinely
+>   _can_ be assessed, in exchange for nothing.
+> - **Excluding a market is a much stronger action than excluding a reserve.** A filtered
+>   reserve leaves a scored market and a published disclosure naming what was suppressed. An
+>   excluded market has no entry at all — no score, no factors, no disclosure, nothing for a
+>   reader to disagree with. §4/§5 already call hiding a small-but-real reserve "strictly
+>   worse" than leaving a dust one in; at market scale that error hides everything at once.
+
+**What this floor guarantees — and what it does not.** It guarantees only that a published
+number was computed from **something rather than nothing**. It is emphatically **not** a
+quality bar: a market holding $50 clears it, and its score would still be close to
+meaningless. Saying so plainly matters more than the threshold does, because a floor that
+sounds like a meaningfulness test while being a scorability test is worse than no floor.
+
+> **⚠️ A separate question this deliberately does NOT answer: is a scorable market worth
+> listing?** K2's primary market is a registered, ranked entry holding **$1,781**. It clears
+> this floor by three orders of magnitude and is still small enough that a reasonable person
+> could ask whether ranking it beside a $185M pool conveys what the ranking appears to convey.
+>
+> That is a **curation** question — what belongs in the registry — not a question about whether
+> a number can be computed, and answering it with a threshold in this document would dress an
+> editorial judgment as a measurement. It also has a consequence a scoring threshold does not:
+> any such bar set above $1,781 would **delist a live entry**, breaking a public URL
+> (`/protocol/kinetic`) and orphaning a published history. Flagged here, resolved nowhere yet.
+
+> **⚠️ An excluded market has NO score. It does not have a score of zero.** This is the
+> market-level form of the warning under §4/§5 about "cannot assess" quietly becoming a number
+> again, and it is the whole reason the floor is written down.
+>
+> - **It must mean:** the market is not registered. If a registered market later falls below
+>   the floor, its published `safetyScore` must become **`null`** — the never-scored
+>   representation the API already defines and the dashboard already renders as an em dash.
+> - **It must never mean:** a score of **0** (which renders in the danger band and says the
+>   opposite of what is true), a score of **100**, or — the live hazard — **registering the
+>   market and letting the five factors fall to their can't-assess branches**, which is exactly
+>   what the shipped code does today and exactly how an empty market publishes a 0.
+>
+> **Enforcement, stated honestly: this floor is currently enforced only by the decision not to
+> register such a market.** No code path implements it. Nothing in an adapter, the indexer or
+> the store can express "this market is not scorable" as distinct from "this market scored 0",
+> so a registered market that drained below the floor would keep publishing a number today.
+> Closing that needs a distinct not-scorable outcome through `Adapter` and `RunRecord`; it is
+> filed in [`ROADMAP.md`](ROADMAP.md) rather than implied to exist here.
+
+**This does not bump `METHODOLOGY_VERSION`.** It moves no published number: every market
+Stenion currently scores — both Blend pools and K2's primary market — clears the floor, so no
+stored score is computed differently and none becomes non-comparable. It documents a
+precondition on what gets scored at all, which is additive.
 
 ---
 
