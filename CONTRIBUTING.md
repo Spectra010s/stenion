@@ -252,8 +252,13 @@ Before writing scoring logic, confirm the protocol is an **independently-scoreab
 lending protocol**. Two real, significant protocols were investigated and _deliberately skipped_
 because they aren't (details in [`ROADMAP.md`](ROADMAP.md)):
 
-- **YieldBlox** — turned out to be a community-managed pool _on Blend V2_, not an independent
-  protocol. An adapter would just be `BlendAdapter` pointed at a different pool.
+- **YieldBlox** — turned out to be a DAO-managed pool _on Blend V2_, not an independent protocol.
+  An adapter would just be `BlendAdapter` pointed at a different pool. **It is now scored anyway —
+  as a pool, not as a protocol:** a `BLEND_POOLS` entry carrying its own slug, contract, links and a
+  `deployedOn` label that says "Blend V2 pool" everywhere it appears. If your candidate turns out to
+  be a Blend market, that is the path — add a pool config, not an adapter. Writing a second adapter
+  for it would duplicate a rulebook that is already shared, which is the thing the taxonomy exists
+  to prevent.
 - **Templar** — its lending market state lives on **NEAR**, not Stellar; only its price oracle is
   native Soroban. Reading NEAR would break the trustless-Stellar rule.
 
@@ -261,6 +266,24 @@ So: confirm reserves, utilization, liquidity, admin, and oracle are all readable
 Horizon** from the protocol's _own_ contracts (not another chain, not another protocol's pool)
 before you commit to an adapter. Confirming this from the contracts first — rather than assuming it
 mirrors Blend/K2 — is the whole point.
+
+**Cheap way to tell a Blend market from a protocol:** read the pool's instance storage. A Blend pool
+has a `Config` with an `oracle`/`status`/`min_collateral`, a `Name`, and a `Backstop` pointing at
+Blend's own backstop contract — and the V2 pool factory (`CDSYOAVX…`) answers `is_pool(address)`
+with `true`. Compare its wasm hash against a known Blend pool's while you are there; if they match
+byte-for-byte, you are looking at a Blend market and the answer is a `BLEND_POOLS` entry.
+
+**Adding a Blend pool**, once you have confirmed that:
+
+1. Add a `BlendPool` to `BLEND_POOLS` in `adapters/blend.ts` — slug, name, pool contract, and a
+   `deployedOn` label. No scoring code, and nothing on that type may be a threshold or a weight.
+2. `pnpm capture:fixture <slug>` and add a block to `adapters/snapshot.test.ts` asserting the
+   captured factor map, the score, and that `metadata.contractId` is **this** pool.
+3. Check the identity fields honestly: omit `logo` unless there is a mark you can self-host (never
+   borrow the host protocol's — that asserts the identity the label exists to deny), and omit `docs`
+   rather than pointing at the host's.
+4. Check the indexer budget. Each added target narrows the first target's share of
+   `STENION_CYCLE_BUDGET_MS`; see the ceiling note in [`ROADMAP.md`](ROADMAP.md).
 
 ## Local development setup
 

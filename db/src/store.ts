@@ -3,7 +3,7 @@
 // not redesigned. This package now owns the persisted contract so both the
 // indexer (writing) and the API (reading, step 6) agree on one definition.
 
-import type { ProtocolMetadata, RiskFactorMap } from '@stenion/core';
+import type { ProtocolDeployment, ProtocolMetadata, RiskFactorMap } from '@stenion/core';
 import type { Pool } from 'pg';
 
 /**
@@ -55,6 +55,20 @@ export interface LeaderboardEntry {
    * across every row of every leaderboard fetch.
    */
   logo: string | null;
+  /**
+   * Set when this entry is a market on another protocol's contracts (see
+   * ProtocolDeployment), null when it runs on its own — which is the normal
+   * case, and never means "unknown".
+   *
+   * This one DOES belong on the board, unlike contractId/site/docs above, and
+   * for the reason those don't: it is not verification detail a reader looks up
+   * after deciding to care, it is part of what the row IS. A row that reads
+   * "YieldBlox · 24" next to "Blend · 54" tells a scanner there are two
+   * protocols here; the whole point of the label is that it is legible at scan
+   * time, which means it has to travel with every row of every leaderboard
+   * fetch rather than waiting on the detail call.
+   */
+  deployedOn: ProtocolDeployment | null;
   safetyScore: number | null;
   computedAt: string | null;
   lastRunAt: string | null;
@@ -110,6 +124,8 @@ export interface ProtocolDetail {
    */
   site: string | null;
   docs: string | null;
+  /** see LeaderboardEntry.deployedOn — same value, same null-means-independent contract */
+  deployedOn: ProtocolDeployment | null;
   safetyScore: number | null;
   computedAt: string | null;
   factors: RiskFactorMap | null;
@@ -162,6 +178,20 @@ export interface Store {
    * — and an empty array must read as "no failures", never as "never succeeded".
    */
   listRecentRuns(protocolId: string, limit: number): Promise<RecentRun[]>;
+}
+
+/**
+ * The two deployment columns -> the public `deployedOn` object, or null.
+ *
+ * Both must be present. They are written as a pair from a `ProtocolDeployment`
+ * (where both fields are required), so a half-populated row can only come from
+ * a hand-edit or a partially-applied migration — and in that case null is the
+ * honest answer. A `{ host: null, label: 'Blend V2 pool' }` on the public API
+ * would be a shape no consumer was promised, published from data we know is
+ * broken; omitting the claim is strictly better than half-making it.
+ */
+export function toDeployedOn(host: string | null, label: string | null): ProtocolDeployment | null {
+  return host === null || label === null ? null : { host, label };
 }
 
 /** timestamptz comes back from pg as a Date; the API contract is ISO strings. */
@@ -230,6 +260,8 @@ export interface ProtocolDetailRow {
   contract_id: string | null;
   site_url: string | null;
   docs_url: string | null;
+  deployment_host: string | null;
+  deployment_label: string | null;
   safety_score: string | null;
   computed_at: Date | null;
   factors: RiskFactorMap | null;
@@ -263,6 +295,7 @@ export function toProtocolDetail(
     contractId: row.contract_id,
     site: row.site_url,
     docs: row.docs_url,
+    deployedOn: toDeployedOn(row.deployment_host, row.deployment_label),
     safetyScore: toNumber(row.safety_score),
     computedAt: toIso(row.computed_at),
     factors: row.factors,
@@ -279,6 +312,8 @@ export interface LeaderboardRow {
   name: string;
   chain: string;
   logo: string | null;
+  deployment_host: string | null;
+  deployment_label: string | null;
   safety_score: string | null;
   computed_at: Date | null;
   last_run_at: Date | null;
@@ -292,6 +327,7 @@ export function toLeaderboardEntry(row: LeaderboardRow): LeaderboardEntry {
     name: row.name,
     chain: row.chain,
     logo: row.logo,
+    deployedOn: toDeployedOn(row.deployment_host, row.deployment_label),
     safetyScore: toNumber(row.safety_score),
     computedAt: toIso(row.computed_at),
     lastRunAt: toIso(row.last_run_at),
@@ -317,8 +353,10 @@ export function createStore(pool: Pool): Store {
       // protocol supplying a mark that flatters, next to a score it dislikes).
       // See ProtocolMetadata.logo and CONTRIBUTING.md.
       await pool.query(
-        `INSERT INTO protocols (id, name, chain, adapter, logo, contract_id, site_url, docs_url)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO protocols
+           (id, name, chain, adapter, logo, contract_id, site_url, docs_url,
+            deployment_host, deployment_label)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          ON CONFLICT (id) DO UPDATE
            SET name = EXCLUDED.name,
                chain = EXCLUDED.chain,
@@ -327,6 +365,8 @@ export function createStore(pool: Pool): Store {
                contract_id = EXCLUDED.contract_id,
                site_url = EXCLUDED.site_url,
                docs_url = EXCLUDED.docs_url,
+               deployment_host = EXCLUDED.deployment_host,
+               deployment_label = EXCLUDED.deployment_label,
                updated_at = now()`,
         [
           metadata.id,
@@ -340,6 +380,13 @@ export function createStore(pool: Pool): Store {
           metadata.contractId ?? null,
           metadata.links?.site ?? null,
           metadata.links?.docs ?? null,
+          // Overwritten like every other identity column, including back to NULL:
+          // if a market is ever migrated off a host protocol's contracts, the
+          // adapter dropping `deployedOn` must clear the claim rather than leave
+          // a stale one standing. That is the same reason this statement doesn't
+          // COALESCE anything.
+          metadata.deployedOn?.host ?? null,
+          metadata.deployedOn?.label ?? null,
         ],
       );
     },
@@ -377,6 +424,7 @@ export function createStore(pool: Pool): Store {
       // flag. Rank by score desc, never-scored protocols (null score) last.
       const { rows } = await pool.query<LeaderboardRow>(
         `SELECT p.id, p.name, p.chain, p.logo,
+                p.deployment_host, p.deployment_label,
                 ok.safety_score, ok.computed_at,
                 latest.run_at AS last_run_at, latest.status AS last_run_status
            FROM protocols p
@@ -406,6 +454,7 @@ export function createStore(pool: Pool): Store {
       const { rows } = await pool.query<ProtocolDetailRow>(
         `SELECT p.id, p.name, p.chain, p.adapter,
                 p.logo, p.contract_id, p.site_url, p.docs_url,
+                p.deployment_host, p.deployment_label,
                 ok.safety_score, ok.computed_at, ok.factors, ok.methodology_version,
                 latest.run_at AS last_run_at, latest.status AS last_run_status
            FROM protocols p

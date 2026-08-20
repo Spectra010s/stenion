@@ -19,21 +19,31 @@
 // (re-derive them deliberately) or something regressed. Do not update a number
 // here without knowing which.
 //
+// THREE FIXTURES, TWO ADAPTERS. `blend` and `yieldblox` are the same
+// BlendAdapter pointed at two different pools, so between them they answer a
+// question neither could alone: whether the multi-pool refactor left the engine
+// alone. Blend's numbers must not move (they are the before/after control), and
+// YieldBlox's must be produced by the identical code path with nothing
+// special-cased for it.
+//
 // Run with: pnpm --filter @stenion/adapters test
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { BlendAdapter } from './blend.ts';
+import { BLEND_FIXED_V2, BLEND_POOLS, BLEND_YIELDBLOX_V2, BlendAdapter } from './blend.ts';
 import { KineticAdapter } from './kinetic.ts';
 import { blendMainnet } from './fixtures/blend-mainnet.ts';
 import { kineticMainnet } from './fixtures/kinetic-mainnet.ts';
+import { yieldbloxMainnet } from './fixtures/yieldblox-mainnet.ts';
 import type { RiskFactor, RiskFactorMap } from '@stenion/core';
 
 const values = (f: RiskFactorMap) =>
   Object.fromEntries(Object.entries(f).map(([k, v]) => [k, v === null ? null : v.value]));
 
 const sub = (f: RiskFactor, id: string) => f.components?.find((c) => c.id === id)?.value;
+/** A component's detail string — for the disclosure components, whose `value` is always null. */
+const sub2 = (f: RiskFactor, id: string) => f.components?.find((c) => c.id === id)?.detail ?? '';
 
 describe('Blend — frozen mainnet snapshot', () => {
   it('produces exactly the factor map captured with it', async () => {
@@ -197,11 +207,187 @@ describe('Kinetic — frozen mainnet snapshot', () => {
   });
 });
 
+describe('YieldBlox — frozen mainnet snapshot (same adapter, second pool)', () => {
+  const adapter = () => new BlendAdapter({ pool: BLEND_YIELDBLOX_V2 });
+
+  it('produces exactly the factor map captured with it', async () => {
+    const factors = await adapter().computeRiskFactors(yieldbloxMainnet);
+    assert.deepEqual(values(factors), {
+      collateralSafety: 52,
+      oracleSafety: 0,
+      adminKeySafety: 60,
+      liquiditySafety: 10,
+      utilizationSafety: 0,
+    });
+  });
+
+  it('scores 24 — the weighted mean of those five', async () => {
+    // 52×0.20 + 0×0.25 + 60×0.20 + 10×0.15 + 0×0.20 = 23.9.
+    const a = adapter();
+    const factors = await a.computeRiskFactors(yieldbloxMainnet);
+    assert.equal(a.score(factors).score, 24);
+  });
+
+  it('publishes the pool it actually read, not the module default', async () => {
+    // THE `adapter: "w"` CLASS OF BUG, in its pool-shaped form. Every number on
+    // this entry is derived from CCCCIQSD…, so an explorer link to Blend's
+    // CAJJZSGM… would attach a real address to a score computed from a different
+    // contract — worse than publishing no link, because it invites a reader to
+    // "verify" against state that never fed the number.
+    assert.equal(adapter().metadata.contractId, BLEND_YIELDBLOX_V2.poolId);
+    assert.equal(adapter().metadata.contractId, yieldbloxMainnet.poolId);
+    assert.notEqual(adapter().metadata.contractId, BLEND_FIXED_V2.poolId);
+  });
+
+  it("reads its own oracle and its own admin, not Blend's", async () => {
+    // The two pools share contract CODE and nothing else. If these ever matched,
+    // the fixture would have been captured from the wrong pool — which is the
+    // failure mode a shared engine makes easy and a shared assertion catches.
+    assert.notEqual(yieldbloxMainnet.oracleId, blendMainnet.oracleId);
+    assert.notEqual(yieldbloxMainnet.admin.address, blendMainnet.admin.address);
+    assert.equal(yieldbloxMainnet.admin.isContract, true, 'DAO governor, not a keypair');
+  });
+
+  it('scores oracleSafety 0 on a disabled deviation bound, with the price fresh', async () => {
+    // This is the §2 composite doing the exact job METHODOLOGY.md §2b says it
+    // exists for, on the pool the February 2026 incident ran through. An
+    // age-only oracle factor would publish 84 here and call it healthy; two of
+    // the five graded reserves carry max_dev 0, so the aggregator's deviation
+    // check is off for them and a single update can move their price arbitrarily
+    // far. METHODOLOGY.md's "what this factor would have said on 2026-02-22"
+    // table predicts precisely this pairing — it is now produced by a scored,
+    // published entry rather than by a one-off run.
+    const factors = await adapter().computeRiskFactors(yieldbloxMainnet);
+    assert.ok(sub(factors.oracleSafety!, 'priceFreshness')! > 50, 'the price is fresh');
+    assert.equal(sub(factors.oracleSafety!, 'deviationBound'), 0);
+    assert.equal(factors.oracleSafety!.value, 0, 'the binding constraint is the missing bound');
+    assert.match(factors.oracleSafety!.detail, /deviation check disabled/);
+  });
+
+  it('excludes the aggregator base assets from oracleSafety, and says how many', async () => {
+    // Blend's Fixed pool has none, so this branch is unexercised by the other
+    // fixture. YieldBlox's aggregator declares three assets it prices 1:1 as its
+    // unit of account, and `lastprice` short-circuits those without consulting a
+    // feed — there is no oracle price to grade, so scoring them 0 for "no
+    // deviation bound" would be measuring the absence of a mechanism that does
+    // not apply to them.
+    assert.equal(yieldbloxMainnet.oracleConfig.baseAssets.length, 3);
+    const factors = await adapter().computeRiskFactors(yieldbloxMainnet);
+    assert.match(sub2(factors.oracleSafety!, 'deviationTightness'), /3 base asset\(s\) excluded/);
+    assert.match(factors.oracleSafety!.detail, /of 5 reserves/, 'grades 5 of the 8 reserves');
+  });
+
+  it('reads a live min_collateral of $5.00 from this pool, not from the other one', async () => {
+    // The §4/§5 filter's leg A is per-pool: it is read from THIS pool's own
+    // PoolConfig instance storage. Both live Blend pools happen to declare the
+    // same 50000000 at 7 oracle decimals, and that coincidence is worth pinning
+    // — if a future pool declares a different floor, this test is what makes the
+    // difference visible instead of assumed.
+    assert.equal(yieldbloxMainnet.minCollateral, 50_000_000n);
+    assert.equal(yieldbloxMainnet.oracleDecimals, 7);
+  });
+
+  it('keeps every reserve — and six of the eight survive on leg A alone', async () => {
+    // WORTH READING TWICE, because it is the first pool where the two legs of
+    // the minimum-size filter genuinely disagree. The pool holds ~$1.28M, so leg
+    // B's 0.5% line sits at ~$6,396 and SIX reserves fall under it ($39 to
+    // $4,244). All six are scored anyway, because leg A — Blend's own $5
+    // min_collateral — passes for every one of them, and the legs are OR'd.
+    //
+    // The consequence is visible in the numbers above: liquiditySafety 10 and
+    // utilizationSafety 0 are both set by a $1,097 reserve holding 0.086% of the
+    // pool. On Blend's Fixed pool leg A is a documented no-op (its smallest
+    // reserve is $3.4M); here it is doing all the work, and pulling leg B's
+    // guard out from under the factors it was added to protect.
+    //
+    // This test pins the BEHAVIOUR, not an endorsement of it. Whether a $5 floor
+    // is the right leg A for a pool three orders of magnitude smaller than the
+    // one it was validated against is a METHODOLOGY.md question, flagged rather
+    // than answered here — changing it moves published numbers and is a
+    // threshold change under the same review bar as any other.
+    const factors = await adapter().computeRiskFactors(yieldbloxMainnet);
+    for (const factor of [factors.liquiditySafety!, factors.utilizationSafety!]) {
+      assert.equal(
+        factor.components?.find((c) => c.id === 'excludedReserves'),
+        undefined,
+        'leg A rescues every reserve, so nothing is excluded',
+      );
+    }
+    assert.match(factors.liquiditySafety!.detail, /CDTKPW…/);
+    assert.match(factors.utilizationSafety!.detail, /CDTKPW…/);
+  });
+
+  it('exercises decode paths the Fixed pool cannot reach', async () => {
+    // The reason this fixture earns its place next to blend-mainnet rather than
+    // duplicating it: eight reserves against three, a reserve at $39 against a
+    // floor of $3.4M, cFactor 0 entries (borrow-only, no collateral value), and
+    // reserves the aggregator has no entry for at all. A decode or scaling
+    // regression that the three tidy Fixed reserves survive has somewhere to
+    // show up here.
+    assert.equal(yieldbloxMainnet.reserves.length, 8);
+    assert.ok(
+      yieldbloxMainnet.reserves.some((r) => r.config.cFactor === 0n),
+      'expected at least one borrow-only reserve',
+    );
+    assert.ok(
+      yieldbloxMainnet.reserves.some((r) => r.priceConfig === null),
+      'expected at least one reserve with no aggregator entry',
+    );
+  });
+});
+
+describe('both Blend pools — one engine, two markets', () => {
+  it('produce different scores from identical code', async () => {
+    // The whole argument for multi-pool targeting rather than aggregation. Same
+    // class, same rulebook, same contract wasm on chain — and 30 points apart,
+    // because the reserves, the oracle configuration and the admin differ. A
+    // single summed "Blend" number would hide exactly this.
+    const fixed = new BlendAdapter({ pool: BLEND_FIXED_V2 });
+    const ybx = new BlendAdapter({ pool: BLEND_YIELDBLOX_V2 });
+    const fixedScore = fixed.score(await fixed.computeRiskFactors(blendMainnet)).score;
+    const ybxScore = ybx.score(await ybx.computeRiskFactors(yieldbloxMainnet)).score;
+    assert.equal(fixedScore, 54);
+    assert.equal(ybxScore, 24);
+  });
+
+  it('are scored by the same adapter, and say so', async () => {
+    // `adapterRef` is deliberately shared: both rows genuinely come from
+    // BlendAdapter, and a reader following the provenance label lands in the
+    // right file. It is the one identity field that does NOT vary per pool, and
+    // it must stay a literal — see ProtocolMetadata.adapterRef.
+    for (const pool of [BLEND_FIXED_V2, BLEND_YIELDBLOX_V2]) {
+      assert.equal(new BlendAdapter({ pool }).metadata.adapterRef, 'BlendAdapter');
+    }
+  });
+
+  it('label the non-flagship pool as a deployment and leave the flagship unlabelled', async () => {
+    // The condition on which the second entry is allowed to exist at all. If
+    // this ever inverted or went missing, the registry would present a Blend
+    // market as an independent protocol — the exact misrepresentation Stenion
+    // refused when it declined to build a standalone YieldBlox adapter.
+    assert.equal(new BlendAdapter({ pool: BLEND_FIXED_V2 }).metadata.deployedOn, undefined);
+    assert.deepEqual(new BlendAdapter({ pool: BLEND_YIELDBLOX_V2 }).metadata.deployedOn, {
+      host: 'Blend',
+      label: 'Blend V2 pool',
+    });
+  });
+
+  it('never share a slug or a contract', async () => {
+    // `id` is a primary key and a public URL; two pools colliding on it would
+    // make one silently overwrite the other's row on every indexer cycle.
+    const ids = BLEND_POOLS.map((p) => p.id);
+    const contracts = BLEND_POOLS.map((p) => p.poolId);
+    assert.equal(new Set(ids).size, ids.length, 'pool slugs must be unique');
+    assert.equal(new Set(contracts).size, contracts.length, 'pool contracts must be unique');
+  });
+});
+
 describe('both snapshots', () => {
   it('populate all five factors with real detail strings', async () => {
     for (const [factors] of [
       [await new BlendAdapter().computeRiskFactors(blendMainnet)],
       [await new KineticAdapter().computeRiskFactors(kineticMainnet)],
+      [await new BlendAdapter({ pool: BLEND_YIELDBLOX_V2 }).computeRiskFactors(yieldbloxMainnet)],
     ]) {
       for (const [key, factor] of Object.entries(factors)) {
         assert.ok(factor, `${key} should be populated on live data`);

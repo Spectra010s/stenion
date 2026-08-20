@@ -43,6 +43,12 @@ These override any default behavior and are enforced in code and review:
 - **Findings are not scores.** Verifiable observations we can't or won't grade go in the protocol
   page's Findings section (`dashboard/app/lib/protocol-notes.ts`), never into a factor. Nothing
   there is read by any scoring path.
+- **A registry entry is a market, not necessarily a protocol — and it must say which.** An entry
+  running another protocol's contracts (the YieldBlox pool on Blend V2) carries
+  `ProtocolMetadata.deployedOn`, published as `deployedOn` on both API responses and rendered
+  beside the name everywhere the name appears. Presenting such a market as an independent protocol
+  is the misrepresentation the standalone-YieldBlox-adapter decision refused; the label is the
+  condition on which the entry exists, not decoration.
 
 ## Score conventions & taxonomy
 
@@ -82,6 +88,12 @@ These override any default behavior and are enforced in code and review:
   exception — it imports `./retry.ts` / `./alerts.ts` with explicit extensions, and
   `indexer/tsconfig.build.json` adds `rewriteRelativeImportExtensions` so tsc emits `.js`. Prefer
   the leaf shape; reach for the flag only when a tested module genuinely needs siblings.
+- **One adapter may serve several markets; a market never gets its own adapter.** `BlendAdapter`
+  takes a `BlendPool` (slug, name, pool contract, mark, links, `deployedOn`) and the indexer
+  iterates `BLEND_POOLS` — every Blend market runs the same wasm, so a second pool is a config
+  entry and no new scoring code. Nothing on `BlendPool` may be a threshold, weight, or formula:
+  that would be a per-pool rulebook. Identity is built per instance from the pool given, so
+  `contractId` can never name a pool the numbers didn't come from.
 - **Error handling:** adapters throw on failure; the indexer wraps each run in try/catch and records
   a failed/stale run. Error handling lives in the indexer, not duplicated per adapter. The indexer
   runs adapters through the `toTarget<T>()` wrapper (see [`indexer/src/index.ts`](indexer/src/index.ts))

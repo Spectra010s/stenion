@@ -8,7 +8,8 @@ directly from the shipped code (currently [`adapters/blend.ts`](adapters/blend.t
 the rulebook the adapters must implement.
 
 **One formula, per-protocol data sources.** Every factor's formula, scale, and thresholds
-are fixed here and identical across protocols. What legitimately differs per adapter is only
+are fixed here and identical across protocols — and across _markets_: the two Blend pools
+Stenion scores run one adapter and one rulebook, differing only in the pool each reads. What legitimately differs per adapter is only
 _where the raw inputs are read on-chain_ — e.g. Blend reads a per-reserve `max_util` cap,
 while Kinetic (K2), being Aave-V3-style, has no such cap and instead anchors the same
 utilization formula to its own `OPTIMAL_UTILIZATION_RATE` (see §5). The _anchoring pattern_
@@ -479,10 +480,23 @@ rulebook, no special-casing:
 | Pool                                        | `priceFreshness` | `deviationBound`                                    | `oracleSafety` |
 | ------------------------------------------- | ---------------- | --------------------------------------------------- | -------------- |
 | Blend Fixed V2 (`CAJJZSGM…`)                | 100              | 100 — all reserves bounded (`max_dev` 60/20/20)     | **100**        |
-| YieldBlox (`CCCCIQSD…`, the exploited pool) | 100              | 0 — XLM and AQUA carry `max_dev: 0`, check disabled | **0**          |
+| YieldBlox (`CCCCIQSD…`, the exploited pool) | 84               | 0 — XLM and AQUA carry `max_dev: 0`, check disabled | **0**          |
 
-Both pools' prices are fresh, so an age-only factor scores both 100. This factor separates
-them, and on the axis that actually failed.
+Both pools' prices are fresh, so an age-only factor scores both high — 100 and 84, the
+latter being an ordinary mid-window price age, not a warning. This factor separates them
+anyway, and on the axis that actually failed.
+
+> **This is no longer a demonstration run.** As of the multi-pool change, the YieldBlox pool
+> is a **registered, continuously scored entry** in the public registry, and the row above is
+> its live `oracleSafety`, published every five minutes like any other. Two consequences worth
+> stating: the claim in this section is now checkable by anyone against
+> `GET /api/v1/protocol/yieldblox` rather than reproducible only by running the adapter by
+> hand; and the number will move, because it is live. The pairing that matters — a fresh price
+> and a disabled bound — is a property of the pool's configuration, not of the moment it was
+> sampled.
+>
+> The entry is labelled a **Blend V2 pool** wherever it appears (`deployedOn` on both API
+> responses). It is not a third protocol, and the registry must not be read as saying so.
 
 > **⚠️ Two honest limits on that claim, stated rather than glossed:**
 >
@@ -627,10 +641,16 @@ Leg A is per-protocol in exactly the sense §5's `cap` is: the _pattern_ ("grade
 parameter the protocol set itself") is the invariant, and which parameter it resolves to is a
 documented per-protocol fact.
 
-| Protocol         | Leg A source                                                                                                                        | Value                  |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| **Blend**        | `PoolConfig.min_collateral`, read live from pool instance storage, denominated in the oracle's base asset (`Other:USD`, 7 decimals) | `50000000` = **$5.00** |
-| **Kinetic (K2)** | **none — K2 declares no minimum-exposure parameter on chain.** Leg B alone applies.                                                 | n/a                    |
+| Protocol / market        | Leg A source                                                                                                                        | Value                  |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| **Blend — Fixed V2**     | `PoolConfig.min_collateral`, read live from pool instance storage, denominated in the oracle's base asset (`Other:USD`, 7 decimals) | `50000000` = **$5.00** |
+| **Blend — YieldBlox V2** | the same field, read live from **this pool's own** instance storage — read per pool, never inherited from the flagship              | `50000000` = **$5.00** |
+| **Kinetic (K2)**         | **none — K2 declares no minimum-exposure parameter on chain.** Leg B alone applies.                                                 | n/a                    |
+
+Both live Blend pools happen to declare the same floor. That is a coincidence of their
+configuration, not a property of the adapter: leg A is resolved from whichever pool an
+adapter instance was pointed at, and a Blend pool declaring a different `min_collateral`
+would be graded against its own.
 
 `min_collateral` is Blend's _own_ dust guard: the smallest collateral a position may hold and
 still borrow, set where liquidating a position stops being economically worthwhile. A reserve
@@ -683,6 +703,28 @@ suppressed and disagree with the exclusion, instead of never learning of it.
 reserve always holds at least `1/n`, which clears 0.5% for any `n ≤ 200`. The all-excluded
 branch above is therefore unreachable in practice — it is implemented and tested synthetically
 anyway, because that is precisely where a "cannot assess" could quietly become a 100 again.
+
+> **⚠️ OPEN QUESTION, raised by the YieldBlox pool and deliberately not resolved here.** The two
+> legs are OR'd, so leg A can override leg B — and on a small Blend pool it overrides it almost
+> entirely. YieldBlox holds ~$1.28M, putting leg B's 0.5% line at ~$6,396; **six of its eight
+> reserves fall below that line** ($39.47 to $4,243.73) and every one is scored anyway, because
+> Blend's $5 `min_collateral` passes for all of them. The result is that `liquiditySafety` (10)
+> and `utilizationSafety` (0) are both set by a reserve holding **$1,096.85 — 0.086% of the
+> pool**.
+>
+> That is the shape of the problem this filter was added for. On Blend's Fixed pool it is
+> invisible: leg A is a documented no-op there, because the smallest reserve holds $3.4M. On a
+> pool three orders of magnitude smaller, the same $5 floor is doing all the work and leg B's
+> guard never engages.
+>
+> **It is recorded, not fixed.** Changing it — sizing leg A relative to the pool, capping it,
+> or making the legs AND rather than OR below some pool size — moves published numbers on a
+> live entry, and is a threshold change under the same review bar as any other (see
+> [Disputing or changing a threshold](#disputing-or-changing-a-threshold)). It is equally
+> arguable that the current behaviour is correct: `min_collateral` is the pool's own statement
+> of the smallest position worth liquidating, and a $1,097 reserve at 90% utilization is a real
+> reserve with real depositors, not the $3.00 dust the filter was built to exclude. What is not
+> defensible is leaving the tension undocumented, which is why it is written down here.
 
 **Why this shape / this anchor:** `(supplied − borrowed) / supplied` is `1 − utilization`,
 i.e. the fraction of supplied value that is actually withdrawable _right now_. That is a

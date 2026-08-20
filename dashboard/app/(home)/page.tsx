@@ -17,6 +17,7 @@ import { getProtocols, type LeaderboardEntry } from '../lib/api';
 import { GITHUB_URL } from '../lib/site';
 import { ScoreRing } from '../../components/score-ring';
 import { MarkAttribution, ProtocolLogo } from '../../components/protocol-logo';
+import { DeploymentBadge } from '../../components/deployment-badge';
 import { StatusPill } from '../../components/status-pill';
 import { Reveal, RevealGroup, RevealItem } from '../../components/reveal';
 
@@ -137,6 +138,11 @@ export default async function HomePage() {
                     <div className="mt-0.5 text-xs uppercase tracking-wider text-faint">
                       {p.chain}
                     </div>
+                    {/* The strip shows the top three scores, so a market on
+                        another protocol's contracts can surface here without
+                        the reader ever reaching the registry. It carries the
+                        same label there as everywhere else. */}
+                    <DeploymentBadge deployedOn={p.deployedOn} className="mt-1.5" />
                     <div className="mt-3">
                       <StatusPill
                         lastRunStatus={p.lastRunStatus}

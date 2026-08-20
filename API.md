@@ -89,6 +89,14 @@ curl https://stenion.vercel.app/api/v1/protocols
 
 **Response** `200 OK`
 
+> **⚠️ These captures predate `deployedOn` and the `yieldblox` entry.** Every example in this
+> document is a verbatim `curl` against production, never written from the types — which means an
+> example cannot show a field that has not deployed yet. Both captures below are real responses from
+> 2026-08-19, before the multi-pool change shipped; they are otherwise accurate, and the field
+> tables are authoritative in the meantime. **Re-capture both on the next deploy**
+> (`curl https://stenion.vercel.app/api/v1/protocols` and `…/protocol/yieldblox`) rather than
+> hand-adding the field here.
+
 ```json
 {
   "protocols": [
@@ -116,20 +124,60 @@ curl https://stenion.vercel.app/api/v1/protocols
 }
 ```
 
-| Field           | Type                     | Notes                                                                                                                     |
-| --------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
-| `id`            | string                   | Stable identifier, **case-sensitive**, used as the path segment on the detail endpoint.                                   |
-| `name`          | string                   | Display name.                                                                                                             |
-| `chain`         | string                   | Currently always `"stellar"`.                                                                                             |
-| `logo`          | string or null           | Root-relative path to a mark **Stenion hosts** — prefix with the base host. `null` is a normal state, not a broken image. |
-| `safetyScore`   | number or null           | 0–100, higher = safer. From the latest **`ok`** run. `null` means never successfully scored — not "zero", not "unsafe".   |
-| `computedAt`    | string or null           | ISO 8601 UTC. When that score was computed. `null` if and only if `safetyScore` is `null`.                                |
-| `lastRunAt`     | string or null           | ISO 8601 UTC. The most recent run of **any** status. See [Staleness](#staleness-is-your-problem-too).                     |
-| `lastRunStatus` | `"ok"`, `"failed"`, null | Status of that most recent run. `null` means the protocol has never been run at all.                                      |
+| Field           | Type                     | Notes                                                                                                                                                                        |
+| --------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`            | string                   | Stable identifier, **case-sensitive**, used as the path segment on the detail endpoint.                                                                                      |
+| `name`          | string                   | Display name.                                                                                                                                                                |
+| `chain`         | string                   | Currently always `"stellar"`.                                                                                                                                                |
+| `logo`          | string or null           | Root-relative path to a mark **Stenion hosts** — prefix with the base host. `null` is a normal state, not a broken image.                                                    |
+| `deployedOn`    | object or null           | **Present when this entry is not an independent protocol** — see [Not every entry is a protocol](#not-every-entry-is-a-protocol). `null` means it runs on its own contracts. |
+| `safetyScore`   | number or null           | 0–100, higher = safer. From the latest **`ok`** run. `null` means never successfully scored — not "zero", not "unsafe".                                                      |
+| `computedAt`    | string or null           | ISO 8601 UTC. When that score was computed. `null` if and only if `safetyScore` is `null`.                                                                                   |
+| `lastRunAt`     | string or null           | ISO 8601 UTC. The most recent run of **any** status. See [Staleness](#staleness-is-your-problem-too).                                                                        |
+| `lastRunStatus` | `"ok"`, `"failed"`, null | Status of that most recent run. `null` means the protocol has never been run at all.                                                                                         |
 
 The board deliberately carries no `contractId`, `site`, or `docs` — those are verification detail
 nobody acts on from a list, and repeating them on every row of every fetch is waste. They live on
-the detail response.
+the detail response. `deployedOn` is the exception, and for the opposite reason: it is not detail
+you look up after deciding to care, it is part of what the row _is_, and a reader who scans the
+board and leaves has to have seen it.
+
+---
+
+## Not every entry is a protocol
+
+Some entries are **individual markets running another protocol's contracts**, not protocols in their
+own right. The YieldBlox entry (`yieldblox`) is one: it is a DAO-managed pool on Blend V2, running
+Blend's pool contract byte-for-byte, and Stenion scores it with the same adapter it uses for Blend's
+own pool.
+
+Such an entry carries a non-null `deployedOn` on **both** endpoints:
+
+```json
+"deployedOn": { "host": "Blend", "label": "Blend V2 pool" }
+```
+
+| Field   | Type   | Notes                                                                               |
+| ------- | ------ | ----------------------------------------------------------------------------------- |
+| `host`  | string | The host protocol's **display name**, e.g. `"Blend"`. Not an `id`, and not a link.  |
+| `label` | string | Short label naming the deployment, e.g. `"Blend V2 pool"`. Safe to render verbatim. |
+
+`null` means the entry runs on its own contracts. It never means "unknown" — we do not register an
+entry without knowing which.
+
+**If you display protocol names, display this beside them.** Not a style preference: without it your
+users read a list of markets as a list of protocols, which is a claim about the ecosystem that isn't
+true. Rendering `label` verbatim next to the name is enough.
+
+**`host` is deliberately not a protocol id and links to nothing.** Stenion's `blend` entry is itself
+one Blend market, so pointing at it would say this pool runs on _that entry_ rather than on Blend's
+contract. If you want the host's own entry, you are looking for a relationship this API does not
+assert.
+
+**Each such entry is scored independently, on its own on-chain state.** Sharing contract code is not
+sharing a score: `deployedOn` markets are ranked on their own reserves, oracle configuration and
+admin like any other entry, and the two live Blend pools currently differ by 30 points. Do not infer
+one entry's risk from its host's.
 
 ---
 
@@ -248,6 +296,7 @@ curl https://stenion.vercel.app/api/v1/protocol/blend
 | `adapter`                     | string         | Which Stenion adapter produced the score. Informational.                                                                   |
 | `contractId`                  | string or null | The Soroban contract the score was derived from. A raw `C…` address, deliberately **not** an explorer URL — pick your own. |
 | `site`, `docs`                | string or null | The protocol's own links. Listed as its properties, not as a recommendation.                                               |
+| `deployedOn`                  | object or null | Same as the leaderboard. See [Not every entry is a protocol](#not-every-entry-is-a-protocol).                              |
 | `safetyScore`, `computedAt`   |                | Latest **`ok`** run. Both `null` if never successfully scored.                                                             |
 | `factors`                     | object or null | The five-factor breakdown, or `null` if never scored. See below.                                                           |
 | `methodologyVersion`          | number or null | Which rulebook version the current score was computed under.                                                               |

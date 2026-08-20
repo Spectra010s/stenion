@@ -9,6 +9,28 @@
 
 export type RunStatus = 'ok' | 'failed';
 
+/**
+ * Present when an entry is a market running on ANOTHER protocol's contracts
+ * rather than on its own — the YieldBlox pool, which runs Blend's V2 pool
+ * contract byte-for-byte, is the case this exists for.
+ *
+ * Anything rendering a protocol's name MUST render this beside it when it is
+ * non-null. That is not a style preference: without it the registry says the
+ * ecosystem has three independent lending protocols when it has two protocols
+ * and three markets, and a reader who scans the list and leaves has been
+ * misinformed. Null means the entry runs on its own contracts — never "unknown".
+ *
+ * `host` is a display name, not a protocol id, and links to nothing: Stenion's
+ * `blend` entry is itself one Blend market, so pointing at it would claim the
+ * pool runs on that entry rather than on the host protocol's contract.
+ */
+export interface ProtocolDeployment {
+  /** the host protocol's display name, e.g. "Blend" */
+  host: string;
+  /** short label naming the deployment, e.g. "Blend V2 pool" */
+  label: string;
+}
+
 export interface LeaderboardEntry {
   id: string;
   name: string;
@@ -19,6 +41,8 @@ export interface LeaderboardEntry {
    * error — <ProtocolLogo> draws a deliberate initials tile.
    */
   logo: string | null;
+  /** see ProtocolDeployment — null for an entry on its own contracts */
+  deployedOn: ProtocolDeployment | null;
   safetyScore: number | null;
   computedAt: string | null;
   lastRunAt: string | null;
@@ -85,6 +109,8 @@ export interface ProtocolDetail {
    */
   site: string | null;
   docs: string | null;
+  /** see ProtocolDeployment — null for an entry on its own contracts */
+  deployedOn: ProtocolDeployment | null;
   safetyScore: number | null;
   computedAt: string | null;
   factors: RiskFactorMap | null;

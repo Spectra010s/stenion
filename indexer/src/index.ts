@@ -18,7 +18,7 @@
 // failing never aborts the cycle or process; a DB write failure is likewise
 // caught and logged so it can't kill the loop.
 
-import { BlendAdapter, KineticAdapter } from '@stenion/adapters';
+import { BLEND_POOLS, BlendAdapter, KineticAdapter } from '@stenion/adapters';
 import { closePool, createStore, getPool, type Store } from '@stenion/db';
 
 import { webhookNotifier } from './alerts';
@@ -35,21 +35,44 @@ export type { StreakAlert } from './alerts';
 import type { CycleSummary } from './cycle';
 
 function buildTargets(config: IndexerConfig): IndexTarget[] {
-  // poolId is deliberately not configured here — it's a Blend constant the
-  // adapter owns (FIXED_POOL_V2), not environment config. Override via the
-  // BlendAdapter constructor if a test/testnet pool is ever needed.
-  const blend = new BlendAdapter({
-    rpcUrl: config.rpcUrl,
-    horizonUrl: config.horizonUrl,
-  });
-  // Kinetic (K2) — second, genuinely-independent protocol. Same run loop via
-  // the toTarget<T> wrapper (its TRawData differs from Blend's, so the list
-  // can't be typed Adapter<unknown>[] directly — that's what the wrapper is for).
+  // Which pools exist is deliberately NOT environment config — it is the
+  // adapter's own BLEND_POOLS registry, reviewed in a PR alongside the pool's
+  // identity metadata. Point an instance at a test/testnet pool by passing a
+  // BlendPool to the constructor; there is no env var that can silently change
+  // what the public registry is scoring.
+  //
+  // One BlendAdapter instance PER POOL, all running the same engine: the shared
+  // scoring code is the class, and what differs is only the pool it was handed.
+  // Iterating BLEND_POOLS rather than naming pools here means adding a market
+  // touches one list, in adapters, and nothing in the indexer.
+  const blend = BLEND_POOLS.map((pool) =>
+    toTarget(
+      new BlendAdapter({
+        rpcUrl: config.rpcUrl,
+        horizonUrl: config.horizonUrl,
+        pool,
+      }),
+    ),
+  );
+  // Kinetic (K2) — the genuinely-independent protocol, not a Blend pool. Same
+  // run loop via the toTarget<T> wrapper (its TRawData differs from Blend's, so
+  // the list can't be typed Adapter<unknown>[] directly — that's what the
+  // wrapper is for).
   const kinetic = new KineticAdapter({
     rpcUrl: config.rpcUrl,
     horizonUrl: config.horizonUrl,
   });
-  return [toTarget(blend), toTarget(kinetic)];
+  // NOTE ON ORDER, because it decides who gets squeezed. runCycle divides the
+  // budget REMAINING by the number of targets LEFT, so the first target gets
+  // exactly budgetMs/N and each later one inherits whatever slack the earlier
+  // ones did not spend. At three targets that first share is 14s against a 15s
+  // attempt timeout, so a first attempt that runs to its cap leaves nothing for
+  // a retry — the ceiling ROADMAP.md describes, reached one protocol earlier
+  // than it predicts. Blend leads because it has the fastest observed fetch
+  // (~6-7s against Kinetic's ~10-11s) and so is likeliest to hand its slack on
+  // rather than consume the tightest share; Kinetic sits last, where the
+  // remainder is largest. This is an ordering, not a fix — see ROADMAP.md.
+  return [...blend, toTarget(kinetic)];
 }
 
 /**

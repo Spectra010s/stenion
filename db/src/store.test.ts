@@ -19,6 +19,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  toDeployedOn,
   toHistoryEntry,
   toLeaderboardEntry,
   toProtocolDetail,
@@ -65,6 +66,10 @@ const detailRow = (over: Partial<ProtocolDetailRow> = {}): ProtocolDetailRow => 
   contract_id: 'CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD',
   site_url: 'https://www.blend.capital',
   docs_url: 'https://docs.blend.capital',
+  // NULL is the normal case — Blend runs on its own contracts. The YieldBlox
+  // pool is the row that sets these; see the deployment suite below.
+  deployment_host: null,
+  deployment_label: null,
   safety_score: '53',
   computed_at: COMPUTED_AT,
   factors: FACTORS,
@@ -283,6 +288,8 @@ describe('toLeaderboardEntry', () => {
     name: 'Blend',
     chain: 'stellar',
     logo: '/assets/protocols/blend.svg',
+    deployment_host: null,
+    deployment_label: null,
     safety_score: '53',
     computed_at: COMPUTED_AT,
     last_run_at: RUN_AT,
@@ -296,6 +303,7 @@ describe('toLeaderboardEntry', () => {
       name: 'Blend',
       chain: 'stellar',
       logo: '/assets/protocols/blend.svg',
+      deployedOn: null,
       safetyScore: 53,
       computedAt: COMPUTED_AT.toISOString(),
       lastRunAt: RUN_AT.toISOString(),
@@ -404,6 +412,8 @@ describe('an empty risk_scores table', () => {
       name: 'Blend',
       chain: 'stellar',
       logo: '/assets/protocols/blend.svg',
+      deployment_host: null,
+      deployment_label: null,
       safety_score: null,
       computed_at: null,
       last_run_at: null,
@@ -413,5 +423,109 @@ describe('an empty risk_scores table', () => {
     assert.equal(entry.lastRunStatus, null);
     assert.equal(entry.computedAt, null);
     assert.equal(entry.name, 'Blend');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `deployedOn` — the label that stops one protocol's pool reading as a second
+// protocol.
+//
+// WHY IT IS TESTED HERE and not left to the UI: this is the field on which
+// registering the YieldBlox pool was made conditional. If it silently mapped to
+// null, the registry would list a Blend market beside Blend and Kinetic with
+// nothing to distinguish it, which is precisely the misrepresentation Stenion
+// refused to publish when it declined to build a standalone YieldBlox adapter.
+// A wrong number is visibly wrong; a missing label just reads as a third
+// protocol.
+// ---------------------------------------------------------------------------
+
+describe('toDeployedOn — the two deployment columns as one published object', () => {
+  it('maps a complete pair to the object the API publishes', () => {
+    assert.deepEqual(toDeployedOn('Blend', 'Blend V2 pool'), {
+      host: 'Blend',
+      label: 'Blend V2 pool',
+    });
+  });
+
+  it('maps both-null to null — an entry on its own contracts', () => {
+    // The common case, and it must stay cheap and unambiguous: null here means
+    // "independent", never "we did not check".
+    assert.equal(toDeployedOn(null, null), null);
+  });
+
+  it('refuses a half-populated pair rather than publishing a partial claim', () => {
+    // Unreachable from the adapter — ProtocolDeployment makes both fields
+    // required, so a writer supplies the object or omits it — but reachable from
+    // a hand-edited row or a half-applied migration. Emitting
+    // `{ host: null, label: 'Blend V2 pool' }` would be a shape no consumer was
+    // promised, built from data we already know is broken.
+    assert.equal(toDeployedOn(null, 'Blend V2 pool'), null);
+    assert.equal(toDeployedOn('Blend', null), null);
+  });
+});
+
+describe('the deployment label on both public responses', () => {
+  const yieldbloxDetail = detailRow({
+    id: 'yieldblox',
+    name: 'YieldBlox',
+    // Same adapter as Blend, deliberately: one engine, two pools. This pairing —
+    // a BlendAdapter row that is not named Blend — is exactly why the label has
+    // to be present, so `adapter: 'BlendAdapter'` reads as the point rather than
+    // as a bug.
+    adapter: 'BlendAdapter',
+    logo: null,
+    contract_id: 'CCCCIQSDILITHMM7PBSLVDT5MISSY7R26MNZXCX4H7J5JQ5FPIYOGYFS',
+    site_url: 'https://yieldblox.finance',
+    docs_url: null,
+    deployment_host: 'Blend',
+    deployment_label: 'Blend V2 pool',
+  });
+
+  it('publishes it on the detail response', () => {
+    const detail = toProtocolDetail(yieldbloxDetail, [okRow()]);
+    assert.deepEqual(detail.deployedOn, { host: 'Blend', label: 'Blend V2 pool' });
+  });
+
+  it('publishes it on the leaderboard too, not only on the detail call', () => {
+    // The board is where the misreading happens: a reader scanning three rows
+    // and leaving never makes the detail request. Unlike contractId/site/docs,
+    // this one has to survive the trip to every row.
+    const entry = toLeaderboardEntry({
+      id: 'yieldblox',
+      name: 'YieldBlox',
+      chain: 'stellar',
+      logo: null,
+      deployment_host: 'Blend',
+      deployment_label: 'Blend V2 pool',
+      safety_score: '24',
+      computed_at: COMPUTED_AT,
+      last_run_at: RUN_AT,
+      last_run_status: 'ok',
+    });
+    assert.deepEqual(entry.deployedOn, { host: 'Blend', label: 'Blend V2 pool' });
+  });
+
+  it('leaves an independent protocol null on both', () => {
+    assert.equal(toProtocolDetail(detailRow(), [okRow()]).deployedOn, null);
+  });
+
+  it('survives a protocol with no score at all', () => {
+    // Identity is not score-derived, so a market that has never scored — or
+    // whose history was wiped — must still say what it is. This is the window in
+    // which a reader is MOST likely to be looking at an unfamiliar entry.
+    const detail = toProtocolDetail(
+      detailRow({
+        ...yieldbloxDetail,
+        safety_score: null,
+        computed_at: null,
+        factors: null,
+        methodology_version: null,
+        last_run_at: null,
+        last_run_status: null,
+      }),
+      [],
+    );
+    assert.equal(detail.safetyScore, null);
+    assert.deepEqual(detail.deployedOn, { host: 'Blend', label: 'Blend V2 pool' });
   });
 });

@@ -6,6 +6,7 @@ import { bandColor, bandTextClass, formatTimestamp, freshness, scoreBand } from 
 import { cn } from '../lib/cn';
 import { FreshnessTooltip, StatusPill } from '../../components/status-pill';
 import { MarkAttribution, ProtocolLogo } from '../../components/protocol-logo';
+import { DeploymentBadge } from '../../components/deployment-badge';
 import { Reveal, RevealGroup, RevealItem } from '../../components/reveal';
 
 export const dynamic = 'force-dynamic';
@@ -25,6 +26,20 @@ export default async function RegistryPage() {
     errored = true;
   }
 
+  // Derived from what was actually fetched, never assumed. The note below
+  // explains a category of row, so it may only appear when the board really
+  // contains one — otherwise it describes members that aren't there, which is a
+  // worse failure than saying nothing: a reader looks for the labelled row,
+  // doesn't find it, and learns the copy can't be trusted.
+  //
+  // It matters because the two can genuinely come apart. The registry renders
+  // from the database, and a `deployedOn` entry only lands there once an indexer
+  // cycle has upserted it — so between deploying a new pool config and the first
+  // cycle that runs it, the code knows about a market the board does not. Same
+  // for a pool later removed from BLEND_POOLS, or one whose row is present but
+  // never scored.
+  const hasDeployedEntries = (protocols ?? []).some((p) => p.deployedOn !== null);
+
   return (
     <div className="mx-auto max-w-6xl px-5 py-14">
       <Reveal>
@@ -39,6 +54,18 @@ export default async function RegistryPage() {
           is derived purely from on-chain data; no protocol can pay to move up. Open a protocol to
           see the full factor breakdown behind its number.
         </p>
+        {/* Said once at the top rather than only per-row: a reader who scans the
+            list and leaves should know that a row is not necessarily a distinct
+            protocol, even if they never hover the badge that says which.
+            Conditional, because a standing claim about "some entries" with no
+            such entry on the board is a promise the page doesn't keep. */}
+        {hasDeployedEntries && (
+          <p className="mt-2 max-w-2xl text-sm text-faint">
+            Some entries are individual markets running another protocol&rsquo;s contracts rather
+            than protocols in their own right. Those are labelled on the row, and scored on their
+            own reserves, oracle and admin like any other entry.
+          </p>
+        )}
       </Reveal>
 
       {errored ? (
@@ -108,8 +135,16 @@ function ProtocolRow({ entry, rank }: { entry: LeaderboardEntry; rank: number })
           size={36}
           className="mr-1 transition-transform duration-200 ease-out motion-safe:group-hover:-rotate-6"
         />
-        <span className="font-display text-lg font-semibold text-ink">{entry.name}</span>
-        <ArrowUpRight className="h-4 w-4 text-faint transition duration-200 ease-out group-hover:text-accent-ink motion-safe:group-hover:translate-x-0.5 motion-safe:group-hover:-translate-y-0.5" />
+        {/* Name and deployment label stack, so the label sits with the name it
+            qualifies rather than trailing off to the right where a narrow
+            viewport would wrap it away from its subject. */}
+        <span className="flex min-w-0 flex-col items-start">
+          <span className="flex items-center gap-2">
+            <span className="font-display text-lg font-semibold text-ink">{entry.name}</span>
+            <ArrowUpRight className="h-4 w-4 text-faint transition duration-200 ease-out group-hover:text-accent-ink motion-safe:group-hover:translate-x-0.5 motion-safe:group-hover:-translate-y-0.5" />
+          </span>
+          <DeploymentBadge deployedOn={entry.deployedOn} className="mt-1" />
+        </span>
       </div>
 
       <div className="text-sm text-muted">
