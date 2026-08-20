@@ -39,6 +39,13 @@ commitment — priorities shift as protocols launch and as the project finds fun
 - **The five-factor `*Safety` model** — collateral concentration, oracle trustworthiness, admin-key
   control, liquidity depth, utilization headroom — with a fully public, challengeable rulebook in
   [`METHODOLOGY.md`](METHODOLOGY.md).
+- **Two size floors, both published.** The reserve-level
+  [minimum-size filter](METHODOLOGY.md#the-minimum-size-filter) decides which reserves may set
+  §4/§5's number; the [market-size floor](METHODOLOGY.md#the-market-size-floor) decides whether a
+  market is scorable at all. They are the same idea at two scales — a size below which a number
+  stops carrying information — and the second exists because an empty market does not fail, it
+  publishes **0**, in the danger band, meaning the opposite of what is true. Neither moved a
+  published score; the floor is a precondition, not a formula.
 - **Oracle robustness.** `oracleSafety` scores price freshness _and_ manipulation
   resistance: whether the pool's own price path bounds how far a single update can move, read from
   the protocol's own on-chain config. Freshness is anchored to each oracle's real resolution and
@@ -105,6 +112,58 @@ Roughly in priority order, but not committed to dates:
   Wanted, but it is a payload-size and query-cost decision on free tiers, not a UI tweak — likely a
   separate downsampled endpoint or a `?window=` parameter rather than simply raising the cap, since
   the detail response is already the largest thing the API serves.
+- **K2 multi-market targeting — available, deliberately unused.** K2 deploys markets the way
+  Blend's factory deploys pools: separate router contracts running byte-identical code. Three are
+  live on mainnet (all wasm `df2831cf…`, sharing one oracle, one `PADMIN` and one treasury, each
+  with its own configurator):
+
+  | Router      | What                                                   | Reserves                  | Supplied |
+  | ----------- | ------------------------------------------------------ | ------------------------- | -------- |
+  | `CCTUJZLY…` | K2's primary pooled market — **the `kinetic` entry**   | USDC, XLM, PYUSD, SolvBTC | ~$1,781  |
+  | `CCGXGXIL…` | SolvBTC / xSolvBTC isolated market, K2-listed          | SolvBTC, xSolvBTC         | $3.62    |
+  | `CDWPVHKB…` | Earn (earnUSDC/USDC), third-party, run by Gami/Upshift | USDC, earnUSDC            | $0.00    |
+
+  **The refactor is not needed to register them — the floor is.** `KineticAdapter` already takes a
+  `routerId`, exactly as `BlendAdapter` took a `poolId` before the multi-pool change, so
+  generalising it to a `KineticMarket` config would be the same shape of work and is available the
+  day a market qualifies. It is **not built**, because neither additional market clears the
+  [market-size floor](METHODOLOGY.md#the-market-size-floor) and building it now would be dead code
+  guarding an empty list.
+
+  **What K2's own market types turned out to be**, since the docs and the chain do not agree on
+  this and it is the question that started the survey:
+
+  - **Pooled vs isolated is Aave-V3 configuration** — the router wasm carries `IsolationModeData`,
+    `isolation_mode_enabled`, `UserInIsolationMode` and `get_reserve_debt_ceiling`, all per-reserve
+    settings inside one pool. **K2 does not use it that way:** every reserve on all three routers
+    reports `debt_ceiling = 0`, and the isolated market was given its own router instead.
+  - **Third-party markets are genuinely separate contracts**, and K2 says so: "Isolation is enforced
+    at the contract level: collateral and debt in a third-party market cannot be combined with
+    positions in K2's primary market."
+  - **"Gated" — not found, and not asserted absent.** No market type by that name appears in the
+    router's exported interface or in any documentation page reachable from
+    `docs.k2lend.com/llms.txt`, which calls that section **Third Party Markets**. The nearest
+    on-chain machinery is per-reserve allow/deny lists (`RWLMAP`/`RBLMAP`,
+    `get_reserve_whitelist`, `is_whitelisted_for_reserve`) — router configuration, not a separate
+    contract. If the term is current somewhere not reachable from that index, this is a gap in what
+    was read, not a finding that no such thing exists.
+
+- **A not-scorable run outcome, distinct from a score of 0.** The
+  [market-size floor](METHODOLOGY.md#the-market-size-floor) is currently enforced **only by the
+  decision not to register a market below it** — nothing in `Adapter`, the indexer or `RunRecord`
+  can express "this market is not scorable" as distinct from "this market scored 0". So a
+  registered market that drained below the floor would keep publishing a number computed from five
+  can't-assess branches, which is the exact failure the floor is written against.
+
+  The representation already exists at the far end: `safetyScore: null` is the never-scored state,
+  documented in [`API.md`](API.md) and rendered as an em dash rather than a zero. What is missing is
+  a path to reach it deliberately. That is a third `RunRecord` status alongside `ok`/`failed` — and
+  a `failed` row is the wrong home for it, because a market that is empty has not failed: the
+  adapter read it perfectly and the answer is that there is nothing to score. A new status touches
+  the DB CHECK constraint, the `ok`/`failed` union every API consumer parses (a **breaking** change,
+  so `v2` under the versioning policy), and the score chart's break rendering. Filed rather than
+  slipped in.
+
 - **The Kinetic / K2 naming mismatch.** The protocol rebranded to **K2** (k2lend.com). Stenion still
   displays `name: 'Kinetic'`, and now shows it beside the K2 mark — the logo work made an existing
   inconsistency visible rather than creating it. Renaming isn't cosmetic: `id: 'kinetic'` is the
