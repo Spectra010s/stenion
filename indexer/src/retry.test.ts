@@ -171,10 +171,13 @@ describe('withRetry — retries never hide a real failure', () => {
 
 describe('withRetry — the deadline is the guarantee, the attempt count is the ceiling', () => {
   it('stops retrying when the remaining budget cannot cover backoff + an attempt', async () => {
-    // Blend's share of a 42s budget across two protocols is 21s. Each attempt
-    // here burns 15s (the attempt cap), so: attempt 1 → 6s left → 1s backoff
-    // leaves 5s, enough → attempt 2 (burns the remaining 5s) → 0s left, so the
-    // third attempt the policy allows is never started.
+    // A 21s deadline against a 15s attempt cap — the share the FIRST target got
+    // when the registry held two. (It holds three now, so the live first share is
+    // 14s and a timed-out first attempt buys no retry at all; that narrower case
+    // is the ceiling described in ROADMAP.md, not what this test pins.) The
+    // arithmetic under test is the same at any share: attempt 1 burns 15s → 6s
+    // left → 1s backoff leaves 5s, enough → attempt 2 burns the remaining 5s →
+    // 0s left, so the third attempt the policy allows is never started.
     const clock = fakeClock();
     let calls = 0;
     await assert.rejects(

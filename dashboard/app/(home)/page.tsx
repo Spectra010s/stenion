@@ -116,7 +116,14 @@ export default async function HomePage() {
         ) : (
           <RevealGroup className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {scored.map((p, i) => (
-              <RevealItem key={p.id}>
+              // `h-full` on both the cell and the card. The grid stretches the
+              // cell to the tallest in the row, but the <Link> inside only grew
+              // to its own content, so a card with one extra line was visibly
+              // taller than its neighbours rather than merely fuller. That went
+              // unnoticed while every card held identical content; the first
+              // card to carry a deployment label exposed it. Same fix the
+              // protocol page's factor grid already uses.
+              <RevealItem key={p.id} className="h-full">
                 <Link
                   href={`/protocol/${p.id}`}
                   // `border-sheen` (globals.css) is scoped to these cards only
@@ -125,9 +132,18 @@ export default async function HomePage() {
                   // instead of firing them in unison; it starts each card
                   // mid-animation rather than waiting, so nothing is idle.
                   style={{ '--sheen-delay': `${i * -3}s` } as React.CSSProperties}
-                  className="border-sheen group flex items-center gap-5 rounded-xl border border-line surface-lit p-5 transition-all hover:-translate-y-0.5 hover:border-accent"
+                  className="border-sheen group flex h-full items-center gap-5 rounded-xl border border-line surface-lit p-5 transition-all hover:-translate-y-0.5 hover:border-accent"
                 >
-                  <ScoreRing score={p.safetyScore} size={104} stroke={8} label={null} />
+                  {/* shrink-0: the ring carries its size as an inline style, which
+                      is a flex-basis, not a floor — a longer text column beside it
+                      would otherwise squash the ring on the narrowest cards. */}
+                  <ScoreRing
+                    score={p.safetyScore}
+                    size={104}
+                    stroke={8}
+                    label={null}
+                    className="shrink-0"
+                  />
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <ProtocolLogo name={p.name} logo={p.logo} size={24} />
@@ -135,14 +151,22 @@ export default async function HomePage() {
                         {p.name}
                       </div>
                     </div>
-                    <div className="mt-0.5 text-xs uppercase tracking-wider text-faint">
-                      {p.chain}
-                    </div>
-                    {/* The strip shows the top three scores, so a market on
+                    {/* Chain and deployment label share ONE line, so every card
+                        has the same number of rows whether or not it carries a
+                        label. The badge previously sat on a row of its own,
+                        which is what made the heights diverge; `h-full` above
+                        now equalises them, and keeping the row count equal is
+                        what stops that equalising from leaving the other cards
+                        looking padded out with dead space.
+
+                        The strip shows the top three scores, so a market on
                         another protocol's contracts can surface here without
                         the reader ever reaching the registry. It carries the
                         same label there as everywhere else. */}
-                    <DeploymentBadge deployedOn={p.deployedOn} className="mt-1.5" />
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="text-xs uppercase tracking-wider text-faint">{p.chain}</span>
+                      <DeploymentBadge deployedOn={p.deployedOn} />
+                    </div>
                     <div className="mt-3">
                       <StatusPill
                         lastRunStatus={p.lastRunStatus}

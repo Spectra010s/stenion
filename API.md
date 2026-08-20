@@ -7,7 +7,7 @@ wallet, an aggregator, or a dashboard and you want a live safety number for a pr
 are about to interact with, this is the whole surface area.
 
 Everything below was captured from the live production API, not written from the type definitions.
-The example responses are verbatim bodies from a snapshot taken at **2026-08-19T13:20Z**; the
+The example responses are verbatim bodies from a snapshot taken at **2026-08-20T11:05–11:10Z**; the
 numbers move every ~5 minutes, the shapes do not.
 
 ---
@@ -89,14 +89,6 @@ curl https://stenion.vercel.app/api/v1/protocols
 
 **Response** `200 OK`
 
-> **⚠️ These captures predate `deployedOn` and the `yieldblox` entry.** Every example in this
-> document is a verbatim `curl` against production, never written from the types — which means an
-> example cannot show a field that has not deployed yet. Both captures below are real responses from
-> 2026-08-19, before the multi-pool change shipped; they are otherwise accurate, and the field
-> tables are authoritative in the meantime. **Re-capture both on the next deploy**
-> (`curl https://stenion.vercel.app/api/v1/protocols` and `…/protocol/yieldblox`) rather than
-> hand-adding the field here.
-
 ```json
 {
   "protocols": [
@@ -105,9 +97,10 @@ curl https://stenion.vercel.app/api/v1/protocols
       "name": "Blend",
       "chain": "stellar",
       "logo": "/assets/protocols/blend.svg",
+      "deployedOn": null,
       "safetyScore": 53,
-      "computedAt": "2026-08-19T13:20:06.991Z",
-      "lastRunAt": "2026-08-19T13:20:04.336Z",
+      "computedAt": "2026-08-20T11:05:05.600Z",
+      "lastRunAt": "2026-08-20T11:05:02.641Z",
       "lastRunStatus": "ok"
     },
     {
@@ -115,14 +108,33 @@ curl https://stenion.vercel.app/api/v1/protocols
       "name": "Kinetic",
       "chain": "stellar",
       "logo": "/assets/protocols/kinetic.png",
+      "deployedOn": null,
       "safetyScore": 27,
-      "computedAt": "2026-08-19T13:20:12.614Z",
-      "lastRunAt": "2026-08-19T13:20:07.182Z",
+      "computedAt": "2026-08-20T11:05:15.167Z",
+      "lastRunAt": "2026-08-20T11:05:10.083Z",
+      "lastRunStatus": "ok"
+    },
+    {
+      "id": "yieldblox",
+      "name": "YieldBlox",
+      "chain": "stellar",
+      "logo": null,
+      "deployedOn": {
+        "host": "Blend",
+        "label": "Blend V2 pool"
+      },
+      "safetyScore": 24,
+      "computedAt": "2026-08-20T11:05:09.897Z",
+      "lastRunAt": "2026-08-20T11:05:05.786Z",
       "lastRunStatus": "ok"
     }
   ]
 }
 ```
+
+> One value in this capture has since moved: `yieldblox` had no self-hosted mark when it was taken
+> and now carries `"logo": "/assets/protocols/yieldblox.png"`. Re-`curl` this block on the next
+> deploy rather than hand-editing the value in.
 
 | Field           | Type                     | Notes                                                                                                                                                                        |
 | --------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -151,10 +163,14 @@ own right. The YieldBlox entry (`yieldblox`) is one: it is a DAO-managed pool on
 Blend's pool contract byte-for-byte, and Stenion scores it with the same adapter it uses for Blend's
 own pool.
 
-Such an entry carries a non-null `deployedOn` on **both** endpoints:
+Such an entry carries a non-null `deployedOn` on **both** endpoints — verbatim from the
+`yieldblox` entry in the leaderboard capture above:
 
 ```json
-"deployedOn": { "host": "Blend", "label": "Blend V2 pool" }
+"deployedOn": {
+  "host": "Blend",
+  "label": "Blend V2 pool"
+}
 ```
 
 | Field   | Type   | Notes                                                                               |
@@ -206,19 +222,20 @@ curl https://stenion.vercel.app/api/v1/protocol/blend
   "contractId": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
   "site": "https://www.blend.capital",
   "docs": "https://docs.blend.capital",
+  "deployedOn": null,
   "safetyScore": 53,
-  "computedAt": "2026-08-19T13:20:06.991Z",
+  "computedAt": "2026-08-20T11:10:07.254Z",
   "factors": {
     "oracleSafety": {
       "value": 99,
-      "detail": "all 3 reserves score the same — 306s old (fresh<300s, dead>900s); all reserves have a deviation bound",
+      "detail": "all 3 reserves score the same — 307s old (fresh<300s, dead>900s); all reserves have a deviation bound",
       "weight": 0.25,
       "components": [
         {
           "id": "priceFreshness",
           "label": "Price freshness",
           "value": 99,
-          "detail": "all 3 reserves score the same — 306s old (fresh<300s, dead>900s); anchored to the aggregator's own resolution and max_age (900s)"
+          "detail": "all 3 reserves score the same — 307s old (fresh<300s, dead>900s); anchored to the aggregator's own resolution and max_age (900s)"
         },
         {
           "id": "deviationBound",
@@ -230,7 +247,7 @@ curl https://stenion.vercel.app/api/v1/protocol/blend
           "id": "priceAges",
           "label": "Price age by feed (not scored)",
           "value": null,
-          "detail": "Other:XLM 306s, Other:USDC 306s, Other:EURC 306s — all 3 within the protocol's own 900s staleness limit. Reported, not graded: priceFreshness already scores the worst of these."
+          "detail": "Other:XLM 307s, Other:USDC 307s, Other:EURC 307s — all 3 within the protocol's own 900s staleness limit. Reported, not graded: priceFreshness already scores the worst of these."
         },
         {
           "id": "deviationTightness",
@@ -251,8 +268,8 @@ curl https://stenion.vercel.app/api/v1/protocol/blend
       "weight": 0.15
     },
     "collateralSafety": {
-      "value": 71,
-      "detail": "top reserve holds 64% of supplied value across 3 reserves (HHI 0.53)",
+      "value": 68,
+      "detail": "top reserve holds 67% of supplied value across 3 reserves (HHI 0.55)",
       "weight": 0.2
     },
     "utilizationSafety": {
@@ -262,29 +279,29 @@ curl https://stenion.vercel.app/api/v1/protocol/blend
     }
   },
   "methodologyVersion": 1,
-  "lastRunAt": "2026-08-19T13:20:04.336Z",
+  "lastRunAt": "2026-08-20T11:10:04.814Z",
   "lastRunStatus": "ok",
   "history": [
     {
       "status": "ok",
       "safetyScore": 53,
       "methodologyVersion": 1,
-      "computedAt": "2026-08-19T13:20:06.991Z",
-      "runAt": "2026-08-19T13:20:04.336Z"
+      "computedAt": "2026-08-20T11:10:07.254Z",
+      "runAt": "2026-08-20T11:10:04.814Z"
     },
     {
       "status": "ok",
       "safetyScore": 53,
       "methodologyVersion": 1,
-      "computedAt": "2026-08-19T13:15:07.978Z",
-      "runAt": "2026-08-19T13:15:05.118Z"
+      "computedAt": "2026-08-20T11:05:05.600Z",
+      "runAt": "2026-08-20T11:05:02.641Z"
     },
     {
       "status": "ok",
       "safetyScore": 53,
       "methodologyVersion": 1,
-      "computedAt": "2026-08-19T13:10:06.937Z",
-      "runAt": "2026-08-19T13:10:04.295Z"
+      "computedAt": "2026-08-20T11:00:09.773Z",
+      "runAt": "2026-08-20T11:00:07.298Z"
     }
   ]
 }

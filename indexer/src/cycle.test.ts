@@ -202,7 +202,8 @@ describe('runCycle — one failure never affects another protocol', () => {
 
   it('still scores later targets when the FIRST one throws', async () => {
     // Ordering matters: an early failure aborting the loop would silently stop
-    // every protocol behind it, and with two adapters that is half the registry.
+    // every target behind it — and with three registered, losing the first one
+    // costs two thirds of the registry.
     const { store, written } = fakeStore();
     const summary = await runCycle([throwingTarget('blend'), okTarget('kinetic', 24)], store);
 

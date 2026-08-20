@@ -217,13 +217,23 @@ export function formatAlert(alert: StreakAlert): string {
  * Discord's hard cap on `content`. A longer body is rejected outright with a
  * 400 — the message does not arrive truncated, it does not arrive at all.
  *
- * This is not a theoretical limit. The case that reaches it is the worst one
- * there is: an RPC-wide outage takes out every protocol, they all cross the
- * threshold on the same cycle, and their alerts are batched into a single POST.
- * Two protocols with four distinct Soroban `HostError` messages each render to
- * ~2,500 characters, so the alert for the biggest possible outage would be the
- * one Discord threw away. Slack's `text` limit is far higher (40,000), so this
- * cap is Discord's, applied to both to keep the two keys identical.
+ * This is not a theoretical limit, and it got closer when the registry went from
+ * two targets to three. The case that reaches it is the worst one there is: an
+ * RPC-wide outage takes out every target, they all cross the threshold on the
+ * same cycle, and their alerts are batched into a single POST. The render is one
+ * block per alert, so the body scales linearly with target count — two protocols
+ * with four distinct Soroban `HostError` messages each measured ~2,500
+ * characters, and three of the same is ~3,700.
+ *
+ * The sharper consequence is which cases now truncate at all. With a moderate
+ * ~150-character error message, the same four-distinct-errors scenario renders
+ * 1,958 characters across two targets — inside the cap — and 2,944 across three.
+ * The third target is what moves an ordinary outage from "arrives whole" to
+ * "arrives marked truncated". That is the cap working, not failing: without it
+ * the alert for the biggest possible outage is the one Discord throws away. The
+ * structured `alerts` array is never truncated, so nothing is lost for a machine
+ * consumer. Slack's `text` limit is far higher (40,000), so this cap is
+ * Discord's, applied to both to keep the two keys identical.
  */
 export const MAX_MESSAGE_CHARS = 2000;
 
@@ -260,7 +270,7 @@ export const WEBHOOK_TIMEOUT_MS = 3000;
 
 /**
  * POST every alert for one cycle to `url` as a single request — an RPC-wide
- * outage that takes out both protocols should be one message, not two.
+ * outage that takes out every target should be one message, not one per target.
  *
  * Throws on a non-2xx or a network error; the caller logs and continues.
  * Alerting must never be able to fail a cycle.

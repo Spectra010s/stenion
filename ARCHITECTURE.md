@@ -220,11 +220,18 @@ still recorded as `failed` — a protocol that is genuinely down still shows as 
   and four different ones usually mean "the protocol changed" versus "the RPC provider is flaky".
 - **The rendered message is capped at 2,000 characters** (`MAX_MESSAGE_CHARS`). Discord _rejects_ a
   longer `content` with a 400 rather than truncating it, and the case that reaches the limit is the
-  worst one available: an RPC-wide outage takes out every protocol, they all cross the threshold on
-  the same cycle, and their alerts batch into one POST — two protocols with four distinct Soroban
-  `HostError` messages each renders to ~2,500 characters. Without the cap, the alert for the biggest
-  possible outage is the one that silently never arrives. The structured `alerts` array is never
-  truncated, so nothing is lost for a machine consumer.
+  worst one available: an RPC-wide outage takes out every target, they all cross the threshold on
+  the same cycle, and their alerts batch into one POST. The render is one block per alert, so the
+  body scales linearly with target count — two protocols with four distinct Soroban `HostError`
+  messages each measured ~2,500 characters, and three of the same is ~3,700. Without the cap, the
+  alert for the biggest possible outage is the one that silently never arrives. The structured
+  `alerts` array is never truncated, so nothing is lost for a machine consumer.
+
+  **The third target moved where truncation starts.** Measured with a moderate ~150-character error
+  message, the same four-distinct-errors scenario renders 1,958 characters across two targets — it
+  fit — and 2,944 across three. Outages that used to arrive whole now arrive marked truncated. The
+  cap is doing its job either way; what changed is how often a reader sees the marker.
+
 - **Verifying delivery without waiting for a real outage:** `pnpm smoke:alert-webhook` drives the
   real path — a seeded failure streak through `runCycle`, `decideAlert`, `formatAlert` and the real
   `webhookNotifier` — at a live webhook URL, reporting the HTTP status and body that

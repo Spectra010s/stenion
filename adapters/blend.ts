@@ -119,25 +119,37 @@ export const BLEND_FIXED_V2: BlendPool = {
  * The YieldBlox pool on Blend V2 — a DAO-managed market, NOT an independent
  * protocol. Its on-chain pool `Name` is "YieldBlox", its admin is a Soroban
  * Governor contract rather than a keypair, and YieldBlox's own site describes it
- * as "a DAO-managed money market on the Stellar Network, using Blend Protocol
- * and Soroban Governor". It is scored as its own entry because its reserves,
- * oracle aggregator and admin are all its own — and carries `deployedOn` because
- * its contract code is not.
+ * as "a community-run DeFi lending protocol on the Stellar network, built on
+ * Blend". It is scored as its own entry because its reserves, oracle aggregator
+ * and admin are all its own — and carries `deployedOn` because its contract code
+ * is not. Their own wording says the same thing this entry's label does, which is
+ * the best evidence available that the label is not our interpretation.
  *
- * No `logo`: YieldBlox publishes no mark we can self-host, so the initials tile
- * applies (ProtocolMetadata.logo). Borrowing Blend's mark would be the worst
- * option on the list — it would assert precisely the identity this entry exists
- * to deny.
+ * `logo` is a self-hosted copy of their own mark, taken from the 512x512
+ * `icon-512.png` their web manifest publishes — never a hotlink. PNG rather than
+ * SVG because they ship no vector mark: the site is a SvelteKit build whose only
+ * inline SVGs are 24x24 `currentColor` UI glyphs, and its icon set is raster
+ * throughout. That is the documented fallback (CONTRIBUTING.md, "The logo
+ * asset"), same as Kinetic's.
  *
- * No `docs`: their documentation is referred to from a pre-launch page but
- * publishes no reachable URL, and a dead link is worse than an absent one.
+ * It clears the dark-tile check: the mark is a green glyph (#38af4a) on a fully
+ * transparent field — sampled corners are alpha 0 and its opaque pixels average
+ * luminance 147 — so nothing vanishes into the tile's #0a0816. Borrowing Blend's
+ * mark, had none been available, would have been the worst option on the list:
+ * it would assert precisely the identity this entry exists to deny.
+ *
+ * No `docs`: yieldblox.xyz publishes no documentation link, and a dead link is
+ * worse than an absent one.
  */
 export const BLEND_YIELDBLOX_V2: BlendPool = {
   id: 'yieldblox',
   name: 'YieldBlox',
   poolId: 'CCCCIQSDILITHMM7PBSLVDT5MISSY7R26MNZXCX4H7J5JQ5FPIYOGYFS',
+  logo: '/assets/protocols/yieldblox.png',
   links: {
-    site: 'https://yieldblox.finance',
+    // Their canonical URL (rel=canonical resolves to the www host), not the
+    // yieldblox.finance placeholder this entry originally shipped with.
+    site: 'https://www.yieldblox.xyz',
   },
   deployedOn: {
     host: 'Blend',
