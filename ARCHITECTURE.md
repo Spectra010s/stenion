@@ -68,21 +68,45 @@ reads a protocol's on-chain state (Soroban RPC + Horizon), reduces it into the f
 factors using the formulas in `METHODOLOGY.md`, and produces a weighted `safetyScore`. Currently
 `BlendAdapter` and `KineticAdapter`. Adapters throw on failure; they never swallow errors.
 
+**One adapter can serve several markets.** `BlendAdapter` takes a `BlendPool` — slug, display name,
+pool contract, mark, links, deployment label — and the module exports `BLEND_POOLS`, the list the
+indexer iterates. Every Blend market runs the same pool wasm (both live pools report code hash
+`a41fc53d…`, and the V2 pool factory's `is_pool` returns true for both), so a second market is a
+config entry and no new scoring code. Nothing on `BlendPool` is a threshold, a weight or a formula —
+a per-pool rulebook would break `METHODOLOGY.md` ground rule 1 — and the identity fields all come
+from the pool the instance was given, so an adapter cannot publish one pool's `contractId` beside
+another pool's numbers. **Targeting, not aggregation:** each pool is its own ranked entry, and the
+two live Blend pools sit 30 points apart (54 and 24) on identical contract code.
+
+**A row in `protocols` is therefore not always a protocol.** Three targets, two protocols: Blend's
+Fixed pool, Kinetic, and the YieldBlox pool on Blend V2. That distinction is carried in the data,
+not left to the reader — see `deployment_host` / `deployment_label` below.
+
 **`@stenion/db`** — the single, typed storage layer, shared by both the indexer (writes) and the
 dashboard/API (reads) so there's no duplicated connection logic. Exposes a lazy singleton `pg`
 `Pool` (`getPool`/`closePool`), a `createStore(pool)` factory with all read/write methods, env
 loading, and the persisted `RunRecord` type. Three tables — two that hold the product, and one that
 holds no product data at all:
 
-- `protocols` — one row per protocol (slug PK, name, chain, adapter class name) plus its identity:
-  `logo` (a root-relative path into the dashboard's own `public/` tree — we host every mark, never
-  hotlink), `contract_id` (the raw Soroban address the score is derived from, so a reader can check
-  it in an explorer; the explorer itself is chosen in `dashboard/app/lib/explorer.ts`, not per
-  adapter), and `site_url` / `docs_url`. All four are nullable, because "publishes no mark" and
-  "publishes no docs" are real answers the UI renders deliberately rather than papering over with a
-  placeholder. Upserted at indexer startup from adapter metadata — and **overwritten every cycle**,
-  so these are maintainer-managed; a future protocol self-service flow needs separate
-  precedence-taking columns, not edits to these.
+- `protocols` — one row per **scored market** (slug PK, name, chain, adapter class name) plus its
+  identity: `logo` (a root-relative path into the dashboard's own `public/` tree — we host every
+  mark, never hotlink), `contract_id` (the raw Soroban address the score is derived from, so a
+  reader can check it in an explorer; the explorer itself is chosen in
+  `dashboard/app/lib/explorer.ts`, not per adapter), `site_url` / `docs_url`, and the deployment
+  pair `deployment_host` / `deployment_label` (migration 0006). All are nullable, because
+  "publishes no mark", "publishes no docs" and "runs on its own contracts" are real answers the UI
+  renders deliberately rather than papering over with a placeholder. Upserted at indexer startup
+  from adapter metadata — and **overwritten every cycle**, so these are maintainer-managed; a future
+  protocol self-service flow needs separate precedence-taking columns, not edits to these.
+
+  The deployment pair is written and read together and published as one `deployedOn` object
+  (`{ host, label }`, or `null`), on **both** the leaderboard and the detail response — the only
+  identity field besides `logo` that the board carries, because it is what a row _is_ rather than
+  verification detail a reader looks up afterwards. `deployment_host` is a display name, not a
+  `protocols.id`, and there is deliberately no foreign key: Stenion's `blend` row is itself one
+  Blend market, so a reference to it would claim the pool runs on that _entry_ rather than on the
+  host protocol's contract. A half-populated pair maps to `null` rather than to a partial object.
+
 - `risk_scores` — append-only history. `safety_score` is promoted to its own `numeric` column
   (it's what the registry ranks on); the five factors live in one `jsonb` column (displayed, not
   ranked, and growing the taxonomy then needs no migration). `methodology_version` records which
@@ -162,7 +186,16 @@ still recorded as `failed` — a protocol that is genuinely down still shows as 
   left rather than a fixed split, so one protocol failing cannot spend the other's retries while a
   protocol that finishes early hands its slack on. Worst-case cycle ≈ 42s in the run loop plus cold
   start, pool connect, upserts, streak queries and a 3s-capped alert POST — comfortably inside 60s.
-  Measured live `fetchRawData` on 2026-08-19: Blend 6.0–7.5s, Kinetic 7.7–10.5s.
+  Measured live `fetchRawData` on 2026-08-19: Blend 6.0–7.5s, Kinetic 7.7–10.5s, YieldBlox
+  8.1–12.5s; three sequential targets totalled 24.5–26.9s against the 42s budget.
+
+  **At three targets the first share is 14s, below the 15s attempt timeout.** A first attempt that
+  runs to that cap leaves nothing for a retry, so slow-failure retries are gone for whichever target
+  runs first (fast failures — the common RPC 429/5xx case — still retry with ~12s left). Blend runs
+  first because it is the fastest and most likely to hand slack on. This is the ceiling
+  [`ROADMAP.md`](ROADMAP.md) describes, reached at three targets rather than the four it previously
+  predicted; the fix is concurrency, not a bigger budget, and it is not done here.
+
 - **The attempt timeout is soft.** It races the attempt against a timer, abandoning the in-flight
   work rather than cancelling it. That bounds the observed attempt duration, which is what the
   budget needs, and is harmless under serverless where the socket dies with the invocation. True

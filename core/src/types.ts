@@ -48,6 +48,37 @@ export interface ProtocolLinks {
   docs?: string;
 }
 
+/**
+ * Set when an entry is a market running on ANOTHER protocol's contracts rather
+ * than on its own — e.g. the YieldBlox pool, which is a community-managed pool
+ * deployed on Blend V2 and running Blend's pool contract byte-for-byte.
+ *
+ * This exists because such an entry is otherwise indistinguishable from an
+ * independent protocol, and presenting it as one would misrepresent the
+ * ecosystem: a reader scanning the registry would count two protocols where the
+ * chain has one codebase and two markets. Every consumer that renders a
+ * protocol's identity MUST render this alongside it when present — that is the
+ * whole reason the field is in the metadata rather than in a frontend lookup.
+ *
+ * It is deliberately NOT a link between registry entries. `host` is a display
+ * name, not an id: Stenion's `blend` entry is itself one pool, so pointing at it
+ * would claim "this runs on that entry", which is not what is true. What is true
+ * is that both run the host protocol's contract, and that is what this says.
+ *
+ * Absent (undefined) is the normal case and means exactly "this protocol runs on
+ * its own contracts" — never "we didn't check".
+ */
+export interface ProtocolDeployment {
+  /** the host protocol's display name, e.g. "Blend" */
+  host: string;
+  /**
+   * Short label naming the exact deployment, scannable in a registry row and
+   * complete enough to stand alone, e.g. "Blend V2 pool". Written to be read at
+   * a glance next to the protocol's name — not a sentence.
+   */
+  label: string;
+}
+
 export interface ProtocolMetadata {
   /** unique slug used as the primary key across storage and the API, e.g. "blend" */
   id: string;
@@ -85,6 +116,11 @@ export interface ProtocolMetadata {
   contractId?: string;
   /** the protocol's own site/docs — see ProtocolLinks for the endorsement caveat */
   links?: ProtocolLinks;
+  /**
+   * Present only when this entry is a market on another protocol's contracts —
+   * see ProtocolDeployment. Optional because independence is the normal case.
+   */
+  deployedOn?: ProtocolDeployment;
   /**
    * Which adapter produced this protocol's scores, e.g. "BlendAdapter".
    * Persisted to `protocols.adapter` and published on GET /api/v1/protocol/:id

@@ -1,0 +1,48 @@
+-- Deployment provenance: when a registry entry is a market running on ANOTHER
+-- protocol's contracts rather than on its own.
+--
+-- Why this exists at all. Until now every entry was an independent protocol, so
+-- "a row in `protocols`" and "a protocol" were the same thing and nothing had to
+-- say otherwise. Adding the YieldBlox pool breaks that: it is a DAO-managed
+-- market on Blend V2, running Blend's pool contract byte-for-byte (identical
+-- wasm hash to Blend's own Fixed pool, and the V2 pool factory's `is_pool`
+-- returns true for both). Listing it beside Blend and Kinetic with no further
+-- qualification would tell a reader the Stellar ecosystem has three independent
+-- lending protocols when it has two protocols and three markets. That is a
+-- misrepresentation the registry must not make, which is why this is a column
+-- and not a frontend footnote — it travels with the row, into the public API,
+-- and every consumer sees it.
+--
+-- Same route as every other identity column (ProtocolMetadata -> upsertProtocol,
+-- overwritten from adapter metadata on every cycle) and the same reasoning as
+-- 0003: adapter metadata is the one source, so there is no dashboard lookup
+-- table keyed by slug to go stale when an adapter is added.
+--
+-- BOTH NULLABLE, and NULL is the normal case: it means "this entry runs on its
+-- own contracts", which is true of Blend and Kinetic and will be true of most
+-- future entries. It never means "we did not check". Nullable is also required
+-- for the live-writer hazard 0002 and 0003 both document at length — this
+-- migration runs against the one shared Neon database while `main` may still be
+-- running an indexer that upserts without these columns.
+--
+-- They are written and read as a PAIR (the API publishes them as a single
+-- `deployedOn` object, present only when both are set). A row with one and not
+-- the other is meaningless, and no writer can produce one: `ProtocolDeployment`
+-- makes both required, so the adapter either supplies the object or omits it.
+-- Deliberately NOT enforced with a CHECK, for the same live-writer reason — a
+-- constraint added here binds a deploy that has not happened yet.
+--
+-- `deployment_host` is a DISPLAY NAME ("Blend"), not a `protocols.id`, and there
+-- is deliberately no foreign key. Stenion's `blend` row is itself one Blend
+-- market, so a reference to it would assert "this pool runs on that entry",
+-- which is not what is true; what is true is that both run the host protocol's
+-- contract. A FK would also make the host's presence in the registry a
+-- precondition for naming it, and a market can outlive — or precede — its
+-- backbone having an entry of its own.
+--
+-- Two text columns rather than one `jsonb`, on 0003's reasoning: this is a short
+-- fixed set whose members each mean something specific and are published as
+-- typed fields on the public API, not an open taxonomy that grows per adapter.
+ALTER TABLE protocols
+  ADD COLUMN IF NOT EXISTS deployment_host  text,
+  ADD COLUMN IF NOT EXISTS deployment_label text;

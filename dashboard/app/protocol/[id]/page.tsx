@@ -22,6 +22,7 @@ import {
 import { formatTimestamp, freshness } from '../../lib/format';
 import { contractExplorerUrl, shortenContractId } from '../../lib/explorer';
 import { MarkAttribution, ProtocolLogo } from '../../../components/protocol-logo';
+import { DeploymentBadge, DeploymentNotice } from '../../../components/deployment-badge';
 import { ScoreRing } from '../../../components/score-ring';
 import { StatusPill } from '../../../components/status-pill';
 import { FactorCard } from '../../../components/factor-bar';
@@ -38,9 +39,16 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   // here for a missing protocol is discarded, so don't pretend to set one.
   if (!detail) return {};
   const score = detail.safetyScore ?? '—';
+  // The deployment note belongs in the description, not only on the page: this
+  // is the text a shared link renders, and a preview card reading "YieldBlox —
+  // safety 24" with nothing else is the exact misreading the label exists to
+  // prevent, travelling further than the page itself.
+  const deployment = detail.deployedOn
+    ? ` A ${detail.deployedOn.label}, not an independent protocol.`
+    : '';
   return {
     title: `${detail.name} — safety ${score}`,
-    description: `Live Stenion safety score and factor breakdown for ${detail.name} on ${detail.chain}.`,
+    description: `Live Stenion safety score and factor breakdown for ${detail.name} on ${detail.chain}.${deployment}`,
   };
 }
 
@@ -67,6 +75,19 @@ export default async function ProtocolDetailPage({ params }: { params: Promise<{
       </Reveal>
 
       <Hero detail={detail} />
+
+      {/* What this entry IS comes before how fresh our reading of it is, and
+          well before any number: a score is uninterpretable until you know
+          whether you are looking at a protocol or at one market on another
+          protocol's contracts.
+          Guarded out here as well as inside DeploymentNotice, because the
+          <Reveal> wrapper carries the `mt-4` — rendering it around a null child
+          would leave a stray gap on every independent protocol's page. */}
+      {detail.deployedOn && (
+        <Reveal delay={0.07} className="mt-4">
+          <DeploymentNotice deployedOn={detail.deployedOn} name={detail.name} />
+        </Reveal>
+      )}
 
       <FreshnessNotice detail={detail} />
 
@@ -216,6 +237,11 @@ function Hero({ detail }: { detail: ProtocolDetail }) {
                 {detail.adapter}
               </code>
             </span>
+            {/* Repeated here as well as in the notice below because the hero is
+                what a screenshot or a shared card captures, and the adapter name
+                beside it (BlendAdapter on a page titled YieldBlox) otherwise
+                reads as a mistake rather than as the point. */}
+            <DeploymentBadge deployedOn={detail.deployedOn} />
           </p>
 
           <div className="mt-5 flex flex-wrap items-center gap-3">

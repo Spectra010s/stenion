@@ -7,11 +7,35 @@ commitment — priorities shift as protocols launch and as the project finds fun
 
 - **Continuous risk scoring for Stellar/Soroban lending protocols**, with a public, free, ranked
   registry sorted purely on `safetyScore` — payment-blind, no exceptions.
-- **Two protocols scored end-to-end from live mainnet data:**
-  - **[Blend](https://blend.capital)** — the flagship Fixed V2 pool. Reference implementation.
+- **Three markets scored end-to-end from live mainnet data — two protocols, three entries:**
+  - **[Blend](https://blend.capital)** — the flagship Fixed V2 pool (`CAJJZSGM…`). Reference
+    implementation.
   - **[Kinetic / K2](https://k2lend.com)** — an Aave-V3-style single-pool-multi-asset protocol; the
     first adapter to exercise a genuinely different on-chain shape than Blend, validating the shared
     taxonomy against a non-Blend protocol.
+  - **YieldBlox** (`CCCCIQSD…`) — a DAO-managed pool **on Blend V2**, not an independent protocol.
+    Scored by `BlendAdapter` pointed at a second pool, and labelled as a Blend V2 pool everywhere it
+    appears. See "Multi-pool Blend targeting" below.
+
+- **Multi-pool Blend targeting.** `BlendAdapter` takes a `BlendPool` config — slug, display name,
+  pool contract, mark, links, deployment label — instead of hardcoding one pool, and the indexer
+  iterates `BLEND_POOLS`. Every Blend market runs the same pool wasm (both live pools report code
+  hash `a41fc53d…`, and the V2 factory's `is_pool` returns true for both), so a second market needs
+  **no new scoring code** — only a config entry. The same rule that moved `scoreFactors` into
+  `core`, applied to pool targeting.
+
+  It is **targeting, not aggregation**: each pool is a separate ranked entry scored from its own
+  reserves, oracle and admin. The two live Blend pools sit 30 points apart on identical contract
+  code (54 and 24), which a single summed "Blend" number would have hidden.
+
+  **A registry entry is therefore no longer the same thing as a protocol**, and the API says so:
+  `deployedOn` (`{ host, label }`, null for an independent entry) rides on both the leaderboard and
+  the detail response, and the dashboard renders it beside the name on the registry row, the
+  homepage card, the protocol hero and the page's own metadata description. That labelling is the
+  condition on which the entry exists — presenting a Blend market as an independent protocol is the
+  exact misrepresentation this project refused when it declined to build a standalone YieldBlox
+  adapter.
+
 - **The five-factor `*Safety` model** — collateral concentration, oracle trustworthiness, admin-key
   control, liquidity depth, utilization headroom — with a fully public, challengeable rulebook in
   [`METHODOLOGY.md`](METHODOLOGY.md).
@@ -59,12 +83,19 @@ commitment — priorities shift as protocols launch and as the project finds fun
 Roughly in priority order, but not committed to dates:
 
 - **More protocol adapters.** The open contribution path (see [`CONTRIBUTING.md`](CONTRIBUTING.md)).
-  The bar: an _independently-scoreable native-Soroban lending protocol_ — not another Blend pool,
-  not a deployment whose lending state lives on another chain.
+  The bar for a new **adapter** is unchanged: an _independently-scoreable native-Soroban lending
+  protocol_ — not a deployment whose lending state lives on another chain, and not something that
+  turns out to be a Blend pool.
+
+  What changed is what happens when it _is_ a Blend pool. That is no longer a dead end: it is a
+  `BLEND_POOLS` entry with a `deployedOn` label, which costs one config block and no scoring code.
+  The two paths must not be confused — a Blend market gets a pool entry, never an adapter of its
+  own, because an adapter would duplicate a rulebook that is already shared.
   - **Nectar Network — watching for mainnet.** Flagged as the next protocol to evaluate once it's
     live on Stellar mainnet. Not built yet, and won't be until we can confirm from its own contracts
     that it's an independently-scoreable native-Soroban lending protocol (reserves/utilization/oracle
     readable via Soroban RPC + Horizon) rather than another Blend pool or another-chain deployment.
+
 - **A longer history window (raising the 50-row detail cap).** `GET /api/v1/protocol/:id` returns
   the newest 50 runs, which at the current 5-minute cadence is about four hours. That is enough to
   show _an_ event and not enough to show a _pattern_, and the difference is load-bearing: K2's
@@ -86,19 +117,41 @@ Roughly in priority order, but not committed to dates:
   already there, but the API exposes only `safetyScore` per history point. Charting a single
   factor over time — watching `oracleSafety` sawtooth on its own axis — is deliberately deferred
   until the window question above is settled, because it multiplies the same payload by five.
-- **Concurrent protocols within a cycle — and the protocol-count ceiling that forces it.**
-  **Trigger condition, stated plainly: this becomes necessary at four protocols.** The indexer runs
-  protocols sequentially and divides one wall-clock budget between them, so each protocol's share is
-  `STENION_CYCLE_BUDGET_MS / protocolCount`. At the 42s default that is 21s each for two protocols
-  and 14s each for three — but at four it is 10.5s, which is **below the 15s attempt timeout**, and
-  retries stop happening at all. Nothing breaks loudly when that happens: cycles still run, failures
-  are still recorded, and the retry that this whole feature exists for has simply, silently, stopped.
-  That is the failure mode worth writing down, because it degrades invisibly as the project grows.
+- **Concurrent targets within a cycle — the ceiling is here, one target earlier than this document
+  used to predict.** The indexer runs targets sequentially and divides one wall-clock budget between
+  them, so the **first** target's share is `STENION_CYCLE_BUDGET_MS / targetCount` (later ones
+  inherit whatever slack the earlier ones did not spend). At the 42s default that is 21s each for
+  two and **14s for three** — and 14s is already **below the 15s `STENION_ATTEMPT_TIMEOUT_MS`**.
 
-  The fix is running protocols concurrently (each then gets the full budget), not a longer budget —
-  the 60s `maxDuration` ceiling on Vercel Hobby cannot be raised. It is deliberately not done yet:
-  concurrency doubles simultaneous load on a shared, rate-limited public RPC, which is itself a
-  source of the failures being retried. **Before adding a fourth adapter, check this.**
+  **Correction to what was written here before.** This entry used to name four targets as the
+  trigger, on the arithmetic that four gives 10.5s. The arithmetic was right and the conclusion was
+  off by one: the condition is "share < attempt timeout", and three targets already meets it. Adding
+  the YieldBlox pool crossed it.
+
+  What that actually costs, stated precisely rather than as "retries stop":
+
+  - The first target's first attempt is capped at **14s instead of 15s** (`withRetry` caps each
+    attempt at whatever is left).
+  - A first attempt that **runs to that cap** leaves 0ms, which is below
+    `baseDelayMs + minAttemptMs` (1s + 1s), so **no retry is started**. At two targets the same
+    timed-out attempt still left 6s and bought one (5s-capped) retry.
+  - A first attempt that **fails fast** — an RPC 429 or 5xx, which is the common transient case and
+    returns in well under a second — still retries normally, with ~12s left to do it in.
+
+  So retries are not gone; they are gone for the slow-failure case on whichever target runs first.
+  Measured `fetchRawData` durations (2026-08-19, from a developer machine — Vercel's path to the RPC
+  is not this one): Blend 6.0–7.5s, Kinetic 10.2–11.4s, YieldBlox 8.1–12.5s; three sequential
+  targets totalled 24.5–26.9s against the 42s budget, so a healthy cycle has real headroom and it is
+  only the retry margin that is tight. Blend runs first because it is the fastest and so most likely
+  to pass slack on.
+
+  The fix is running targets concurrently (each then gets the full budget), not a longer budget —
+  the 60s `maxDuration` ceiling on Vercel Hobby cannot be raised. Still deliberately not done:
+  concurrency triples simultaneous load on a shared, rate-limited public RPC, which is itself a
+  source of the failures being retried. The cheaper interim lever, if slow-failure retries matter
+  more than long attempts, is **lowering** `STENION_ATTEMPT_TIMEOUT_MS` (10s would restore a retry
+  inside a 14s share) — a config change, not code. **Before adding a fourth target, this stops being
+  optional.**
 
 - **An `AbortSignal` through `Adapter.fetchRawData`.** The per-attempt timeout is currently _soft_ —
   it races the attempt against a timer and abandons the loser rather than cancelling it, because no
@@ -201,10 +254,13 @@ Roughly in priority order, but not committed to dates:
 Confirming a protocol is _not_ in scope from its own contracts — before writing scoring logic — is
 part of the discipline, not a failure. Two notable cases:
 
-- **YieldBlox.** Not an independent Soroban lending protocol. The YieldBlox DAO adopted Blend as its
-  backbone; what exists today is a community-managed pool _on Blend V2_, using the identical Blend
-  interface. A "YieldBlox adapter" would just be `BlendAdapter` pointed at a different pool. Could
-  later be represented as a second Blend _pool_ via a small multi-pool refactor — tracked, not built.
+- **YieldBlox — skipped as an adapter, then shipped as a pool.** Still not an independent Soroban
+  lending protocol: the YieldBlox DAO adopted Blend as its backbone, and what exists today is a
+  DAO-managed pool _on Blend V2_ running the identical Blend contract. So it never got an adapter —
+  a "YieldBlox adapter" would just be `BlendAdapter` pointed at a different pool. The multi-pool
+  refactor this entry anticipated has since landed, and the pool is now a registered entry
+  (`CCCCIQSD…`), scored by `BlendAdapter` and labelled a Blend V2 pool. The skip decision was never
+  reversed — it is the reason the entry is a pool and not a protocol.
 - **Templar.** A NEAR-based, chain-abstraction ("Cypher Lending") protocol. Its lending market state
   — reserves, supply/borrow, utilization, collateral positions — lives on **NEAR**, read via NEAR
   RPC. Stellar is only a wallet/collateral entry point via NEAR MPC. The only native-Soroban contract

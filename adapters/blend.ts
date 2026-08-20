@@ -29,6 +29,8 @@ import {
 import type {
   Adapter,
   ExcludedReserve,
+  ProtocolDeployment,
+  ProtocolLinks,
   ProtocolMetadata,
   WorstReserves,
   RiskFactor,
@@ -41,9 +43,23 @@ import type {
 //
 // Addresses come from Blend's own deploy config (blend-utils/mainnet.contracts.json),
 // cross-checked against docs.blend.capital/mainnet-deployments — not a third-party
-// indexer. We target the flagship "Fixed" V2 pool (XLM:USDC) only for v1: it holds
-// the most liquidity and is the simplest to reason about. Blend's factory deploys
-// one contract per market, so multi-pool aggregation is deliberately deferred.
+// indexer.
+//
+// ONE ENGINE, MANY POOLS. Blend's factory deploys one contract per market, and
+// every market runs the SAME pool wasm — verified rather than assumed: the Fixed
+// V2 and YieldBlox V2 pools report the identical code hash
+// (a41fc53d6753b6c04eb15b021c55052366a4c8e0e21bc72700f461264ec1350e), and the V2
+// pool factory's `is_pool` returns true for both. So the read interface, the
+// instance-storage keys and the fixed-point scalars below hold for every pool,
+// and a second Blend market needs no new scoring code — only a new BlendPool
+// entry. Same rule that moved `scoreFactors` into @stenion/core, applied to pool
+// targeting: nothing per-pool is allowed to be logic.
+//
+// This is multi-pool TARGETING, not aggregation. Each pool is scored and ranked
+// as its own registry entry from its own reserves, oracle and admin; pools are
+// never summed into a single Blend number. Summing would hide exactly the
+// per-market differences the score exists to show — the two live pools sit 30
+// points apart on the same contract code.
 // ---------------------------------------------------------------------------
 
 const NETWORK_PASSPHRASE = Networks.PUBLIC;
@@ -54,8 +70,89 @@ const DEFAULT_RPC_URL = 'https://mainnet.sorobanrpc.com';
 /** Public Horizon — needed for admin-account signer/activity data, which Soroban RPC does not expose. */
 const DEFAULT_HORIZON_URL = 'https://horizon.stellar.org';
 
-/** Blend V2 "Fixed" pool (XLM:USDC). */
-const FIXED_POOL_V2 = 'CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD';
+/**
+ * One Blend market this adapter can be pointed at.
+ *
+ * Everything here is IDENTITY — the slug, the display name, the pool contract,
+ * the mark and the links. Deliberately nothing here is a threshold, a weight or
+ * a formula: a field on this type that changed how a factor is computed would be
+ * a per-pool rulebook, which METHODOLOGY.md ground rule 1 forbids. Adding a pool
+ * must stay a data change.
+ */
+export interface BlendPool {
+  /** registry slug — `protocols.id`, the public URL, and the API path segment */
+  id: string;
+  /** display name */
+  name: string;
+  /** the pool contract this entry is scored from */
+  poolId: string;
+  /** self-hosted mark, or omitted when the market publishes none (see ProtocolMetadata.logo) */
+  logo?: string;
+  links?: ProtocolLinks;
+  /**
+   * Set on every pool that is not the protocol's own flagship entry, so a reader
+   * can tell a community market running Blend's contracts from Blend itself.
+   * This is the field that stops a second Blend pool reading as a second
+   * protocol — see ProtocolDeployment.
+   */
+  deployedOn?: ProtocolDeployment;
+}
+
+/**
+ * Blend V2 "Fixed" pool (XLM:USDC:EURC) — Blend's flagship market and this
+ * adapter's default target. Its on-chain pool `Name` is "Fixed"; the entry is
+ * called "Blend" because it is the reference deployment of the protocol itself.
+ */
+export const BLEND_FIXED_V2: BlendPool = {
+  id: 'blend',
+  name: 'Blend',
+  poolId: 'CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD',
+  // Self-hosted copy of Blend's own mark, never a hotlink to their CDN.
+  logo: '/assets/protocols/blend.svg',
+  links: {
+    site: 'https://www.blend.capital',
+    docs: 'https://docs.blend.capital',
+  },
+};
+
+/**
+ * The YieldBlox pool on Blend V2 — a DAO-managed market, NOT an independent
+ * protocol. Its on-chain pool `Name` is "YieldBlox", its admin is a Soroban
+ * Governor contract rather than a keypair, and YieldBlox's own site describes it
+ * as "a DAO-managed money market on the Stellar Network, using Blend Protocol
+ * and Soroban Governor". It is scored as its own entry because its reserves,
+ * oracle aggregator and admin are all its own — and carries `deployedOn` because
+ * its contract code is not.
+ *
+ * No `logo`: YieldBlox publishes no mark we can self-host, so the initials tile
+ * applies (ProtocolMetadata.logo). Borrowing Blend's mark would be the worst
+ * option on the list — it would assert precisely the identity this entry exists
+ * to deny.
+ *
+ * No `docs`: their documentation is referred to from a pre-launch page but
+ * publishes no reachable URL, and a dead link is worse than an absent one.
+ */
+export const BLEND_YIELDBLOX_V2: BlendPool = {
+  id: 'yieldblox',
+  name: 'YieldBlox',
+  poolId: 'CCCCIQSDILITHMM7PBSLVDT5MISSY7R26MNZXCX4H7J5JQ5FPIYOGYFS',
+  links: {
+    site: 'https://yieldblox.finance',
+  },
+  deployedOn: {
+    host: 'Blend',
+    label: 'Blend V2 pool',
+  },
+};
+
+/**
+ * Every Blend market Stenion scores, in registration order.
+ *
+ * The indexer iterates this rather than naming pools one by one, so adding a
+ * market is one entry here and nothing else — there is no second target list to
+ * keep in step, which is how such lists come apart.
+ */
+export const BLEND_POOLS: readonly BlendPool[] = [BLEND_FIXED_V2, BLEND_YIELDBLOX_V2];
 
 // Fixed-point scalars from blend-contracts-v2/pool/src/constants.rs.
 const SCALAR_7 = 10n ** 7n; // c_factor, l_factor, util, max_util
@@ -564,16 +661,31 @@ function suppliedUsd(r: BlendReserveRaw, oracleDecimals: number): number | null 
 export interface BlendAdapterOptions {
   rpcUrl?: string;
   horizonUrl?: string;
-  poolId?: string;
+  /**
+   * Which market to score. Defaults to Blend's flagship Fixed V2 pool.
+   *
+   * A whole BlendPool rather than a bare `poolId`, deliberately: target and
+   * identity have to move together. A lone pool-id knob lets an instance read
+   * one pool while publishing another pool's slug, name and links — the same
+   * class of bug as `adapter: "w"`, and harder to catch, because every field
+   * involved stays individually plausible.
+   */
+  pool?: BlendPool;
 }
 
 export class BlendAdapter implements Adapter<BlendRawData> {
   /**
-   * Built in the constructor rather than as a field initialiser because
-   * `contractId` must be the pool THIS INSTANCE scores, not the module default.
-   * An adapter constructed with `{ poolId }` would otherwise publish an explorer
-   * link to a pool it never read — a wrong number attached to a real address,
-   * which is worse than no link at all. Everything else here is a literal.
+   * Built in the constructor rather than as a field initialiser because every
+   * identity field has to describe the pool THIS INSTANCE scores, not a module
+   * default. `contractId` is the sharp one: an adapter pointed at a second pool
+   * that published an explorer link to the first would attach a wrong number to
+   * a real address, which is worse than no link at all. It is set from
+   * `this.poolId`, the same value `fetchRawData` reads, so the two cannot drift.
+   *
+   * `adapterRef` is the one field every pool shares, and that is correct rather
+   * than a gap: both entries genuinely are produced by this class, so both rows
+   * point a reader at this file. It stays a string literal — never
+   * `this.constructor.name`; see ProtocolMetadata.adapterRef.
    */
   readonly metadata: ProtocolMetadata;
 
@@ -584,21 +696,23 @@ export class BlendAdapter implements Adapter<BlendRawData> {
   constructor(opts: BlendAdapterOptions = {}) {
     this.rpcUrl = opts.rpcUrl ?? DEFAULT_RPC_URL;
     this.horizonUrl = opts.horizonUrl ?? DEFAULT_HORIZON_URL;
-    this.poolId = opts.poolId ?? FIXED_POOL_V2;
+    const pool = opts.pool ?? BLEND_FIXED_V2;
+    this.poolId = pool.poolId;
 
     this.metadata = {
-      id: 'blend',
-      name: 'Blend',
+      id: pool.id,
+      name: pool.name,
       chain: 'stellar',
       // Literal, not this.constructor.name — see ProtocolMetadata.adapterRef.
       adapterRef: 'BlendAdapter',
-      // Self-hosted copy of Blend's own mark, never a hotlink to their CDN.
-      logo: '/assets/protocols/blend.svg',
       contractId: this.poolId,
-      links: {
-        site: 'https://www.blend.capital',
-        docs: 'https://docs.blend.capital',
-      },
+      // Spread, so a pool with no mark / no links / no deployment note leaves the
+      // key ABSENT rather than set to undefined. Identical to TypeScript, not to
+      // a reader of a serialized metadata object — and `upsertProtocol` maps
+      // either to NULL, so nothing downstream is asked to tell them apart.
+      ...(pool.logo === undefined ? {} : { logo: pool.logo }),
+      ...(pool.links === undefined ? {} : { links: pool.links }),
+      ...(pool.deployedOn === undefined ? {} : { deployedOn: pool.deployedOn }),
     };
   }
 
@@ -994,4 +1108,5 @@ export class BlendAdapter implements Adapter<BlendRawData> {
   }
 }
 
+/** Blend's flagship Fixed V2 pool, ready to use. */
 export const blendAdapter = new BlendAdapter();
