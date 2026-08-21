@@ -47,6 +47,41 @@ export const metadata: Metadata = {
 const GRID_RANKED = 'md:grid-cols-[3rem_1fr_8rem_10rem_11rem]';
 const GRID_UNRANKED = 'md:grid-cols-[1fr_8rem_10rem_11rem]';
 
+/**
+ * The page header: the claim on the left, the qualifications beside it.
+ *
+ * TWO ROWS, NOT TWO COLUMNS OF EQUALS. The eyebrow and the heading span the
+ * full width on their own row; the split happens underneath them, so the notes
+ * begin on the same line as the intro paragraph they qualify rather than
+ * floating up alongside the heading. Row spacing is the grid's `gap-y`, which
+ * is why the intro carries no top margin of its own.
+ *
+ * The split is `lg` and not `md`: at 768px two columns leave the intro about
+ * 22rem wide, which is narrower than the single-column measure it replaces.
+ * Below the breakpoint the grid is a plain stack, so the reading order is the
+ * DOM order — eyebrow, heading, intro, then the notes.
+ */
+const HEADER_GRID = 'grid gap-x-12 gap-y-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]';
+
+/**
+ * The subordinate column.
+ *
+ * The rule does the demoting: a left border on wide viewports, a top border on
+ * narrow ones, so the notes read as annotations of the intro in both layouts
+ * rather than as three paragraphs of equal weight stacked.
+ *
+ * `line`, NOT `line-soft`. This rule sits on the page ground, and in light mode
+ * `line-soft` (#e3def6) is *lighter* than `bg` (#e0d9f6) — so it reads as a
+ * white line drawn on the page rather than as a separator. That token is tuned
+ * for card grounds, where `surface` (#ebe8f9) is the lightest step and
+ * `line-soft` correctly sits below it. `line` is darker than the ground in
+ * light mode and lighter than it in dark, which is what a rule on the page
+ * needs; it is the token the section divider below already uses.
+ */
+const HEADER_NOTES =
+  'space-y-3 border-t border-line pt-5 text-sm leading-relaxed text-faint ' +
+  'lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0';
+
 export default async function RegistryPage({
   searchParams,
 }: {
@@ -98,49 +133,69 @@ export default async function RegistryPage({
 
   const filtering = params.q !== '' || params.status !== 'all';
 
+  // Both notes are conditional on their subject existing, so the second column
+  // can be empty — and an empty column would leave the lead sentence in a 1.4fr
+  // cell for no reason, i.e. the narrow-text-beside-dead-space this layout
+  // exists to remove. No notes, no split.
+  const hasHeaderNotes = hasDeployedEntries || published.length > 0;
+
   return (
     <div className="mx-auto max-w-6xl px-5 py-14">
-      <Reveal>
-        <span className="text-xs font-medium uppercase tracking-[0.18em] text-muted">
-          Ranked by safety score · payment-blind
-        </span>
-        <h1 className="mt-5 font-display text-4xl font-semibold tracking-tight text-ink">
-          Protocol registry
-        </h1>
-        <p className="mt-3 max-w-2xl text-muted">
+      <Reveal className={cn(hasHeaderNotes && HEADER_GRID)}>
+        <div className={cn(hasHeaderNotes && 'lg:col-span-2')}>
+          <span className="text-xs font-medium uppercase tracking-[0.18em] text-muted">
+            Ranked by safety score · payment-blind
+          </span>
+          <h1 className="mt-5 font-display text-4xl font-semibold tracking-tight text-ink">
+            Protocol registry
+          </h1>
+        </div>
+
+        {/* Deliberately a size up from the notes beside it. This is the page's
+            claim — the ranking is on-chain and unbuyable — and it was previously
+            set at the same weight as the two clarifications stacked under it,
+            which is what made the column read as an undifferentiated block of
+            text. */}
+        <p className="max-w-2xl text-lg leading-relaxed text-muted">
           Every protocol Stenion tracks, ordered by its live safety score — higher is safer. Ranking
           is derived purely from on-chain data; no protocol can pay to move up. Open a protocol to
           see the full factor breakdown behind its number.
         </p>
-        {/* Said once at the top rather than only per-row: a reader who scans the
-            list and leaves should know that a row is not necessarily a distinct
-            protocol, even if they never hover the badge that says which.
-            Conditional, because a standing claim about "some entries" with no
-            such entry on the board is a promise the page doesn't keep. */}
-        {hasDeployedEntries && (
-          <p className="mt-2 max-w-2xl text-sm text-faint">
-            Some entries are individual markets running another protocol&rsquo;s contracts rather
-            than protocols in their own right. Those are labelled on the row, and scored on their
-            own reserves, oracle and admin like any other entry.
-          </p>
-        )}
-        {/* The unscored entries are no longer a section at the bottom of a long
-            page, so this is a filter link rather than a jump link — it changes
-            the URL, which means it is also the shape someone can share. Still
-            conditional on there being members. */}
-        {published.length > 0 && (
-          <p className="mt-2 max-w-2xl text-sm text-faint">
-            {published.length === 1 ? 'One protocol we' : `${published.length} protocols we`}{' '}
-            assessed and don&rsquo;t score {published.length === 1 ? 'appears' : 'appear'} here too,
-            marked as such and never ranked.{' '}
-            <Link
-              href={registryHref({ status: 'not-scored' })}
-              className="font-medium text-accent-ink underline-offset-4 hover:underline"
-            >
-              See just those
-            </Link>
-            .
-          </p>
+
+        {hasHeaderNotes && (
+          <div className={HEADER_NOTES}>
+            {/* Said once at the top rather than only per-row: a reader who scans
+                the list and leaves should know that a row is not necessarily a
+                distinct protocol, even if they never hover the badge that says
+                which. Conditional, because a standing claim about "some entries"
+                with no such entry on the board is a promise the page doesn't
+                keep. */}
+            {hasDeployedEntries && (
+              <p>
+                Some entries are individual markets running another protocol&rsquo;s contracts
+                rather than protocols in their own right. Those are labelled on the row, and scored
+                on their own reserves, oracle and admin like any other entry.
+              </p>
+            )}
+            {/* The unscored entries are no longer a section at the bottom of a
+                long page, so this is a filter link rather than a jump link — it
+                changes the URL, which means it is also the shape someone can
+                share. Still conditional on there being members. */}
+            {published.length > 0 && (
+              <p>
+                {published.length === 1 ? 'One protocol we' : `${published.length} protocols we`}{' '}
+                assessed and don&rsquo;t score {published.length === 1 ? 'appears' : 'appear'} here
+                too, marked as such and never ranked.{' '}
+                <Link
+                  href={registryHref({ status: 'not-scored' })}
+                  className="font-medium text-accent-ink underline-offset-4 hover:underline"
+                >
+                  See just those
+                </Link>
+                .
+              </p>
+            )}
+          </div>
         )}
       </Reveal>
 
@@ -489,7 +544,10 @@ function AlphabeticalList({ view }: { view: RegistryView }) {
   return (
     <Reveal delay={0.05} trigger="mount" className="mt-8">
       {hasCoverage && (
-        <p className="mb-5 max-w-3xl rounded-lg border border-line bg-surface-2/60 px-4 py-3 text-sm leading-relaxed text-muted">
+        // Full width, matching the table it sits above rather than the prose
+        // measure: a banner that stops two thirds of the way across reads as a
+        // callout floating beside the list instead of a caption on it.
+        <p className="mb-5 rounded-lg border border-line bg-surface-2/60 px-4 py-3 text-sm leading-relaxed text-muted">
           <span className="font-medium text-ink">Sorted A–Z, so nothing here is ranked.</span> The
           list mixes protocols we score with ones we assessed and don&rsquo;t. An entry marked{' '}
           <span className="whitespace-nowrap font-medium text-faint">not scored</span> has no safety
