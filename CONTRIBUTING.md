@@ -201,6 +201,15 @@ Conventions you must not break:
 - **Each factor carries a `detail` string** — a short, human-readable explanation of what drove the
   value (e.g. "top reserve holds 95% of supplied value"). This is what the dashboard shows and what
   makes the number auditable. Write a real one.
+- **Never put a full contract address in a detail string.** Use `shortAsset`'s convention (first six
+  characters plus an ellipsis, `CDTKPW…`) — the shared helpers in `core/src/scoring.ts` already do.
+  A 56-character C-address has no break opportunity anywhere in it, and inside a factor card — which
+  is a grid child — one sets the track's min-content width and scrolls the whole page sideways on a
+  phone. **This includes a label the protocol supplies**, which is the case that actually shipped:
+  Blend's oracle aggregator labels a reserve `Other:XLM` on one pool and `Stellar:C…` on the next, so
+  a string that was fine on every pool we had broke on the one we added. Pass any protocol-supplied
+  label through `shortenAddressesIn` before it lands in a detail string; it shortens the address and
+  keeps the qualifier around it, which is real information.
 
 **How** a factor is computed can differ per protocol; the names, scale, and thresholds do not. New
 factors are added to `@stenion/core` for everyone at once — never invented per-adapter.
@@ -266,6 +275,41 @@ So: confirm reserves, utilization, liquidity, admin, and oracle are all readable
 Horizon** from the protocol's _own_ contracts (not another chain, not another protocol's pool)
 before you commit to an adapter. Confirming this from the contracts first — rather than assuming it
 mirrors Blend/K2 — is the whole point.
+
+### If the answer is no, publish the finding
+
+An investigation that ends in "we can't score this" is a **result**, not a wasted afternoon, and it
+belongs on the site rather than in your terminal history. Add a `CoverageEntry` to
+[`dashboard/app/lib/coverage.ts`](dashboard/app/lib/coverage.ts); it renders in the registry's
+"Assessed, and not scored" section. That is the whole change — there is no migration, no adapter,
+and nothing touches a score.
+
+The bar is `PROTOCOL_NOTES`' bar plus a date rule, and `coverage.test.ts` enforces the mechanical
+half of it:
+
+- **A protocol-specific `reason`.** The status is a category; the reason is why _this_ market is in
+  it. A generic label teaches a reader nothing they couldn't infer from the heading.
+- **A `verify` sentence** saying exactly how someone checks your claim themselves. If you can't
+  write it, the entry doesn't go in — this is what keeps the section a record of work rather than a
+  list of opinions.
+- **An `asOf` date on anything resting on a reading.** A balance is a measurement, not a property.
+  Undated and indexed by a search engine, it becomes a claim we'd be making indefinitely. Required
+  for `below-size-floor`.
+- **Sourced from contracts you actually read.** A figure from an aggregator that was never checked
+  on chain is not a source. Listing nothing is better than listing a number neither of us can point
+  at.
+- **`contractId` only if you recorded the address in full.** A truncated one can't build an explorer
+  link, and `verify` should carry the derivation path instead.
+- **Neutral, and explicit about verified versus inferred.** No speculation about intent. An empty
+  market is an empty market, not a defective one.
+
+Pick the `CoverageStatus` that matches; if none does, add one **with its entry**, never in advance —
+a status with no members renders a heading describing rows that aren't there.
+
+**The reciprocal rule:** if a protocol listed there later becomes scorable, **remove its coverage
+entry in the same PR that registers it.** The registry also filters live against the leaderboard, so
+a forgotten entry disappears rather than double-listing — but don't lean on that; leaving it makes
+the file lie about what we believe.
 
 **Cheap way to tell a Blend market from a protocol:** read the pool's instance storage. A Blend pool
 has a `Config` with an `oracle`/`status`/`min_collateral`, a `Name`, and a `Backstop` pointing at

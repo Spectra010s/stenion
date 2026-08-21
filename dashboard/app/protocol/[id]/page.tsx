@@ -199,12 +199,17 @@ function Findings({ notes, name }: { notes: ProtocolNote[]; name: string }) {
           <RevealItem key={note.title}>
             <article className="surface-lit rounded-xl border border-line p-5">
               <h3 className="font-medium text-ink">{note.title}</h3>
+              {/* `adapter-prose` here too: findings are hand-written, and the
+                  bar for one is that it names the contract a reader checks. A
+                  truncated id is short, but the rule that keeps them truncated
+                  is a convention, not a type — this makes a slip wrap instead
+                  of widening the page. */}
               {note.body.map((para, i) => (
-                <p key={i} className="mt-2.5 text-sm leading-relaxed text-muted">
+                <p key={i} className="adapter-prose mt-2.5 text-sm leading-relaxed text-muted">
                   {para}
                 </p>
               ))}
-              <p className="mt-3.5 border-t border-line-soft pt-3 text-xs leading-relaxed text-faint">
+              <p className="adapter-prose mt-3.5 border-t border-line-soft pt-3 text-xs leading-relaxed text-faint">
                 <span className="font-medium text-muted">Verify it yourself:</span> {note.verify}
               </p>
             </article>

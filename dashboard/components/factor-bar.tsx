@@ -70,7 +70,10 @@ export function FactorCard({
         />
       </div>
 
-      <p className="mt-3 text-sm leading-relaxed text-muted">{factor.detail}</p>
+      {/* `adapter-prose`: this string is composed by an adapter from values the
+          protocol publishes, so it can contain a contract address or a label
+          with no break opportunity. See the rule in globals.css. */}
+      <p className="adapter-prose mt-3 text-sm leading-relaxed text-muted">{factor.detail}</p>
 
       {factor.components && factor.components.length > 0 && (
         <FactorComponents components={factor.components} featured={featured} />
@@ -148,7 +151,11 @@ function ComponentRow({ component: c }: { component: RiskFactorComponent }) {
           </span>
         )}
       </div>
-      <p className="mt-1 text-xs leading-relaxed text-faint">{c.detail}</p>
+      {/* Same rule as the factor detail above, and this is the one that
+          actually broke: the `priceAges` disclosure lists a label PER RESERVE,
+          so a protocol that labels its feeds by address puts one unbreakable
+          token here for every reserve in the pool. */}
+      <p className="adapter-prose mt-1 text-xs leading-relaxed text-faint">{c.detail}</p>
     </li>
   );
 }

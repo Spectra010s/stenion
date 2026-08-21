@@ -82,6 +82,90 @@ commitment — priorities shift as protocols launch and as the project finds fun
   captured examples, the versioning commitment (additive stays on `v1`, breaking gets a `v2`), the
   `ok`/`failed` history union, the staleness model, rate limits, and error shapes. Every example is
   a verbatim capture from production rather than written from the types.
+- **Coverage decisions are published, not just recorded.** The registry now has a second section —
+  **"Assessed, and not scored"** — listing what we investigated and declined, with a
+  protocol-specific reason and a "verify it yourself" path for each. Until now the only record of
+  that work was the footnote at the bottom of this file, which no visitor reads: absence told a
+  reader nothing, so someone searching for a protocol learned only that it wasn't there. Four
+  entries at launch — Templar, K2's two sub-floor markets, and Nectar — each backed by an
+  investigation actually recorded in this repo.
+
+  Three properties are load-bearing. **Nothing in the section renders a numeral**, so "not scored"
+  cannot be misread as "scored badly" — the chip standing where a scored row has its number is a
+  phrase in the same neutral grey the never-scored state already uses, never a band colour. **The
+  entries are unranked and structurally separate** from the ranked table, because a row inside a
+  ranked list participates in the ranking claim even with a dash in its rank column. And **a reason
+  resting on a measurement carries the date it was read** — `$3.62` is a reading, not a property,
+  and an undated balance indexed by a search engine becomes a standing claim.
+
+  It lives in `dashboard/app/lib/coverage.ts` — a static leaf module, deliberately **not** the
+  `protocols` table. A row there with no history already renders as "never run — a gap in our
+  coverage", which is our-pipeline-hasn't-got-there-yet; putting a deliberate decision in the same
+  place collides the two states the section exists to separate. It would also inject unscored ids
+  into `GET /api/v1/protocols`, which consumers parse as the ranked leaderboard. Publishing this on
+  the API is a separate additive endpoint — see "Planned".
+
+  Two things it is **not**: it is unrelated to the not-scorable _run outcome_ below (that is a
+  registered market draining below the floor, and needs a breaking third `RunRecord` status), and
+  it is not a criticism of anything listed — the section says so in its own words.
+
+- **The registry is a search tool, not just a leaderboard.** Its primary job is someone looking up a
+  protocol by name, and a ranked table plus a growing list underneath it did not do that job. It now
+  carries **search, a status filter and a sort**, all in query params (`?q=…&status=…&sort=…`) so a
+  filtered view is linkable and survives a reload. The control is a real `<form method="get">` that
+  works with JavaScript off; the enhancement only debounces it. Nothing is filtered client-side —
+  the page is a Server Component rendering from the URL, which is what keeps every reason, summary
+  and status phrase in the server-rendered HTML where find-in-page and search indexing can reach it.
+
+  **Sorting is where the ranking rule is enforced.** Default is score descending, because the ranking
+  is what the registry _is_ — making it opt-in would demote the product's only claim to a display
+  option. Unscored entries never enter the ranked ordering: under either score sort they are a
+  separate block below, grouped by coverage status. **Name sort is the one exception** and may merge
+  both kinds into one list, because alphabetical order asserts no ranking. Two consequences fall out
+  and are worth stating: the **position numeral only exists under score-descending** (under
+  score-ascending row one is the _lowest_ score, so "01" would assert the reverse of the truth; under
+  name it is alphabetical and means nothing) — and it is removed, not blanked, since a dash in a rank
+  column is the same ambiguity as a dash in a score column. The ordering lives in
+  `dashboard/app/lib/registry-query.ts` as pure functions precisely so "does an unscored entry ever
+  land inside the ranked list" is a question a test can answer.
+
+  **A third state got its own block**: a `protocols` row with `safetyScore: null` is our pipeline not
+  having produced a number — neither rankable nor a coverage decision. It sits under "Awaiting a
+  first score", after the ranked table and firmly out of the coverage section.
+
+  **Which filters exist, and the trigger for each one that doesn't.** Only `status` earns a control
+  today (scored · assessed-not-scored · each coverage status). Three were considered and declined
+  with a condition attached, so they get revisited rather than forgotten:
+  - **`chain`** — when a second chain exists. Every entry is `stellar`, so today it is a control with
+    one option.
+  - **`deployedOn`** (market vs independent protocol) — **when three or more entries carry it.** It
+    is the strongest candidate, since the distinction is the whole reason `deployedOn` exists and it
+    grows with every pool, but at one entry the filter yields one row.
+  - **freshness / failed last run** — not planned. The failed-run accent rule on the row already _is_
+    the scanning affordance, over a set small enough to scan.
+
+  Search matches name and id only. Matching `deployedOn.host` is deliberately excluded until a row
+  can say _why_ it matched: "blend" surfacing YieldBlox with no visible reason implies YieldBlox is
+  Blend, which is exactly what the deployment label exists to deny.
+
+- **Every unscored entry has its own page, at `/coverage/<id>`.** The registry row is compact and
+  links through; the full reasoning, the contract where we read one, the verify path and the date
+  live on the page. The route is **not** `/protocol/<id>`, and that was the deciding constraint:
+  that path would either render ids the API 404s on — the dashboard-vs-API divergence `lib/api.ts`
+  exists to prevent — or force `getProtocolDetail` to serve a second, scoreless shape, which is the
+  same divergence moved inside one function. `/coverage/<id>` is served entirely from the static
+  coverage module and never touches that path. It also matches the `/api/v1/coverage` endpoint filed
+  below, so if that ships, path and payload agree instead of colliding.
+
+  **The URL is the disclaimer** — `/coverage/templar` says this is a page about Stenion's coverage of
+  Templar, which is what it is. What makes it unmistakable on the page is not a label but the
+  _absence_ of the four things a score page is made of: no score ring, no factor grid, no history
+  chart, no run list. It states the negative outright in its first line ("no safety score — not a low
+  one, not a zero"), renders no numeral where a score would be, and uses no band colour anywhere.
+  A deep link to an entry the board has since scored redirects to `/protocol/<id>`, so the dedupe
+  invariant holds for links as well as for the registry; `/coverage` with no id redirects to the
+  registry filtered to those entries.
+
 - **The full stack:** on-chain adapters → indexer → Postgres → API → dashboard, deployed as a single
   Vercel project with external (cron-job.org) scheduling. See [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
@@ -247,6 +331,17 @@ Roughly in priority order, but not committed to dates:
   nothing watches. Naming what the alerting does _not_ cover matters as much as what it does; closing
   it means a second, differently-shaped signal (the cycle could not run at all, as distinct from a
   protocol that could not be scored), which is a separate feature rather than a wider threshold.
+- **`GET /api/v1/coverage` — publishing the unscored list on the API.** The "Assessed, and not
+  scored" section is dashboard-only today. Putting those entries on the API is genuinely useful to
+  an integrator deciding what to show a user searching a protocol name, and it is **additive**, so
+  it stays on `v1`.
+
+  It must be its **own endpoint**, never folded into `GET /api/v1/protocols`. Consumers parse that
+  response as the ranked leaderboard; an entry there with `safetyScore: null` would be rendered by a
+  wallet as a protocol we failed to score rather than one we decided not to, which is precisely the
+  collision the dashboard section is built to avoid. Deferred rather than half-shipped: the shape
+  needs deciding once, since a public endpoint's contract is expensive to change.
+
 - **Scam / fake-asset warning API.** A real-time, queryable warning layer for wallets, built on top
   of [StellarExpert](https://stellar.expert)'s existing scam directory. A secondary feature, not the
   core pitch — but a natural fit for the "read the chain, warn users" mission.
@@ -312,6 +407,15 @@ Roughly in priority order, but not committed to dates:
 
 Confirming a protocol is _not_ in scope from its own contracts — before writing scoring logic — is
 part of the discipline, not a failure. Two notable cases:
+
+> **These decisions are now published on the site**, in the registry's "Assessed, and not scored"
+> section, sourced from `dashboard/app/lib/coverage.ts`. This section keeps the _narrative_ — how the
+> decision was reached and what it cost; the module holds the _published record_ a visitor reads.
+> Neither restates the other, so a change to what we concluded belongs in both, at the same review
+> bar. A protocol listed here that is **not** in that module is a deliberate omission, not an
+> oversight: an entry needs a `verify` path and, for anything resting on a balance, a date. Figures
+> we never checked against contracts don't qualify — which is why some things skipped early in the
+> project's life appear in neither place.
 
 - **YieldBlox — skipped as an adapter, then shipped as a pool.** Still not an independent Soroban
   lending protocol: the YieldBlox DAO adopted Blend as its backbone, and what exists today is a

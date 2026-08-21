@@ -336,6 +336,43 @@ function shortAsset(asset: string): string {
   return `${asset.slice(0, 6)}\u2026`;
 }
 
+/**
+ * A Soroban contract address as it appears inside a longer string: `C` plus 55
+ * base32 characters (RFC 4648 alphabet, so no 0/1/8/9). Anchored on both sides
+ * by a non-base32 boundary so a qualifier like `Stellar:` is matched around
+ * rather than through.
+ */
+const CONTRACT_ADDRESS = /(?<![A-Z2-7])C[A-Z2-7]{55}(?![A-Z2-7])/g;
+
+/**
+ * Shorten any full contract address embedded in a PROTOCOL-SUPPLIED label,
+ * leaving everything around it intact.
+ *
+ * WHY THIS EXISTS. Every address Stenion chooses to print is already shortened \u2014
+ * `shortAsset` here, `shortenContractId` in the dashboard. This function covers
+ * the case where an address arrives inside a string we did not compose: a label
+ * the protocol itself publishes. Blend's oracle aggregator maps a reserve to
+ * either `Asset::Other(Symbol)` or `Asset::Stellar(Address)`, so `upstreamAsset`
+ * is `Other:XLM` for one pool and `Stellar:C\u2026` (64 characters, no break
+ * opportunity anywhere in it) for the next. The YieldBlox pool is entirely the
+ * second kind, and five of those in one disclosure string set a floor on the
+ * rendered page width and scrolled the whole document sideways on a phone.
+ *
+ * It shortens the address WITHOUT dropping its qualifier, because the qualifier
+ * is real information: `Stellar:C\u2026` says this reserve is priced as a Stellar
+ * asset rather than through a named upstream feed, and collapsing it to a bare
+ * `C\u2026` would trade a fact for a cosmetic fix. The head is 6 characters, the same
+ * convention as every other shortened address in a detail string, so a reader
+ * comparing two of them is comparing like with like.
+ *
+ * Display only, exactly like `shortAsset`: no factor value depends on a label,
+ * and the full address is still readable on-chain by the route each `verify`
+ * describes.
+ */
+export function shortenAddressesIn(label: string): string {
+  return label.replace(CONTRACT_ADDRESS, (address) => shortAsset(address));
+}
+
 /** One reserve's price age, for the per-feed staleness disclosure. */
 export interface ReserveAge {
   /** the reserve's asset contract address */
@@ -375,7 +412,12 @@ export interface ReserveAge {
 export function describePriceAges(ages: readonly ReserveAge[], staleAfterSeconds: number): string {
   if (ages.length === 0) return 'no reserves to report a price age for';
 
-  const label = (a: ReserveAge) => a.feed ?? shortAsset(a.asset);
+  // A protocol's own label is printed as it publishes it — except for a full
+  // contract address inside it, which is shortened on the same rule as the
+  // fallback below. Without that, the ONE branch that never shortened was the
+  // branch that ran on every YieldBlox reserve. See shortenAddressesIn.
+  const label = (a: ReserveAge) =>
+    a.feed === null ? shortAsset(a.asset) : shortenAddressesIn(a.feed);
   // Unpriced sorts oldest: a feed with no usable price at all is not fresher
   // than one that is merely old.
   const rank = (a: ReserveAge) => (a.ageSeconds === null ? Number.POSITIVE_INFINITY : a.ageSeconds);

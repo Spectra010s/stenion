@@ -325,6 +325,32 @@ body {
   font-feature-settings: 'tnum' 1;
 }
 
+/* Prose we did NOT write: adapter `detail` strings, factor component
+   disclosures, and anything else composed from values a protocol publishes.
+
+   Those strings routinely carry contract addresses and protocol-supplied
+   labels, and a 56-character C-address has no break opportunity anywhere in
+   it. Inside a grid or flex child — which every factor card is — such a token
+   sets the track's min-content width, so it doesn't merely overflow its own
+   box: it widens the page and scrolls the whole document sideways. That is
+   what YieldBlox's oracle disclosure did, where the aggregator labels every
+   reserve `Stellar:C…` instead of `Other:XLM`.
+
+   `anywhere` rather than `break-word` (Tailwind's `break-words`) is the load-
+   bearing part: only `anywhere` reduces the min-content contribution, and the
+   min-content contribution is what pins the track open. `break-word` would fix
+   the visible overflow and leave the page-width floor exactly where it was.
+
+   Shortening the address at the source (see shortenAddressesIn in
+   core/src/scoring.ts) is the real fix and it landed with this. This is the
+   guard behind it: adapter prose is assembled from values protocols control,
+   so the next unbreakable label is a data change away, and it must degrade to
+   an ugly wrap rather than to a broken page. Same rule, same reason as
+   `.prose-stenion code` further down. */
+.adapter-prose {
+  overflow-wrap: anywhere;
+}
+
 /* Fine top-lit surface used on cards — subtle depth without a heavy shadow.
    The overlay is a token because white-alpha does nothing on a near-white
    ground: on light it is a much stronger white over the tinted surface, which
