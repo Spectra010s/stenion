@@ -147,6 +147,28 @@ export interface CoverageEntry {
 }
 
 /**
+ * The deliberately-versioned public shape for GET /api/v1/coverage.
+ *
+ * Keep this explicit even while it matches CoverageEntry: adding an internal
+ * field to the dashboard model must not silently add it to a public API. All
+ * measured values stay inside explanatory strings and `asOf`; this contract
+ * contains no JSON number and no score-shaped field.
+ */
+export type ApiCoverageEntry = Pick<
+  CoverageEntry,
+  | 'id'
+  | 'name'
+  | 'status'
+  | 'logo'
+  | 'links'
+  | 'contractId'
+  | 'summary'
+  | 'reason'
+  | 'verify'
+  | 'asOf'
+>;
+
+/**
  * Heading and framing per status. `chip` is what stands where a scored row has
  * its number, so it must read as a coverage statement in isolation — never as a
  * grade, and never with a numeral in it.
@@ -300,6 +322,29 @@ export const COVERAGE: readonly CoverageEntry[] = [
 export function coverageToPublish(scoredIds: Iterable<string>): CoverageEntry[] {
   const scored = new Set(scoredIds);
   return COVERAGE.filter((entry) => !scored.has(entry.id));
+}
+
+/**
+ * Public API projection of the entries that are not on the live leaderboard.
+ *
+ * This is intentionally a projection rather than returning CoverageEntry
+ * directly. The endpoint is a public v1 contract, so its fields change only by
+ * an explicit edit here. Arrays and nested objects are copied so consumers of
+ * this helper cannot mutate the static source records.
+ */
+export function coverageForApi(scoredIds: Iterable<string>): ApiCoverageEntry[] {
+  return coverageToPublish(scoredIds).map((entry) => ({
+    id: entry.id,
+    name: entry.name,
+    status: entry.status,
+    logo: entry.logo,
+    links: { ...entry.links },
+    contractId: entry.contractId,
+    summary: entry.summary,
+    reason: [...entry.reason],
+    verify: entry.verify,
+    asOf: entry.asOf,
+  }));
 }
 
 /**

@@ -310,7 +310,8 @@ three things in one Vercel project:
    or a methodology-version change. None of the three is ever drawn through, and a failed run is
    never rendered as a zero.
 
-2. The public API, as Route Handlers: `GET /api/v1/protocols`, `GET /api/v1/protocol/:id`.
+2. The public API, as Route Handlers: `GET /api/v1/protocols`, `GET /api/v1/coverage`,
+   `GET /api/v1/protocol/:id`.
 3. A secret-gated cron-trigger route (`POST /api/cron/run-indexer`) that runs one indexer cycle.
 
 **`@stenion/api`** — a standalone `node:http` REST server. **Not deployed** — see below.
@@ -365,10 +366,12 @@ instead, and `format.test.ts` asserts that mechanically rather than leaving it t
 separate services. Everything runs from the single Next.js app:
 
 - **API** → Next.js Route Handlers inside the dashboard (`app/api/v1/protocols`,
-  `app/api/v1/protocol/[id]`). Same `Store` methods, same JSON as the original standalone API — a
-  transport change, not a rewrite. CORS (`access-control-allow-origin: *`) is set on these two
-  routes only, for future browser/wallet/third-party clients reading public, payment-blind data.
-  `/api/v1/*` is the only public API surface — see "API versioning" below. Both routes are
+  `app/api/v1/coverage`, `app/api/v1/protocol/[id]`). The scored routes use the same `Store` methods
+  and JSON as the original standalone API — a transport change, not a rewrite. The coverage route
+  combines the static coverage module with live leaderboard ids solely for deduplication. CORS
+  (`access-control-allow-origin: *`) is set on these three routes only, for future
+  browser/wallet/third-party clients reading public, payment-blind data. `/api/v1/*` is the only
+  public API surface — see "API versioning" below. All three routes are
   CDN-cached and rate limited — see "Caching and rate limits" below.
 - **Indexer** → triggered by `POST /api/cron/run-indexer`, which calls `runIndexerCycle()` once.
   The route is secret-gated (`Authorization: Bearer <CRON_SECRET>`, compared with
@@ -524,6 +527,13 @@ Shortening _N_ bounds that window; it does not remove it.
 So the TTL is derived from the data in the body (`dashboard/app/api/_cache.ts`): **cache until the
 earliest moment the next indexer run could plausibly land, and no further.**
 
+`GET /api/v1/coverage` is the deliberate exception. Its published records are static and normally
+change only with a deploy, and its body intentionally has no `lastRunAt` from which to derive a
+deadline. It therefore uses a fixed **3,600-second shared-cache TTL**. The route still reads live
+leaderboard ids as a defensive dedupe guard; the one-hour bound limits how long a forgotten
+reciprocal cleanup could leave an entry cached after it becomes scorable. A deployment replaces the
+static records and invalidates the old deployment's cache.
+
 | Constant                   | Value | Why                                                                                                                                                                                                                    |
 | -------------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `INDEXER_INTERVAL_SECONDS` | 300   | The cron-job.org cadence; observed median `run_at` spacing is 4m59s.                                                                                                                                                   |
@@ -618,10 +628,11 @@ isn't for the counter itself.
 
 The public API is versioned in the URL. The documented, canonical paths are:
 
-| Endpoint                   | Returns                                             |
-| -------------------------- | --------------------------------------------------- |
-| `GET /api/v1/protocols`    | The leaderboard: every protocol + its latest score. |
-| `GET /api/v1/protocol/:id` | One protocol's detail, factors, and run history.    |
+| Endpoint                   | Returns                                                |
+| -------------------------- | ------------------------------------------------------ |
+| `GET /api/v1/protocols`    | The leaderboard: every protocol + its latest score.    |
+| `GET /api/v1/coverage`     | Assessed protocols and markets Stenion does not score. |
+| `GET /api/v1/protocol/:id` | One protocol's detail, factors, and run history.       |
 
 **The consumer-facing reference is [`API.md`](API.md)**, rendered on the site at `/docs/api`. This
 section owns the _policy_; that document owns the contract as an integrator meets it — request and
