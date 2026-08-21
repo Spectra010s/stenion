@@ -132,10 +132,6 @@ curl https://stenion.vercel.app/api/v1/protocols
 }
 ```
 
-> One value in this capture has since moved: `yieldblox` had no self-hosted mark when it was taken
-> and now carries `"logo": "/assets/protocols/yieldblox.png"`. Re-`curl` this block on the next
-> deploy rather than hand-editing the value in.
-
 | Field           | Type                     | Notes                                                                                                                                                                        |
 | --------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `id`            | string                   | Stable identifier, **case-sensitive**, used as the path segment on the detail endpoint.                                                                                      |

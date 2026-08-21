@@ -43,6 +43,25 @@ These override any default behavior and are enforced in code and review:
 - **Findings are not scores.** Verifiable observations we can't or won't grade go in the protocol
   page's Findings section (`dashboard/app/lib/protocol-notes.ts`), never into a factor. Nothing
   there is read by any scoring path.
+- **An unscored listing is a coverage statement, never a score.** Protocols we assessed and don't
+  score are published on the registry from `dashboard/app/lib/coverage.ts` — never in the
+  `protocols` table, whose never-scored state (`safetyScore: null`, "never run") means _our pipeline
+  hasn't got there yet_ and must not be collided with a deliberate decision. Nothing in that section
+  renders a numeral, so "not scored" can't be misread as "scored badly"; it's unranked, because
+  ranking what we didn't score is meaningless. Every entry needs a protocol-specific reason, a
+  one-sentence `summary` for its registry row, and a `verify` sentence, and any claim resting on a
+  reading (a balance) needs an `asOf` — figures we never checked against contracts are not a source.
+  Enforced in `coverage.test.ts`. Each entry's full reasoning lives at **`/coverage/<id>`**, served
+  only from that module — never `/protocol/<id>`, which would either 404 in the API while rendering
+  in the dashboard or force `getProtocolDetail` to serve two shapes.
+- **Nothing unscored may sit inside a ranked ordering, and a position numeral means a position.**
+  The registry's sort/filter/search is pure functions in `dashboard/app/lib/registry-query.ts`
+  (state in query params, never component state) so this is testable rather than a rendering habit.
+  Score sorts rank the scored set only; unscored entries are a separate block below, and the
+  never-scored `safetyScore: null` rows are a third block of their own. Name sort is the sole
+  ordering allowed to merge them, because alphabetical asserts no ranking. The `#` column renders
+  **only** under score-descending and is removed — not blanked — otherwise: under score-ascending
+  "01" would label the lowest score as first. Enforced in `registry-query.test.ts`.
 - **A registry entry is a market, not necessarily a protocol — and it must say which.** An entry
   running another protocol's contracts (the YieldBlox pool on Blend V2) carries
   `ProtocolMetadata.deployedOn`, published as `deployedOn` on both API responses and rendered

@@ -646,4 +646,35 @@ describe('describePriceAges — per-feed ages, disclosed not graded', () => {
   it('handles a pool with nothing to report', () => {
     assert.equal(describePriceAges([], 3600), 'no reserves to report a price age for');
   });
+
+  it('shortens a full address inside the label a protocol publishes', () => {
+    // The YieldBlox case. Blend's aggregator maps a reserve to either
+    // Asset::Other(Symbol) or Asset::Stellar(Address), so `upstreamAsset` is a
+    // symbol on one pool and a 64-character unbreakable token on the next. The
+    // fallback above shortened; the label branch did not, and the label branch
+    // is the one that runs here.
+    const text = describePriceAges(
+      [
+        {
+          asset: 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA',
+          feed: 'Stellar:CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA',
+          ageSeconds: 396,
+        },
+      ],
+      900,
+    );
+    assert.match(text, /Stellar:CAS3J7… 396s/, 'the qualifier survives, the address does not');
+    assert.doesNotMatch(text, /CAS3J7GYLGXMF6TD/, 'no full address is left in the string');
+  });
+
+  it('leaves a feed label that is not an address exactly as the protocol writes it', () => {
+    // K2's feedIds. Shortening is for addresses only — a label that is already
+    // a name must not be mangled by a rule aimed at something else.
+    const text = describePriceAges(
+      [age('SolvBTC_FUNDAMENTAL/USD', 27), age('Other:XLM', 233)],
+      3600,
+    );
+    assert.match(text, /SolvBTC_FUNDAMENTAL\/USD 27s/);
+    assert.match(text, /Other:XLM 233s/);
+  });
 });

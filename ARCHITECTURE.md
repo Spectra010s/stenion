@@ -273,6 +273,24 @@ three things in one Vercel project:
    detail pages). Data pages are async Server Components that read `@stenion/db`'s `Store`
    **in-process** — no HTTP hop.
 
+   The **registry's** search/filter/sort state lives entirely in query params (`?q=…&status=…&sort=…`),
+   never in component state, so a filtered view is linkable and survives a reload. The page renders
+   from those params on the server; the control (`components/registry-controls.tsx`) is a real
+   `<form method="get">` that only changes the URL and never holds or filters the list. That is what
+   keeps every reason, summary and status phrase in the server-rendered HTML for find-in-page and
+   indexing. The ordering itself is pure functions in `app/lib/registry-query.ts` — separated from the
+   JSX so the rule that unscored entries never enter the ranked ordering is a testable value rather
+   than a rendering habit.
+
+   **`/coverage/:id`** is a second kind of detail page: one protocol we assessed and do not score,
+   served entirely from the static `app/lib/coverage.ts` and **never** through `getProtocolDetail`.
+   Routing it under `/protocol/:id` would either render ids `GET /api/v1/protocol/:id` 404s on, or
+   make that function return a second scoreless shape — the dashboard-vs-API divergence `app/lib/api.ts`
+   exists to prevent, in the two forms it can take. Its one live read is the dedupe check: if the
+   board has since scored the id, it redirects to `/protocol/:id`, and it fails **open** on a
+   database error (the page is static and stays true during an outage). `/coverage` with no id
+   redirects to `/registry?status=not-scored`.
+
    **Rendered docs** (`/methodology`, `/docs/api`) are a second, separate kind of page: they read a
    repo-root markdown file at request time and render it through `components/markdown-doc.tsx`, so
    the file stays the single source of truth and is readable both on GitHub and on the site. Each
