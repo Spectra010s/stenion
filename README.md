@@ -91,12 +91,12 @@ pnpm --filter @stenion/dashboard dev             # http://localhost:3000
 
 The dashboard reads Postgres in-process, so once step 4 has landed at least one row you'll see
 real scores at `http://localhost:3000`. The public API is served by the dashboard at
-`/api/v1/protocols`, `/api/v1/coverage`, and `/api/v1/protocol/:id` — versioned, with the policy in
-[`ARCHITECTURE.md`](ARCHITECTURE.md#api-versioning).
+`/api/v1/protocols`, `/api/v1/coverage`, `/api/v1/protocol/:id`, and `/api/v1/health` — versioned,
+with the policy in [`ARCHITECTURE.md`](ARCHITECTURE.md#api-versioning).
 
 ### Using the public API
 
-**The full reference is [`API.md`](API.md)** — all three endpoints with live example responses, the
+**The full reference is [`API.md`](API.md)** — every endpoint with live example responses, the
 `ok`/`failed` history union, the staleness model, error shapes, and the versioning commitment. It's
 also rendered on the site at [/docs/api](https://stenion.vercel.app/docs/api). The summary:
 
@@ -119,6 +119,60 @@ which is what makes that workable in practice. If you're building something that
 more, open an issue — the numbers are policy, not physics. Full reasoning, and what the limiter
 does and doesn't protect against, is in
 [`ARCHITECTURE.md`](ARCHITECTURE.md#caching-and-rate-limits).
+
+### Is the data fresh? — `GET /api/v1/health`
+
+Stenion's worst failure mode is quiet: if the indexer stops, the site keeps serving last-known
+scores, every page renders, nothing 500s, and the numbers just age. `/api/v1/health` gives that a
+machine-readable signal so you don't have to trust a timestamp in the UI.
+
+```bash
+curl -i https://stenion.vercel.app/api/v1/health
+```
+
+```json
+{
+  "status": "degraded",
+  "thresholdMinutes": 30,
+  "protocols": [
+    {
+      "id": "blend",
+      "lastSuccessfulRunAt": "2026-08-22T12:41:00.000Z",
+      "lastRunAt": "2026-08-22T12:41:00.000Z",
+      "lastRunStatus": "ok",
+      "staleMinutes": 9
+    },
+    {
+      "id": "kinetic",
+      "lastSuccessfulRunAt": "2026-08-22T09:10:00.000Z",
+      "lastRunAt": "2026-08-22T12:49:00.000Z",
+      "lastRunStatus": "failed",
+      "staleMinutes": 220
+    }
+  ]
+}
+```
+
+Three things to know:
+
+- **`status` has three values, and the non-healthy two both answer `503`.** So an uptime monitor
+  can point at this URL and needs no body parsing at all. `healthy` = every protocol scored
+  successfully within the threshold (`200`). `degraded` = some are current and some aren't — read
+  the per-protocol rows, it's probably one adapter. `down` = nothing is current anywhere, i.e. the
+  indexer itself looks dead.
+- **`staleMinutes` is measured from `lastSuccessfulRunAt`, never from `lastRunAt`.** An adapter
+  failing every five minutes has a perpetually fresh `lastRunAt`; measuring from it would report
+  the exact failure this endpoint is for as perfectly healthy. The two timestamps together are the
+  useful signal — a fresh `lastRunAt` beside a stale `lastSuccessfulRunAt` is one broken adapter,
+  and both stale together is the cron not arriving.
+- **It is never cached.** Unlike the other routes, this one sends `Cache-Control: no-store` — a
+  health check that can be stale is a contradiction. It is still rate limited like everything else,
+  which at 60/min is ~30× more than a monitor probing every 30 seconds needs.
+
+`thresholdMinutes` is echoed in the body so you can see what number produced the verdict. It
+defaults to 30 (six missed cycles at the ~5-minute indexer cadence) and is configurable via
+`STENION_HEALTH_STALE_MINUTES`. Full reasoning for both thresholds is in
+[`ARCHITECTURE.md`](ARCHITECTURE.md#the-health-endpoint).
 
 To smoke-test the deployed 404 behaviour for an unknown protocol id, run:
 

@@ -76,6 +76,19 @@ commitment — priorities shift as protocols launch and as the project finds fun
   hidden**: a run that ultimately fails is still recorded as `failed`. The consecutive-failure
   streak is derived from `risk_scores` rather than stored in a counter, so it needs no new table and
   cannot disagree with the history it describes. See [`ARCHITECTURE.md`](ARCHITECTURE.md).
+- **A public freshness endpoint — `GET /api/v1/health`.** The failure-alerting above covers an
+  adapter failing repeatedly; it cannot cover the indexer not running at all, because nothing runs
+  to notice. There was previously no way to tell the difference short of querying Neon or eyeballing
+  a timestamp in the UI, and the site keeps serving last-known scores either way. The endpoint
+  publishes per-protocol run freshness and one overall status, and answers **503** when that status
+  is not `healthy`, so an uptime monitor consumes it without parsing a body. Three states rather
+  than a boolean, because "one adapter is broken" and "the pipeline is dead" need different first
+  moves: `degraded` says read the rows, `down` says go look at the cron. Staleness is measured from
+  each protocol's last **successful** run — measuring from the last run of any status would report
+  an adapter failing every five minutes as perpetually fresh. Needed **no schema change**: it reuses
+  the same two LATERAL subqueries the leaderboard already runs, one query, no fan-out. Thresholds
+  are configurable (`STENION_HEALTH_STALE_MINUTES`, default 30) and sit above the alert threshold so
+  the webhook fires before the monitor goes red. See [`ARCHITECTURE.md`](ARCHITECTURE.md).
 - **Public API documentation.** [`API.md`](API.md), rendered on the site at `/docs/api`. Until now
   the only way to learn the contract was reading the route handlers on GitHub, which is a barrier
   for exactly the wallet-integrator audience the API exists for. Covers every endpoint with live

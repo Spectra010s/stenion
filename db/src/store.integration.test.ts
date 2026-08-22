@@ -105,6 +105,74 @@ describe('Store SQL (integration)', { skip }, () => {
     assert.equal(detail.lastRunAt, '2026-08-16T10:05:00.000Z');
   });
 
+  it('separates the last successful run from the last run, for GET /api/v1/health', async () => {
+    // The health endpoint's entire signal is the gap between these two, and like
+    // the staleness model above it is SQL semantics: the `ok` LATERAL filters on
+    // status, the `latest` one does not. An in-memory Store would only test a
+    // re-implementation of that.
+    const p = id('health-failing');
+    await store.upsertProtocol({
+      id: p,
+      name: 'Failing',
+      chain: 'stellar',
+      adapterRef: 'FakeAdapter',
+    });
+    await insertRun(p, { status: 'ok', score: 53, runAt: '2026-08-16T10:00:00Z' });
+    await insertRun(p, { status: 'failed', error: 'RPC down', runAt: '2026-08-16T10:05:00Z' });
+
+    const rows = await store.listRunHealth();
+    const entry = rows.find((r) => r.id === p);
+    assert.ok(entry);
+    // The failed run must NOT advance the success timestamp — otherwise an
+    // adapter failing every cycle reports as permanently fresh.
+    assert.equal(entry.lastSuccessfulRunAt, '2026-08-16T10:00:00.000Z');
+    assert.equal(entry.lastRunAt, '2026-08-16T10:05:00.000Z');
+    assert.equal(entry.lastRunStatus, 'failed');
+  });
+
+  it('includes a protocol that has never run, rather than omitting it', async () => {
+    // LEFT JOIN LATERAL, not an inner join. A protocol missing from the health
+    // response would read as "nothing wrong here", which is the opposite of what
+    // a row with no runs means.
+    const p = id('health-never');
+    await store.upsertProtocol({
+      id: p,
+      name: 'Never',
+      chain: 'stellar',
+      adapterRef: 'FakeAdapter',
+    });
+
+    const entry = (await store.listRunHealth()).find((r) => r.id === p);
+    assert.ok(entry, 'a registered protocol with no runs must still appear');
+    assert.equal(entry.lastSuccessfulRunAt, null);
+    assert.equal(entry.lastRunAt, null);
+    assert.equal(entry.lastRunStatus, null);
+  });
+
+  it('returns exactly one row per protocol', async () => {
+    // The acceptance criterion that matters for cost: one row per protocol out of
+    // one query, no fan-out and no duplicate rows from the joins. Several runs
+    // for one protocol must still collapse to a single entry.
+    const p = id('health-many-runs');
+    await store.upsertProtocol({
+      id: p,
+      name: 'Many',
+      chain: 'stellar',
+      adapterRef: 'FakeAdapter',
+    });
+    for (const minute of ['00', '05', '10', '15']) {
+      await insertRun(p, { status: 'ok', score: 50, runAt: `2026-08-16T12:${minute}:00Z` });
+    }
+
+    const rows = await store.listRunHealth();
+    assert.equal(rows.filter((r) => r.id === p).length, 1);
+    assert.equal(
+      rows.find((r) => r.id === p)?.lastSuccessfulRunAt,
+      '2026-08-16T12:15:00.000Z',
+      'the newest ok run wins',
+    );
+  });
+
   it('returns null for an unknown id — what the route turns into a 404', async () => {
     assert.equal(await store.getProtocolDetail(id('does-not-exist')), null);
   });
