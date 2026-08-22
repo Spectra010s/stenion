@@ -56,6 +56,11 @@ function fakeStore(
     async getProtocolDetail() {
       return null;
     },
+    // Health reads nothing this fake models — the cycle never calls it. Present
+    // only to satisfy the Store interface.
+    async listRunHealth() {
+      return [];
+    },
     async listRecentRuns(protocolId, limit) {
       if (opts.failReads) throw new Error('connection terminated unexpectedly');
       return (history[protocolId] ?? []).slice(0, limit);

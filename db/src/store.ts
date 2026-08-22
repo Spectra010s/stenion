@@ -155,6 +155,36 @@ export interface RecentRun {
   runAt: string;
 }
 
+/**
+ * One protocol's run freshness, for `GET /api/v1/health`.
+ *
+ * Deliberately the narrowest row in this file: no score, no factors, no error
+ * text. A health probe answers "is the pipeline producing data", and the answer
+ * must not depend on reading a score — an endpoint that has to pull the factor
+ * jsonb to tell you the indexer is alive is one more thing that can be slow or
+ * broken while the thing it reports on is fine.
+ *
+ * The two timestamps are NOT redundant, and the difference between them is the
+ * whole point of the endpoint:
+ *
+ *   `lastSuccessfulRunAt` — the newest **ok** run. This is what staleness is
+ *     measured from, because a failed run produced no data. Null means this
+ *     protocol has never scored successfully; that is never-current, not
+ *     "unknown", and the health policy treats it as such.
+ *   `lastRunAt`/`lastRunStatus` — the newest run of **any** status. These say
+ *     whether the indexer is still *reaching* this protocol at all. A fresh
+ *     `lastRunAt` with a stale `lastSuccessfulRunAt` is a broken adapter (the
+ *     cron is firing, the scoring is failing); both stale together is the cron
+ *     itself not arriving. Flattening them into one field would erase exactly
+ *     the distinction an operator needs to know where to look.
+ */
+export interface RunHealthEntry {
+  id: string;
+  lastSuccessfulRunAt: string | null;
+  lastRunAt: string | null;
+  lastRunStatus: 'ok' | 'failed' | null;
+}
+
 export interface Store {
   /**
    * Insert-or-update the protocol row from adapter metadata. Idempotent.
@@ -178,6 +208,16 @@ export interface Store {
    * — and an empty array must read as "no failures", never as "never succeeded".
    */
   listRecentRuns(protocolId: string, limit: number): Promise<RecentRun[]>;
+  /**
+   * Every protocol's last successful run, last run, and last run status — one
+   * row per protocol, one query. Backs `GET /api/v1/health`.
+   *
+   * Ordered by id, NOT by anything score-derived. Health carries no ranking:
+   * alphabetical is the one ordering that asserts nothing about which protocol
+   * is doing better, which is correct for a list whose entries are only ever
+   * "current" or "not".
+   */
+  listRunHealth(): Promise<RunHealthEntry[]>;
 }
 
 /**
@@ -330,6 +370,32 @@ export function toLeaderboardEntry(row: LeaderboardRow): LeaderboardEntry {
     deployedOn: toDeployedOn(row.deployment_host, row.deployment_label),
     safetyScore: toNumber(row.safety_score),
     computedAt: toIso(row.computed_at),
+    lastRunAt: toIso(row.last_run_at),
+    lastRunStatus: row.last_run_status,
+  };
+}
+
+/** A `protocols` row joined with its run-freshness timestamps, as pg returns it. */
+export interface RunHealthRow {
+  id: string;
+  last_successful_run_at: Date | null;
+  last_run_at: Date | null;
+  last_run_status: 'ok' | 'failed' | null;
+}
+
+/**
+ * One run-health row → one `RunHealthEntry`.
+ *
+ * Timestamps only, and deliberately no derived staleness. How old "too old" is
+ * belongs to the request that asks, not to the row: it is a function of the
+ * clock at read time and of a configurable threshold, and storing or
+ * precomputing it would bake a decision into data that is only true for one
+ * instant. See dashboard/app/api/_health.ts for the policy that consumes this.
+ */
+export function toRunHealthEntry(row: RunHealthRow): RunHealthEntry {
+  return {
+    id: row.id,
+    lastSuccessfulRunAt: toIso(row.last_successful_run_at),
     lastRunAt: toIso(row.last_run_at),
     lastRunStatus: row.last_run_status,
   };
@@ -513,6 +579,46 @@ export function createStore(pool: Pool): Store {
         error: row.error,
         runAt: row.run_at.toISOString(),
       }));
+    },
+
+    async listRunHealth() {
+      // The SAME two LATERAL subqueries listProtocolsWithLatestScore uses, and
+      // the same index walk of (protocol_id, run_at DESC) — the `ok` side just
+      // selects run_at instead of the score, because health asks *when* the last
+      // good run was, not what it said. That is the entire reason this needed no
+      // schema change: the row that answers it was already one column away.
+      //
+      // ONE QUERY, and it has to stay one. A health endpoint that fans out per
+      // protocol gets slower exactly as more protocols are added, which is to say
+      // it degrades in proportion to how much there is to report on — and a probe
+      // that times out under load is indistinguishable from the outage it exists
+      // to detect.
+      //
+      // Nothing score-derived is selected. No safety_score, no factors jsonb: a
+      // freshness probe must not be able to fail because a score was malformed.
+      const { rows } = await pool.query<RunHealthRow>(
+        `SELECT p.id,
+                ok.run_at AS last_successful_run_at,
+                latest.run_at AS last_run_at, latest.status AS last_run_status
+           FROM protocols p
+           LEFT JOIN LATERAL (
+             SELECT run_at
+               FROM risk_scores
+              WHERE protocol_id = p.id AND status = 'ok'
+              ORDER BY run_at DESC
+              LIMIT 1
+           ) ok ON true
+           LEFT JOIN LATERAL (
+             SELECT run_at, status
+               FROM risk_scores
+              WHERE protocol_id = p.id
+              ORDER BY run_at DESC
+              LIMIT 1
+           ) latest ON true
+          ORDER BY p.id`,
+      );
+
+      return rows.map(toRunHealthEntry);
     },
   };
 }

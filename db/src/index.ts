@@ -9,6 +9,7 @@ export {
   type HistoryEntry,
   type ProtocolDetail,
   type RecentRun,
+  type RunHealthEntry,
 } from './store';
 export {
   createRateLimiter,

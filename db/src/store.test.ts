@@ -23,9 +23,11 @@ import {
   toHistoryEntry,
   toLeaderboardEntry,
   toProtocolDetail,
+  toRunHealthEntry,
   type HistoryRow,
   type LeaderboardRow,
   type ProtocolDetailRow,
+  type RunHealthRow,
 } from './store.ts';
 import type { RiskFactorMap } from '@stenion/core';
 
@@ -531,5 +533,83 @@ describe('the deployment label on both public responses', () => {
     );
     assert.equal(detail.safetyScore, null);
     assert.deepEqual(detail.deployedOn, { host: 'Blend', label: 'Blend V2 pool' });
+  });
+});
+
+describe('toRunHealthEntry — the two timestamps GET /api/v1/health is built on', () => {
+  // `last_successful_run_at` and `last_run_at` are separate columns because the
+  // difference between them is the whole signal: a fresh last run beside a stale
+  // last SUCCESS is one broken adapter, and both stale together is the cron not
+  // arriving. Collapsing them would erase the distinction an operator needs.
+
+  const healthRow = (over: Partial<RunHealthRow> = {}): RunHealthRow => ({
+    id: 'blend',
+    last_successful_run_at: RUN_AT,
+    last_run_at: RUN_AT,
+    last_run_status: 'ok',
+    ...over,
+  });
+
+  it('maps a healthy protocol, coercing timestamptz to ISO strings', () => {
+    assert.deepEqual(toRunHealthEntry(healthRow()), {
+      id: 'blend',
+      lastSuccessfulRunAt: '2026-08-16T11:25:02.000Z',
+      lastRunAt: '2026-08-16T11:25:02.000Z',
+      lastRunStatus: 'ok',
+    });
+  });
+
+  it('keeps the last successful run visible when the newest run failed', () => {
+    // The failing-adapter case. The success timestamp must NOT advance to the
+    // failed run's — staleness is measured from it, and moving it would report a
+    // protocol that fails every cycle as permanently fresh.
+    const later = new Date('2026-08-16T11:30:02.000Z');
+    const entry = toRunHealthEntry(healthRow({ last_run_at: later, last_run_status: 'failed' }));
+    assert.equal(entry.lastSuccessfulRunAt, '2026-08-16T11:25:02.000Z');
+    assert.equal(entry.lastRunAt, '2026-08-16T11:30:02.000Z');
+    assert.equal(entry.lastRunStatus, 'failed');
+  });
+
+  it('maps a protocol that has never succeeded to nulls, not to an epoch', () => {
+    const entry = toRunHealthEntry(
+      healthRow({ last_successful_run_at: null, last_run_at: null, last_run_status: null }),
+    );
+    assert.equal(entry.lastSuccessfulRunAt, null);
+    assert.equal(entry.lastRunAt, null);
+    assert.equal(entry.lastRunStatus, null);
+  });
+
+  it('reports a protocol that has only ever failed', () => {
+    // Runs exist, none of them ok: the indexer is reaching this protocol and
+    // getting nothing usable. Distinct from the never-ran case above, and the
+    // health policy has to be able to tell them apart.
+    const entry = toRunHealthEntry(
+      healthRow({ last_successful_run_at: null, last_run_status: 'failed' }),
+    );
+    assert.equal(entry.lastSuccessfulRunAt, null);
+    assert.equal(entry.lastRunAt, '2026-08-16T11:25:02.000Z');
+    assert.equal(entry.lastRunStatus, 'failed');
+  });
+
+  it('publishes ok/failed, the same vocabulary as the other routes', () => {
+    // Not `success`/`failure`. One field name carrying two vocabularies across a
+    // single API is a bug a consumer only finds in production.
+    assert.equal(
+      toRunHealthEntry(healthRow({ last_run_status: 'failed' })).lastRunStatus,
+      'failed',
+    );
+    assert.equal(toRunHealthEntry(healthRow({ last_run_status: 'ok' })).lastRunStatus, 'ok');
+  });
+
+  it('carries no score, factors, or error text', () => {
+    // A freshness probe must not be able to fail because a score was malformed,
+    // and it should not republish an adapter's error string on an unauthenticated
+    // endpoint. The row type is the enforcement; this pins the published keys.
+    assert.deepEqual(Object.keys(toRunHealthEntry(healthRow())).sort(), [
+      'id',
+      'lastRunAt',
+      'lastRunStatus',
+      'lastSuccessfulRunAt',
+    ]);
   });
 });

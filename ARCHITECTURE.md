@@ -311,7 +311,7 @@ three things in one Vercel project:
    never rendered as a zero.
 
 2. The public API, as Route Handlers: `GET /api/v1/protocols`, `GET /api/v1/coverage`,
-   `GET /api/v1/protocol/:id`.
+   `GET /api/v1/protocol/:id`, `GET /api/v1/health`.
 3. A secret-gated cron-trigger route (`POST /api/cron/run-indexer`) that runs one indexer cycle.
 
 **`@stenion/api`** — a standalone `node:http` REST server. **Not deployed** — see below.
@@ -366,13 +366,14 @@ instead, and `format.test.ts` asserts that mechanically rather than leaving it t
 separate services. Everything runs from the single Next.js app:
 
 - **API** → Next.js Route Handlers inside the dashboard (`app/api/v1/protocols`,
-  `app/api/v1/coverage`, `app/api/v1/protocol/[id]`). The scored routes use the same `Store` methods
-  and JSON as the original standalone API — a transport change, not a rewrite. The coverage route
-  combines the static coverage module with live leaderboard ids solely for deduplication. CORS
-  (`access-control-allow-origin: *`) is set on these three routes only, for future
-  browser/wallet/third-party clients reading public, payment-blind data. `/api/v1/*` is the only
-  public API surface — see "API versioning" below. All three routes are
-  CDN-cached and rate limited — see "Caching and rate limits" below.
+  `app/api/v1/coverage`, `app/api/v1/protocol/[id]`, `app/api/v1/health`). The scored routes use the
+  same `Store` methods and JSON as the original standalone API — a transport change, not a rewrite.
+  The coverage route combines the static coverage module with live leaderboard ids solely for
+  deduplication. The health route reports indexer freshness and nothing else — see "The health
+  endpoint" below. CORS (`access-control-allow-origin: *`) is set on these four routes only, for
+  future browser/wallet/third-party clients reading public, payment-blind data. `/api/v1/*` is the
+  only public API surface — see "API versioning" below. All four are rate limited; three of them are
+  CDN-cached and health deliberately is not — see "Caching and rate limits" below.
 - **Indexer** → triggered by `POST /api/cron/run-indexer`, which calls `runIndexerCycle()` once.
   The route is secret-gated (`Authorization: Bearer <CRON_SECRET>`, compared with
   `crypto.timingSafeEqual`); if `CRON_SECRET` is unset it refuses to run, so it's never open. No
@@ -527,6 +528,21 @@ Shortening _N_ bounds that window; it does not remove it.
 So the TTL is derived from the data in the body (`dashboard/app/api/_cache.ts`): **cache until the
 earliest moment the next indexer run could plausibly land, and no further.**
 
+`GET /api/v1/health` is the other, and it goes the opposite way: **`no-store`, never cached at
+all.** The reasoning above works because the thing a cache could hide changes only when a run lands,
+so expiring before the next run closes the hole. Health does not behave that way — staleness
+advances with the wall clock, so a body built at 29 minutes stale and cached for even 45 seconds is
+still being served, saying `healthy` with a `200`, after the true answer has become `degraded` with
+a `503`. The window is small; the endpoint is the one whose entire purpose is to be believed about
+freshness, and a health check that can be stale is a contradiction rather than a tradeoff. The
+`503`s must not be cached either, for a stronger reason: the CDN cache key is the URL, so a cached
+`503` would go on being served to everyone after the pipeline recovered, turning a resolved incident
+into an ongoing one. What it costs is one database round trip per request, uncushioned. Measured
+from a dev machine on 2026-08-22, warm: **0.4–1.1s for `listRunHealth` against 1.1–1.2s for the
+leaderboard query**, both dominated by network round trip rather than by the query — so the
+uncached route is no more expensive per request than the cached one, and it is bounded above by the
+rate limiter.
+
 `GET /api/v1/coverage` is the deliberate exception. Its published records are static and normally
 change only with a deploy, and its body intentionally has no `lastRunAt` from which to derive a
 deadline. It therefore uses a fixed **3,600-second shared-cache TTL**. The route still reads live
@@ -624,6 +640,111 @@ refused, so a flood costs one write per block window rather than one per request
 ever refuse faster, never allow, which is what makes a per-instance structure sound there when it
 isn't for the counter itself.
 
+### The health endpoint
+
+`GET /api/v1/health` answers one question — **is the indexer still producing data?** — in a form a
+machine can act on.
+
+**Why it exists.** Scoring silently stopping is the worst failure mode this system has, and it is
+worst precisely because nothing goes red. The site keeps serving last-known scores, every page
+renders, no route 500s, and the numbers quietly age. Before this endpoint the only ways to notice
+were to query Neon by hand or to eyeball a timestamp in the UI and compare it against a clock. The
+indexer's failure webhook (see "Retry and failure alerting") covers a different case: it fires when
+an adapter fails repeatedly, and it cannot fire at all if the cron simply stops arriving, because
+nothing runs to notice. This endpoint is the outside-in check that catches that.
+
+**Staleness is measured from the last _successful_ run.** A failed run produced no score. Measuring
+from `lastRunAt` would let an adapter that fails reliably every five minutes report as perfectly
+fresh forever — inverting the endpoint's purpose. So `staleMinutes` is the age of the newest `ok`
+run and nothing else.
+
+`lastRunAt` / `lastRunStatus` are still published per protocol, because read together with the
+above they say **where** the problem is:
+
+| `lastRunAt` | `lastSuccessfulRunAt` | What it means                                            |
+| ----------- | --------------------- | -------------------------------------------------------- |
+| fresh       | fresh                 | Working.                                                 |
+| fresh       | stale                 | The cron is arriving; this adapter is failing. Isolated. |
+| stale       | stale                 | The cron is not arriving. Infrastructure.                |
+| `null`      | `null`                | Registered but never indexed.                            |
+
+**Three states, not a boolean.** "Unhealthy" conflates one adapter failing (a code bug in one file)
+with nothing succeeding anywhere (the pipeline is down). Those have different owners and different
+first moves, and a single flag forces an operator to open the body to find out which — which is what
+having a status is supposed to avoid.
+
+| `status`   | Meaning                                                                     | HTTP  |
+| ---------- | --------------------------------------------------------------------------- | ----- |
+| `healthy`  | Every protocol scored successfully within the threshold.                    | `200` |
+| `degraded` | Some current, some not — or all stale but inside the down window.           | `503` |
+| `down`     | Nothing current anywhere, past the down window. The cron itself looks dead. | `503` |
+
+Both non-healthy states answer **`503`**, so an uptime monitor catches either without parsing the
+body; the distinction between them is for the human who then opens it. `503` rather than `500`
+because nothing errored — the route queried successfully and is telling the truth about a pipeline
+that is behind, which is exactly what `503` means. A genuine `500` on this route means we could not
+find out, and keeping those on separate codes is what lets a monitor tell "the indexer is stopped"
+from "the health check is broken".
+
+**The thresholds**, both configurable, defaults in `dashboard/app/api/_health.ts`:
+
+| Setting                          | Default | Why                                                                                                                                                                 |
+| -------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `STENION_HEALTH_STALE_MINUTES`   | 30      | Six missed cycles at the ~5-minute cadence. Sits above `STENION_ALERT_THRESHOLD` (4 cycles, ~20 min) so the webhook mentions a problem before the monitor goes red. |
+| `STENION_HEALTH_DOWN_MULTIPLIER` | 2       | 60 minutes with not one successful run anywhere before blaming the cron itself.                                                                                     |
+
+30 is sized against what already exists rather than picked round. The indexer's alert threshold is
+4 consecutive cycles, on the stated reasoning that "a score 20 minutes stale is not an emergency —
+false pages are how people learn to ignore alerts". A `503` an uptime monitor consumes is a louder
+signal than that webhook, so it must sit at a higher bar; 30 > 20 gives the intended escalation
+order. The floor is set by the cadence: under ~10 minutes, one slow cycle, a cold start, or a single
+cron-job.org misfire would read as an outage.
+
+The down window exists because "everything is stale at once" is weaker evidence than it sounds.
+Every adapter shares Soroban RPC and Horizon, so a broad upstream outage takes them all out together
+while our own infrastructure is fine — and calling that "the cron is dead" sends an operator to the
+wrong place. With three targets today (one adapter serving several of them), "all of them" is a
+small sample. Doubling the window costs nothing operationally, because `degraded` is already `503`
+and a monitor has already fired; all it buys is the confidence to name which thing broke. The window
+is measured from the **freshest** success across the registry — the most generous reading available,
+so the endpoint can never report worse than the truth.
+
+**A fresh failure alone is not unhealthy.** A protocol whose newest run failed but whose newest
+_success_ is four minutes old reports `healthy`. That is deliberate. The indexer already retries
+(default 3 attempts) before recording a failure at all, but it is still one cycle, and the data it
+protects is current — turning red there pages someone about a blip. Repeated failure is not missed:
+an adapter that keeps failing stops producing successful runs and crosses the threshold on its own.
+Sustained failure and staleness are the same event seen at different times, so staleness alone
+catches it with the transient case filtered out for free. A consumer who does want to act on any
+single failed cycle reads `lastRunStatus`, which is why it is published.
+
+**One query, no fan-out.** `Store.listRunHealth()` reuses the same two `LEFT JOIN LATERAL`
+subqueries the leaderboard uses over the existing `(protocol_id, run_at DESC)` index — the `ok` side
+just selects `run_at` instead of the score. **No schema change was needed**; the row that answers
+this was already one column away. Nothing score-derived is selected: no `safety_score`, no `factors`
+jsonb, so a freshness probe cannot fail because a score was malformed, and no adapter error text is
+republished on an unauthenticated endpoint. A health check that fans out per protocol gets slower in
+proportion to how much there is to report on, and a probe that times out under load is
+indistinguishable from the outage it exists to detect.
+
+**A cold Neon can make this probe time out, and that is left alone deliberately.** Measured on
+2026-08-22, the first query against a Neon instance scaled to zero took ~20s; Vercel's default route
+timeout is 10s, so such a probe returns a platform `504` rather than this route's own `503`. Raising
+`maxDuration` to chase a nicer body is not worth it: Neon only goes cold when nothing has touched it
+for a long while, which on this deployment means the indexer has stopped — precisely the case where
+the verdict is "unhealthy" regardless. A monitor treats `504` and `503` identically, so the answer
+survives; only the body is lost, and buying it back would make every healthy probe wait longer.
+
+An empty registry reports `down`, not `healthy`. Vacuous truth is the wrong answer for a probe:
+"nothing is stale because there is nothing" is a database migrated but never indexed, or one pointed
+at the wrong connection string.
+
+The policy — what stale means, the three states, the HTTP mapping — lives in
+`dashboard/app/api/_health.ts`, a leaf module with **no imports at all**, for the same reason
+`_cache.ts` and `_http.ts` are: every interesting state here is one production has never produced
+(`risk_scores` has never held a `failed` row), so it is asserted in `_health.test.ts` or it is
+asserted nowhere.
+
 ### API versioning
 
 The public API is versioned in the URL. The documented, canonical paths are:
@@ -633,6 +754,7 @@ The public API is versioned in the URL. The documented, canonical paths are:
 | `GET /api/v1/protocols`    | The leaderboard: every protocol + its latest score.    |
 | `GET /api/v1/coverage`     | Assessed protocols and markets Stenion does not score. |
 | `GET /api/v1/protocol/:id` | One protocol's detail, factors, and run history.       |
+| `GET /api/v1/health`       | Indexer freshness per protocol + one overall status.   |
 
 **The consumer-facing reference is [`API.md`](API.md)**, rendered on the site at `/docs/api`. This
 section owns the _policy_; that document owns the contract as an integrator meets it — request and
