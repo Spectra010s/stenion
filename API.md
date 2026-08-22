@@ -538,12 +538,19 @@ hide it. The current version is `1`.
 
 ## Caching
 
-Both `/v1` read routes are served through a CDN, with a TTL computed per response from the data in
-the body rather than a fixed constant. The reason is directly relevant to you: a fixed TTL would
-serve a body claiming "the last run succeeded at T" for some seconds after a later run had already
-failed — the cache would be lying in exactly the field that exists to stop us lying about freshness.
+All three `/v1` read routes are served through a CDN. The two scored routes — `/v1/protocols` and
+`/v1/protocol/:id` — use a TTL computed per response from the data in the body rather than a fixed
+constant. The reason is directly relevant to you: a fixed TTL would serve a body claiming "the last
+run succeeded at T" for some seconds after a later run had already failed — the cache would be lying
+in exactly the field that exists to stop us lying about freshness.
 
-**The guarantee: a cached response can hide a newer indexer run by at most 10 seconds.**
+**The guarantee, on those two routes: a cached response can hide a newer indexer run by at most 10
+seconds.**
+
+`GET /api/v1/coverage` is the deliberate exception, and says so rather than quietly differing. Its
+body carries no `lastRunAt` — there is no run behind a coverage decision — and its records change
+only when we deploy, so there is no freshness field for a cache to mask and nothing in the body to
+derive a deadline from. It uses a fixed one-hour shared-cache TTL instead.
 
 What you will actually observe on a `200`:
 
@@ -679,8 +686,8 @@ a `500` cannot outlive the outage that caused it. Retry with backoff.
 
 ### 405 Method Not Allowed
 
-All three routes are `GET` (plus `HEAD` and `OPTIONS`) only. Any other method returns `405` with an empty
-body.
+All three routes are `GET` (plus `HEAD` and `OPTIONS`) only. Any other method returns `405` with an
+empty body.
 
 ### Two rough edges, stated rather than hidden
 
@@ -705,9 +712,9 @@ const detail = await res.json();
 
 ## CORS
 
-Both read routes send `Access-Control-Allow-Origin: *` and answer the preflight, so browser clients
-on any origin can call them directly — no proxy needed. Allowed methods are `GET, OPTIONS`; the only
-allowed request header is `content-type`. Preflights are cached for a day.
+All three read routes send `Access-Control-Allow-Origin: *` and answer the preflight, so browser
+clients on any origin can call them directly — no proxy needed. Allowed methods are `GET, OPTIONS`;
+the only allowed request header is `content-type`. Preflights are cached for a day.
 
 The data is public, read-only, and payment-blind, so `*` is the correct policy here rather than a
 shortcut.

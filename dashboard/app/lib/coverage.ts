@@ -64,6 +64,14 @@
  * `deployedOn` label (the YieldBlox pool), so it is no longer a reason to be
  * unscored. A `deprecated` member is absent for the same reason — no evidenced
  * case exists today.
+ *
+ * THESE STRINGS ARE A PUBLIC API CONTRACT. GET /api/v1/coverage publishes this
+ * union raw — the value a client reads is the member name written here, not its
+ * COVERAGE_STATUS_META display text — and API.md commits to that in the v1
+ * terms: adding a member is additive and stays on `v1`, so consumers are told to
+ * tolerate a status they don't recognise. RENAMING OR REMOVING ONE IS BREAKING
+ * AND NEEDS A `v2`. That rules out tidying a member name for readability, which
+ * would otherwise look like a free local edit.
  */
 export type CoverageStatus =
   /** Lending state lives on another chain; reading it would break the trustless-Stellar rule. */
