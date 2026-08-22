@@ -398,7 +398,7 @@ Roughly in priority order, but not committed to dates:
 ## Protocols investigated and skipped
 
 Confirming a protocol is _not_ in scope from its own contracts — before writing scoring logic — is
-part of the discipline, not a failure. Two notable cases:
+part of the discipline, not a failure. Three notable cases:
 
 > **These decisions are now published on the site**, in the registry's "Assessed, and not scored"
 > section, sourced from `dashboard/app/lib/coverage.ts`. This section keeps the _narrative_ — how the
@@ -408,6 +408,11 @@ part of the discipline, not a failure. Two notable cases:
 > oversight: an entry needs a `verify` path and, for anything resting on a balance, a date. Figures
 > we never checked against contracts don't qualify — which is why some things skipped early in the
 > project's life appear in neither place.
+>
+> **Meru is omitted for a different reason, and the distinction matters.** It clears both tests — it
+> has a `verify` path and a dated reading behind it — and is still kept here only. That is an
+> editorial call about what belongs on the registry, recorded explicitly so it is not later mistaken
+> for an entry that failed the bar above.
 
 - **YieldBlox — skipped as an adapter, then shipped as a pool.** Still not an independent Soroban
   lending protocol: the YieldBlox DAO adopted Blend as its backbone, and what exists today is a
@@ -422,3 +427,39 @@ part of the discipline, not a failure. Two notable cases:
   it ships is a price oracle, so just 1 of 5 factors is natively on Stellar. A faithful adapter would
   need to read NEAR, breaking the trustless-Stellar rule. Could only be represented if Stenion's
   model expands to read NEAR — see "Out of scope."
+- **Meru.** Not a lending protocol at all — a Latin-American USDC wallet whose yield feature is a
+  **DeFindex vault**. The only Meru-named contract on mainnet is `CCA2ZJP5…`, whose `METADATA` reads
+  `DeFindex-Vault-Meru` / `MERU` and whose wasm (`ae3409a4…`) is byte-identical to the vault hash
+  DeFindex publishes on its own mainnet-deployments page. Its single asset is USDC, deployed through
+  two of DeFindex's _shared_ strategy contracts: "USDC Autocompound Blend Fixed"
+  (`CDB2WMKQ…`, `Config.pool` = `CAJJZSGM…`) and "USDC Autocompound Blend YieldBlox"
+  (`CCSRX5E4…`, `Config.pool` = `CCCCIQSD…`). Both of those pools are already registered, scored
+  entries — `blend` and `yieldblox`.
+
+  So this is neither the Templar reason nor the K2 reason. The vault held **18,686,143.05 USDC**
+  (`fetch_total_managed_funds`, idle 0, all of it in the Fixed strategy — ledger 64069221,
+  2026-08-22), three orders of magnitude _above_ the market-size floor, and every dollar of it sits
+  inside pools Stenion already reads. A "Meru" entry would republish Blend Fixed's number under a
+  second name. It also has no lending surface of its own to score: `get_reserve_list`,
+  `get_reserves_list`, `get_config`, `oracle`, `get_reserve_data` and `get_positions` all fail
+  against it with `WasmVm, MissingValue` — no reserves, no borrow side, no oracle, no utilization.
+
+  Ruled out positively rather than from absence: every pool both Blend factories have ever deployed
+  was enumerated from their `deploy` events — 11 on the V2 factory (`CDSYOAVX…`) and 17 on V1
+  (`CCZD6ESM…`) — and none is named Meru. It is a depositor _into_ Blend, not a deployment of it.
+  Nor is it a K2 router: different wasm from K2's `df2831cf…`, and K2's own docs list three markets
+  with exactly one third-party operator, none of them Meru.
+
+  Worth recording beside the K2 and YieldBlox documentation gaps: **Meru publishes no contract
+  address anywhere.** No contracts page, no `/.well-known/stellar.toml`, no documentation site; its
+  sitemap's 16 pages include `/defi/information/`, which names neither Blend nor DeFindex. DeFindex
+  for its part publishes the factory, the vault wasm and the shared strategies, but not per-partner
+  vault addresses. An $18.7M vault carrying a protocol's name therefore appears in no first-party
+  published list and is reachable only from chain — which is why this took contract reads to settle
+  rather than a reading of anyone's docs.
+
+  To verify: read the instance storage of `CCA2ZJP5…` via Soroban RPC `getLedgerEntries` — `METADATA`
+  names it and `["AssetStrategySet",0]` gives the strategy set — then read `Config.pool` out of each
+  strategy's instance storage and compare against the pool ids in
+  [`adapters/blend.ts`](adapters/blend.ts). `fetch_total_managed_funds` on the vault gives the
+  balance.
