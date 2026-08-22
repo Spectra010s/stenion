@@ -141,7 +141,8 @@ One Vercel project = the `dashboard`. A page that renders a repo-root markdown f
 → `METHODOLOGY.md`, `/docs/api` → `API.md`) **must** have an `outputFileTracingIncludes` entry in
 `next.config.mjs` — the file is outside the dashboard dir, and without it the route works in
 `next dev` and fails only in production. The API lives as Next.js Route Handlers
-(`/api/v1/protocols`, `/api/v1/protocol/[id]` — versioned; there are **no** unversioned paths, the
+(`/api/v1/protocols`, `/api/v1/coverage`, `/api/v1/protocol/[id]` — versioned; there are **no**
+unversioned paths, the
 former transitional aliases were removed and now 404, and the versioning policy lives in
 `ARCHITECTURE.md`); the dashboard's own pages read `@stenion/db`'s `Store`
 in-process (no HTTP hop). The indexer is triggered by a secret-gated cron route
@@ -153,7 +154,7 @@ kept but not deployed. Env vars: `DATABASE_URL` (Neon pooled), `STENION_RPC_URL`
 alerts; unset = off), `STENION_RATE_LIMIT_SALT`, and the retry/threshold and rate-limit knobs, which
 all have defaults. Every variable the repo understands is documented in `.env.example`.
 
-The two `/v1` read routes are CDN-cached and rate limited; the cron route is **neither**, and must
+The three `/v1` read routes are CDN-cached and rate limited; the cron route is **neither**, and must
 stay that way — rate limiting an authenticated internal trigger can only block a scheduled run.
 Caching there is meaningless (it's a POST that does work). The rate limiter's counter lives in
 Postgres because serverless has no shared memory, and it **fails open**: a limiter that can 429 the

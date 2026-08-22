@@ -6,6 +6,7 @@ import {
   COVERAGE_STATUS_META,
   COVERAGE_STATUS_ORDER,
   coverageById,
+  coverageForApi,
   coverageToPublish,
   groupCoverage,
   type CoverageEntry,
@@ -144,6 +145,47 @@ describe('coverageToPublish', () => {
     const before = COVERAGE.length;
     coverageToPublish(['templar']);
     assert.equal(COVERAGE.length, before);
+  });
+});
+
+describe('coverageForApi', () => {
+  it('reuses the live-board dedupe rule', () => {
+    const published = coverageForApi(['blend', 'kinetic', 'k2-earn']);
+    assert.ok(!published.some((entry) => entry.id === 'k2-earn'));
+    assert.ok(published.some((entry) => entry.id === 'templar'));
+  });
+
+  it('publishes evidence without exposing a score-shaped value', () => {
+    const body: unknown = { coverage: coverageForApi([]) };
+
+    function assertScoreless(value: unknown, path = 'response'): void {
+      assert.notEqual(typeof value, 'number', `${path} contains a JSON number`);
+      if (Array.isArray(value)) {
+        value.forEach((item, index) => assertScoreless(item, `${path}[${index}]`));
+        return;
+      }
+      if (value === null || typeof value !== 'object') return;
+
+      for (const [key, child] of Object.entries(value)) {
+        assert.notEqual(key, 'safetyScore', `${path} exposes a safetyScore key`);
+        assertScoreless(child, `${path}.${key}`);
+      }
+    }
+
+    assertScoreless(body);
+    for (const entry of coverageForApi([])) {
+      assert.ok(entry.reason.length > 0, `${entry.id} lost its published reasoning`);
+      assert.ok(entry.verify.length > 0, `${entry.id} lost its verification path`);
+      assert.ok('asOf' in entry, `${entry.id} lost its measurement date field`);
+    }
+  });
+
+  it('returns detached arrays and link objects for the public contract', () => {
+    const [published] = coverageForApi([]);
+    const source = COVERAGE.find((entry) => entry.id === published.id);
+    assert.ok(source);
+    assert.notEqual(published.reason, source.reason);
+    assert.notEqual(published.links, source.links);
   });
 });
 
