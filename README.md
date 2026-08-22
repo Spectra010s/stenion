@@ -91,12 +91,12 @@ pnpm --filter @stenion/dashboard dev             # http://localhost:3000
 
 The dashboard reads Postgres in-process, so once step 4 has landed at least one row you'll see
 real scores at `http://localhost:3000`. The public API is served by the dashboard at
-`/api/v1/protocols` and `/api/v1/protocol/:id` — versioned, with the policy in
+`/api/v1/protocols`, `/api/v1/coverage`, and `/api/v1/protocol/:id` — versioned, with the policy in
 [`ARCHITECTURE.md`](ARCHITECTURE.md#api-versioning).
 
 ### Using the public API
 
-**The full reference is [`API.md`](API.md)** — both endpoints with live example responses, the
+**The full reference is [`API.md`](API.md)** — all three endpoints with live example responses, the
 `ok`/`failed` history union, the staleness model, error shapes, and the versioning commitment. It's
 also rendered on the site at [/docs/api](https://stenion.vercel.app/docs/api). The summary:
 

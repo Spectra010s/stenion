@@ -2,13 +2,16 @@
 
 **Free, public, read-only risk data for Stellar/Soroban DeFi lending protocols.**
 
-Two `GET` endpoints, no authentication, no API key, CORS open to any origin. If you are building a
+Three `GET` endpoints, no authentication, no API key, CORS open to any origin. If you are building a
 wallet, an aggregator, or a dashboard and you want a live safety number for a protocol your users
 are about to interact with, this is the whole surface area.
 
-Everything below was captured from the live production API, not written from the type definitions.
-The example responses are verbatim bodies from a snapshot taken at **2026-08-20T11:05–11:10Z**; the
-numbers move every ~5 minutes, the shapes do not.
+The scored examples below were captured from the live production API, not written from the type
+definitions. Their responses are verbatim bodies from a snapshot taken at
+**2026-08-20T11:05–11:10Z**; the numbers move every ~5 minutes, the shapes do not. The coverage
+example was captured with `curl` from the built route on **2026-08-21T22:15Z**, backed by a fresh
+local database, before that new endpoint had a production URL to call. Recapture it against
+production after promotion.
 
 ---
 
@@ -69,6 +72,9 @@ integrating this API does not create one either.
 ```bash
 # every protocol, ranked
 curl https://stenion.vercel.app/api/v1/protocols
+
+# protocols Stenion assessed and deliberately does not score
+curl https://stenion.vercel.app/api/v1/coverage
 
 # one protocol, with factors and run history
 curl https://stenion.vercel.app/api/v1/protocol/blend
@@ -149,6 +155,72 @@ nobody acts on from a list, and repeating them on every row of every fetch is wa
 the detail response. `deployedOn` is the exception, and for the opposite reason: it is not detail
 you look up after deciding to care, it is part of what the row _is_, and a reader who scans the
 board and leaves has to have seen it.
+
+---
+
+## GET /api/v1/coverage
+
+Protocols and markets Stenion has assessed and deliberately does not score. This is a separate,
+unranked contract: an entry here is a coverage decision, never a failed run or a low score.
+
+**Request**
+
+```bash
+curl https://stenion.vercel.app/api/v1/coverage
+```
+
+**Response** `200 OK`
+
+> The first entry is shown below for readability. The live response returns every current entry in
+> the `coverage` array; this object is verbatim from the live route capture.
+
+```json
+{
+  "coverage": [
+    {
+      "id": "templar",
+      "name": "Templar",
+      "status": "off-chain-state",
+      "logo": null,
+      "links": {
+        "site": null,
+        "docs": null
+      },
+      "contractId": null,
+      "summary": "A NEAR-based protocol whose reserves, balances and positions live on NEAR — the only contract it runs on Soroban is a price oracle.",
+      "reason": [
+        "Templar is a NEAR-based chain-abstraction protocol — it calls its product “Cypher Lending” — and its lending market state lives on NEAR, not on Stellar. Reserves, supply and borrow balances, utilization and collateral positions are all read through NEAR RPC. Stellar’s role is as a wallet and collateral entry point via NEAR’s MPC signing, not as the ledger the lending market runs on.",
+        "The only native-Soroban contract Templar ships is a price oracle. That is one of the five factors Stenion scores; the other four are on another chain. An adapter faithful to what Templar actually is would have to read NEAR, and Stenion’s adapters read trustless Stellar infrastructure and nothing else — that rule is the pitch rather than an implementation detail, so bending it for one protocol would quietly change what every other score means.",
+        "This is a decision about where the data lives, not a judgment about Templar. It could be represented only if Stenion’s model expanded to read another chain, which ROADMAP.md keeps explicitly out of scope."
+      ],
+      "verify": "Follow Templar’s own documentation for where lending state is held, then confirm it against the chain: the Soroban contract it publishes on Stellar exposes an oracle interface (price reads), with no reserve, supply/borrow or position storage. There is no Soroban contract to call get_reserves_list, or any equivalent, against.",
+      "asOf": null
+    }
+  ]
+}
+```
+
+| Field        | Type                 | Notes                                                                                                             |
+| ------------ | -------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `id`         | string               | Stable, case-sensitive coverage identifier; also the path segment on `/coverage/<id>`.                            |
+| `name`       | string               | Display name.                                                                                                     |
+| `status`     | string               | Machine-readable coverage category. New categories may be added on `v1`; existing values are not renamed on `v1`. |
+| `logo`       | string or null       | Root-relative self-hosted mark, or `null`.                                                                        |
+| `links`      | object               | The protocol's verified `site` and `docs`, each string or `null`.                                                 |
+| `contractId` | string or null       | Full Soroban address only when one was recorded; otherwise `null`.                                                |
+| `summary`    | string               | One-sentence coverage summary.                                                                                    |
+| `reason`     | string[]             | Protocol-specific evidence and reasoning. Quoted measurements remain text, not a numeric score.                   |
+| `verify`     | string               | How an integrator or reader can independently check the decision.                                                 |
+| `asOf`       | `YYYY-MM-DD` or null | Date of a measurement-backed reason. `null` means the decision is structural or no dated check is claimed.        |
+
+There is deliberately **no `safetyScore` key and no JSON numeric value anywhere in this
+response**. Identifiers, dates, and evidence strings can contain digits; none is a value a client
+could mistake for a score. The full evidence ships in the list, so there is no separate
+`GET /api/v1/coverage/:id` endpoint.
+
+The route reads the live leaderboard only to apply the same self-healing dedupe as the registry. A
+protocol that has become scorable cannot appear in both responses. `GET /api/v1/protocols` is
+unchanged byte-for-byte.
 
 ---
 
@@ -466,12 +538,19 @@ hide it. The current version is `1`.
 
 ## Caching
 
-Both `/v1` read routes are served through a CDN, with a TTL computed per response from the data in
-the body rather than a fixed constant. The reason is directly relevant to you: a fixed TTL would
-serve a body claiming "the last run succeeded at T" for some seconds after a later run had already
-failed — the cache would be lying in exactly the field that exists to stop us lying about freshness.
+All three `/v1` read routes are served through a CDN. The two scored routes — `/v1/protocols` and
+`/v1/protocol/:id` — use a TTL computed per response from the data in the body rather than a fixed
+constant. The reason is directly relevant to you: a fixed TTL would serve a body claiming "the last
+run succeeded at T" for some seconds after a later run had already failed — the cache would be lying
+in exactly the field that exists to stop us lying about freshness.
 
-**The guarantee: a cached response can hide a newer indexer run by at most 10 seconds.**
+**The guarantee, on those two routes: a cached response can hide a newer indexer run by at most 10
+seconds.**
+
+`GET /api/v1/coverage` is the deliberate exception, and says so rather than quietly differing. Its
+body carries no `lastRunAt` — there is no run behind a coverage decision — and its records change
+only when we deploy, so there is no freshness field for a cache to mask and nothing in the body to
+derive a deadline from. It uses a fixed one-hour shared-cache TTL instead.
 
 What you will actually observe on a `200`:
 
@@ -490,10 +569,11 @@ the exact masking described above.
 
 Errors, `404`s, and `429`s are `no-store`.
 
-**Polling advice:** the data changes every ~5 minutes, so polling faster than that buys you nothing
-but cache hits. Once a minute is generous. Note that the cache key includes the query string, so
-adding `?t=<random>` to defeat the cache does not get you fresher data — it just guarantees a cache
-miss and pushes you toward the rate limit.
+**Polling advice:** scored data changes every ~5 minutes, so polling those routes faster than that
+buys you nothing but cache hits. Once a minute is generous. Coverage records normally change only
+on deploy and use a one-hour shared-cache TTL, so polling `/coverage` more than hourly is wasteful.
+Note that the cache key includes the query string, so adding `?t=<random>` to defeat the cache does
+not get you fresher data — it just guarantees a cache miss and pushes you toward the rate limit.
 
 ---
 
@@ -606,8 +686,8 @@ a `500` cannot outlive the outage that caused it. Retry with backoff.
 
 ### 405 Method Not Allowed
 
-Both routes are `GET` (plus `HEAD` and `OPTIONS`) only. Any other method returns `405` with an empty
-body.
+All three routes are `GET` (plus `HEAD` and `OPTIONS`) only. Any other method returns `405` with an
+empty body.
 
 ### Two rough edges, stated rather than hidden
 
@@ -632,9 +712,9 @@ const detail = await res.json();
 
 ## CORS
 
-Both read routes send `Access-Control-Allow-Origin: *` and answer the preflight, so browser clients
-on any origin can call them directly — no proxy needed. Allowed methods are `GET, OPTIONS`; the only
-allowed request header is `content-type`. Preflights are cached for a day.
+All three read routes send `Access-Control-Allow-Origin: *` and answer the preflight, so browser
+clients on any origin can call them directly — no proxy needed. Allowed methods are `GET, OPTIONS`;
+the only allowed request header is `content-type`. Preflights are cached for a day.
 
 The data is public, read-only, and payment-blind, so `*` is the correct policy here rather than a
 shortcut.

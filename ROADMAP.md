@@ -78,10 +78,11 @@ commitment — priorities shift as protocols launch and as the project finds fun
   cannot disagree with the history it describes. See [`ARCHITECTURE.md`](ARCHITECTURE.md).
 - **Public API documentation.** [`API.md`](API.md), rendered on the site at `/docs/api`. Until now
   the only way to learn the contract was reading the route handlers on GitHub, which is a barrier
-  for exactly the wallet-integrator audience the API exists for. Covers both endpoints with live
+  for exactly the wallet-integrator audience the API exists for. Covers every endpoint with live
   captured examples, the versioning commitment (additive stays on `v1`, breaking gets a `v2`), the
   `ok`/`failed` history union, the staleness model, rate limits, and error shapes. Every example is
-  a verbatim capture from production rather than written from the types.
+  a verbatim `curl` capture rather than written from the types; a newly-added route is recaptured
+  against production after promotion.
 - **Coverage decisions are published, not just recorded.** The registry now has a second section —
   **"Assessed, and not scored"** — listing what we investigated and declined, with a
   protocol-specific reason and a "verify it yourself" path for each. Until now the only record of
@@ -102,8 +103,10 @@ commitment — priorities shift as protocols launch and as the project finds fun
   `protocols` table. A row there with no history already renders as "never run — a gap in our
   coverage", which is our-pipeline-hasn't-got-there-yet; putting a deliberate decision in the same
   place collides the two states the section exists to separate. It would also inject unscored ids
-  into `GET /api/v1/protocols`, which consumers parse as the ranked leaderboard. Publishing this on
-  the API is a separate additive endpoint — see "Planned".
+  into `GET /api/v1/protocols`, which consumers parse as the ranked leaderboard. The same records
+  now ship from the separate additive `GET /api/v1/coverage` endpoint, with the live leaderboard
+  used only to prevent an entry appearing as both scored and unscored. The API carries the full
+  reason, verification path and measurement date, but no `safetyScore` key or JSON numeric value.
 
   Two things it is **not**: it is unrelated to the not-scorable _run outcome_ below (that is a
   registered market draining below the floor, and needs a breaking third `RunRecord` status), and
@@ -331,17 +334,6 @@ Roughly in priority order, but not committed to dates:
   nothing watches. Naming what the alerting does _not_ cover matters as much as what it does; closing
   it means a second, differently-shaped signal (the cycle could not run at all, as distinct from a
   protocol that could not be scored), which is a separate feature rather than a wider threshold.
-- **`GET /api/v1/coverage` — publishing the unscored list on the API.** The "Assessed, and not
-  scored" section is dashboard-only today. Putting those entries on the API is genuinely useful to
-  an integrator deciding what to show a user searching a protocol name, and it is **additive**, so
-  it stays on `v1`.
-
-  It must be its **own endpoint**, never folded into `GET /api/v1/protocols`. Consumers parse that
-  response as the ranked leaderboard; an entry there with `safetyScore: null` would be rendered by a
-  wallet as a protocol we failed to score rather than one we decided not to, which is precisely the
-  collision the dashboard section is built to avoid. Deferred rather than half-shipped: the shape
-  needs deciding once, since a public endpoint's contract is expensive to change.
-
 - **Scam / fake-asset warning API.** A real-time, queryable warning layer for wallets, built on top
   of [StellarExpert](https://stellar.expert)'s existing scam directory. A secondary feature, not the
   core pitch — but a natural fit for the "read the chain, warn users" mission.

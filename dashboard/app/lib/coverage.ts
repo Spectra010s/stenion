@@ -64,6 +64,14 @@
  * `deployedOn` label (the YieldBlox pool), so it is no longer a reason to be
  * unscored. A `deprecated` member is absent for the same reason — no evidenced
  * case exists today.
+ *
+ * THESE STRINGS ARE A PUBLIC API CONTRACT. GET /api/v1/coverage publishes this
+ * union raw — the value a client reads is the member name written here, not its
+ * COVERAGE_STATUS_META display text — and API.md commits to that in the v1
+ * terms: adding a member is additive and stays on `v1`, so consumers are told to
+ * tolerate a status they don't recognise. RENAMING OR REMOVING ONE IS BREAKING
+ * AND NEEDS A `v2`. That rules out tidying a member name for readability, which
+ * would otherwise look like a free local edit.
  */
 export type CoverageStatus =
   /** Lending state lives on another chain; reading it would break the trustless-Stellar rule. */
@@ -145,6 +153,28 @@ export interface CoverageEntry {
    */
   asOf: string | null;
 }
+
+/**
+ * The deliberately-versioned public shape for GET /api/v1/coverage.
+ *
+ * Keep this explicit even while it matches CoverageEntry: adding an internal
+ * field to the dashboard model must not silently add it to a public API. All
+ * measured values stay inside explanatory strings and `asOf`; this contract
+ * contains no JSON number and no score-shaped field.
+ */
+export type ApiCoverageEntry = Pick<
+  CoverageEntry,
+  | 'id'
+  | 'name'
+  | 'status'
+  | 'logo'
+  | 'links'
+  | 'contractId'
+  | 'summary'
+  | 'reason'
+  | 'verify'
+  | 'asOf'
+>;
 
 /**
  * Heading and framing per status. `chip` is what stands where a scored row has
@@ -300,6 +330,29 @@ export const COVERAGE: readonly CoverageEntry[] = [
 export function coverageToPublish(scoredIds: Iterable<string>): CoverageEntry[] {
   const scored = new Set(scoredIds);
   return COVERAGE.filter((entry) => !scored.has(entry.id));
+}
+
+/**
+ * Public API projection of the entries that are not on the live leaderboard.
+ *
+ * This is intentionally a projection rather than returning CoverageEntry
+ * directly. The endpoint is a public v1 contract, so its fields change only by
+ * an explicit edit here. Arrays and nested objects are copied so consumers of
+ * this helper cannot mutate the static source records.
+ */
+export function coverageForApi(scoredIds: Iterable<string>): ApiCoverageEntry[] {
+  return coverageToPublish(scoredIds).map((entry) => ({
+    id: entry.id,
+    name: entry.name,
+    status: entry.status,
+    logo: entry.logo,
+    links: { ...entry.links },
+    contractId: entry.contractId,
+    summary: entry.summary,
+    reason: [...entry.reason],
+    verify: entry.verify,
+    asOf: entry.asOf,
+  }));
 }
 
 /**
