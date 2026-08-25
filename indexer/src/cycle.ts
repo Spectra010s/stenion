@@ -148,20 +148,25 @@ export interface CycleOptions {
    */
   budgetMs?: number;
   /**
-   * How many targets may be in flight at once. Default `DEFAULT_CONCURRENCY`.
+   * How many targets may be in flight at once. Default `DEFAULT_CONCURRENCY` (1).
    *
-   * BOUNDED rather than unbounded, because the ceiling being bought here is not
-   * free: both adapters are strictly sequential internally (every RPC and
-   * Horizon call is a bare `await`), so one target is exactly one in-flight
-   * request, and this number IS the peak simultaneous load Stenion puts on a
-   * shared, rate-limited public RPC — which is itself a source of the failures
-   * the retries exist for. At 2 the peak doubles and stops there, whatever the
-   * registry grows to. `Promise.allSettled` over every target would make the
-   * peak equal to the target count, i.e. a number that grows every time a pool
-   * is registered, which is the wrong dial to leave unbounded.
+   * Both adapters are strictly sequential internally (every RPC and Horizon call
+   * is a bare `await`), so one target is exactly one in-flight request, and this
+   * number IS the peak simultaneous load Stenion puts on a shared,
+   * rate-limited public RPC — which is itself a source of the failures the
+   * retries exist for.
    *
-   * 1 restores a sequential loop (not the old *budget division* — that is gone
-   * either way).
+   * IT IS 1 BECAUSE 2 WAS MEASURED AND FAILED. This shipped at 2 and was reverted
+   * the same day: `mainnet.sorobanrpc.com` began returning `429` to whichever
+   * target ran behind the concurrent burst, at a rate of roughly 3 failures in 7
+   * cycles, against a clean baseline of 0 in 105 target-runs. The mechanism is
+   * request RATE, not peak — see ARCHITECTURE.md's incident note, which is
+   * required reading before raising this.
+   *
+   * Raising it does NOT change any deadline: `targetDeadline` is independent of
+   * the target count and of this value except through the wave arithmetic. So
+   * this is a throughput-vs-RPC-pressure dial, not a correctness one, in both
+   * directions.
    */
   concurrency?: number;
   /** Consecutive failures before a `failing` alert fires. */
@@ -177,8 +182,14 @@ const NO_RETRY: RetryPolicy = {
   attemptTimeoutMs: Number.POSITIVE_INFINITY,
 };
 
-/** Targets in flight at once when the caller says nothing. See CycleOptions.concurrency. */
-export const DEFAULT_CONCURRENCY = 2;
+/**
+ * Targets in flight at once when the caller says nothing.
+ *
+ * ONE, and it is 1 because of a measured production incident rather than
+ * caution — see CycleOptions.concurrency and ARCHITECTURE.md. The worker pool is
+ * still a worker pool at 1; what changed is how many of its workers exist.
+ */
+export const DEFAULT_CONCURRENCY = 1;
 
 /**
  * How many sequential "waves" `queued` targets take at this concurrency.
@@ -205,15 +216,20 @@ export function cycleWaves(queued: number, concurrency: number): number {
  * nothing can overlap with. Keeping the old order after removing the rule that
  * justified it would have been the quiet regression.
  *
- * Durations are the live `fetchRawData` measurements in ARCHITECTURE.md
- * (2026-08-19, developer machine): YieldBlox 8.1-12.5s, Kinetic 7.7-10.5s,
- * Blend Fixed 6.0-7.5s.
+ * Durations are the deployed-function measurements in ARCHITECTURE.md
+ * (2026-08-25, five cycles): Kinetic 4.8-6.1s, YieldBlox 3.8-4.3s, Blend Fixed
+ * 2.3-2.6s. Kinetic and YieldBlox swapped places when the measurement moved off
+ * a developer machine and onto Vercel, which is the whole argument for measuring
+ * there. At three targets and concurrency 2 the swap changes nothing — those two
+ * share wave 1 either way, and what matters is that the fastest target is last —
+ * but a list whose comment cites numbers that no longer hold is a list nobody
+ * can check, so it tracks the measurement.
  *
  * It lives here rather than beside `buildTargets` for one blunt reason: index.ts
  * is a CommonJS CLI entry point and cannot be imported by a test, so an ordering
  * decision made there is an ordering decision nothing can check.
  */
-const SLOWEST_FIRST: readonly string[] = ['yieldblox', 'kinetic', 'blend'];
+const SLOWEST_FIRST: readonly string[] = ['kinetic', 'yieldblox', 'blend'];
 
 /**
  * Order targets slowest-first. Pure, and total on ids it has never heard of.

@@ -218,9 +218,10 @@ still recorded as `failed` — a protocol that is genuinely down still shows as 
   attempt each inside 42s, whatever the rule.
 
   **What the new rule guarantees.** Every target gets **at least one full 15s attempt** at any
-  feasible target count — comfortably above the 12.5s slowest observed healthy fetch — and usually
-  far more, because `queuedAfter` is read when a worker picks a target up, so a target that finished
-  early has already shortened the queue and the next one inherits the slack. A target still cannot
+  feasible target count — against a slowest healthy fetch of 6.1s measured on the deployed function
+  (12.5s was the worst ever seen on a developer machine, and even that fits) — and usually far more,
+  because `queuedAfter` is read when a worker picks a target up, so a target that finished early has
+  already shortened the queue and the next one inherits the slack. A target still cannot
   eat the queue's last chance to be looked at, which is the guarantee the old even division was
   really buying.
 
@@ -242,11 +243,66 @@ still recorded as `failed` — a protocol that is genuinely down still shows as 
 - **Concurrency is bounded because the peak is what costs.** Both adapters are strictly sequential
   internally — every RPC and Horizon call is a bare `await` — so **one target in flight is exactly
   one request in flight**, and `STENION_CYCLE_CONCURRENCY` _is_ the peak simultaneous load Stenion
-  puts on the shared, rate-limited public RPC. At 2 that peak doubles (from 1) and then stays there
-  however large the registry grows; a `Promise.allSettled` over every target would instead make the
-  peak grow with every pool registered. Total request volume per cycle is unchanged either way —
-  roughly 13 (Blend Fixed, 3 reserves), 23 (YieldBlox, 8) and 22 (Kinetic, 4) — so what concurrency
-  actually changes is the rate, from ~2.3/s to ~4.5/s.
+  puts on the shared, rate-limited public RPC. A `Promise.allSettled` over every target would make
+  that peak grow with every pool registered, which is the wrong dial to leave unbounded. Total
+  request volume per cycle is unchanged whatever the concurrency — roughly 13 (Blend Fixed, 3
+  reserves), 23 (YieldBlox, 8) and 22 (Kinetic, 4).
+
+  **It ships at 1, not 2.** What concurrency changes is the request **rate**, and the estimate made
+  here before deploying — "~2.3/s to ~4.5/s" — was **wrong**, because it divided the request count
+  by developer-machine durations. See the incident note below: 2 was deployed, measured, and
+  reverted the same day.
+
+- **RESOLVED (2026-08-25): concurrency 2 drew `429`s from the public RPC.** Kept in full rather
+  than deleted, because it is the reason this document now says _measure the deployed function_
+  everywhere it used to say _compute from timings_ — and because anyone raising
+  `STENION_CYCLE_CONCURRENCY` should have to read it first.
+
+  `STENION_RPC_URL` is `mainnet.sorobanrpc.com`: the free, shared, keyless public endpoint, whose
+  rate limit is unpublished and not ours to raise.
+
+  **What happened.** #68 shipped the worker pool at concurrency 2. Within one cycle, Blend — the
+  target that runs _behind_ the concurrent pair — began failing with
+  `Request failed with status code 429`, recorded only after all three retry attempts were
+  exhausted. Measured from `risk_scores` via `/api/v1/protocol/:id`:
+
+  | Window                                              | blend | yieldblox | kinetic | total          |
+  | --------------------------------------------------- | ----- | --------- | ------- | -------------- |
+  | 34 cycles before the deploy (sequential)            | 0/34  | 0/34      | 0/34    | **0/102**      |
+  | 8 cycles after, with manual `curl`s adding load     | 4/8   | 1/8       | 1/8     | 6/24 (25%)     |
+  | 8 cycles after, scheduled only — no manual triggers | 4/8   | 0/8       | 0/8     | **4/24 (17%)** |
+
+  The clean window is the load-bearing one: no manual triggers, ordinary 5-minute cadence, and Blend
+  still failed **half** its cycles against a baseline of zero. (One cycle 429'd all three targets at
+  once, but that was in the contaminated window, so it is reported and not leaned on.)
+
+  **Root cause: rate, not peak.** Peak in-flight only went 1 → 2, which is nothing in absolute
+  terms. But the deployed function is 2-3x faster than the developer machine the original estimate
+  was computed from, so the same requests are compressed into a third of the time: wave 1 issues
+  roughly 45 requests (YieldBlox ~23, Kinetic ~22) inside ~4 seconds — about **11 requests/second** —
+  and Blend's ~13 land immediately behind them. The target that fails is the one running behind the
+  burst. **The pre-deploy estimate was wrong in the same direction as the failures**, which is the
+  whole lesson: a public endpoint limits rate, and rate is exactly what a duration estimate gets
+  wrong when the durations come from the wrong machine.
+
+  **The fix, applied.** Both halves together, not either alone:
+
+  - `STENION_CYCLE_CONCURRENCY` default **2 → 1**. Removes the burst entirely. It does **not**
+    reinstate the bug #68 fixed: budget division is gone independently of concurrency, so at 1 each
+    target still gets the budget less a reservation rather than a shrinking even share.
+  - `STENION_ATTEMPT_TIMEOUT_MS` default **15s → 10s**. Needed _because_ of the first: at 1 worker a
+    15s timeout makes `cycleFeasibility` infeasible at three targets (`3 × 15s = 45s > 42s`) and
+    warn on every cycle. 10s is justified by the measurement rather than guessed — nothing healthy
+    exceeds 6.1s deployed — and makes a sequential cycle feasible to **four** targets
+    (`4 × 10s = 40s ≤ 42s`), so #65's Etherfuse needs no further config change.
+
+  Verified against the real defaults: 3 targets `30,000ms` silent, 4 targets `40,000ms` silent,
+  5 targets `50,000ms` warns. Alerting is asserted byte-identical at concurrency 1 and 2.
+
+  **Local-dev caveat:** a developer machine has been seen taking 12.5s on YieldBlox, which now
+  exceeds the 10s cap, so a local `pnpm indexer` may time out and retry where it used to succeed
+  first time. Raise `STENION_ATTEMPT_TIMEOUT_MS` in `.env` if that bites — production is the case
+  the default is sized for.
 
 - **Targets are ordered slowest-first** (`orderByLatency` in `indexer/src/index.ts`:
   YieldBlox → Kinetic → Blend). Under a worker pool, longest-processing-time-first minimises the
@@ -261,9 +317,32 @@ still recorded as `failed` — a protocol that is genuinely down still shows as 
   validated on Vercel's path to the RPC, and a developer machine's path is not that. `curl`ing the
   cron route returns the real measurements.
 
-  Measured live `fetchRawData` from a **developer machine** on 2026-08-19: Blend 6.0–7.5s, Kinetic
-  7.7–10.5s, YieldBlox 8.1–12.5s; three sequential targets totalled 24.5–26.9s. Deployed-function
-  numbers are pending the first post-deploy `curl`.
+  **Measured from the deployed function** on 2026-08-25, five cycles at the shipped defaults
+  (3 targets, concurrency 2), read from the cron route's own response:
+
+  | Target      | Wave | `durationMs` range | Median     |
+  | ----------- | ---- | ------------------ | ---------- |
+  | Kinetic     | 1    | 4,788–6,100        | 5,001      |
+  | YieldBlox   | 1    | 3,792–4,314        | 3,956      |
+  | Blend Fixed | 2    | 2,271–2,628        | 2,408      |
+  | **Cycle**   | —    | **6,461–7,322**    | **~6,850** |
+
+  (Cycle range over the four clean cycles; a fifth spent 9,504ms because one target exhausted three
+  attempts before failing. Ranges are `durationMs`/`totalMs` as returned by
+  `POST /api/cron/run-indexer` — retries and backoff included, DB write excluded.)
+
+  **These are two to three times faster than the developer-machine figures they replace** (which
+  were Blend 6.0–7.5s, Kinetic 7.7–10.5s, YieldBlox 8.1–12.5s, 24.5–26.9s sequential, measured
+  2026-08-19). Vercel's path to the RPC is simply not a laptop's, which is why the issue insisted on
+  measuring from the deployed function rather than trusting arithmetic over local timings. Two
+  consequences worth stating: the whole cycle uses under a fifth of its 42s budget, and the 15s
+  attempt timeout is now roughly 2.5x the slowest healthy fetch rather than barely above it.
+
+  **The 3-target case is measured. The 4-target case is not, and remains arithmetic.** Nothing above
+  is evidence about four targets: a fourth target does not exist until #65 registers Etherfuse, its
+  duration is unknown, and — see the rate-limit note below — the cost of a cycle is not only its
+  duration. The feasibility ceiling of four targets is a statement about the attempt timeout fitting
+  in the budget, not a measured result, and must not be described as proven until it is run.
 
 - **The attempt timeout is soft.** It races the attempt against a timer, abandoning the in-flight
   work rather than cancelling it. That bounds the observed attempt duration, which is what the

@@ -198,19 +198,39 @@ export function loadConfig(cwd: string = process.cwd()): IndexerConfig {
     runOnce: process.argv.includes('--once') || optionalBool('STENION_RUN_ONCE', false),
     retryAttempts: optionalPositiveInt('STENION_RETRY_ATTEMPTS', 3),
     retryBaseDelayMs: optionalPositiveInt('STENION_RETRY_BASE_DELAY_MS', 1000),
-    attemptTimeoutMs: optionalPositiveInt('STENION_ATTEMPT_TIMEOUT_MS', 15_000),
+    // 10s, lowered from 15s once the deployed function was actually measured:
+    // nothing healthy exceeds 6.1s there (ARCHITECTURE.md), so 15s was sized
+    // against a developer machine's much slower path to the RPC. The shorter cap
+    // is what makes a SEQUENTIAL cycle feasible up to four targets
+    // (4 x 10s = 40s <= 42s), which is how the 429 incident was resolved without
+    // giving back the deadline guarantee #68 bought.
+    //
+    // LOCAL DEV CAVEAT: a developer machine has been seen taking 12.5s on
+    // YieldBlox, which exceeds this cap — a local `pnpm indexer` may now time out
+    // and retry where it used to succeed first time. Raise it in .env if that
+    // bites; production is the case this default is sized for.
+    attemptTimeoutMs: optionalPositiveInt('STENION_ATTEMPT_TIMEOUT_MS', 10_000),
     // 42s, not the 48s the arithmetic alone allows: there are no observed cycle
     // durations from the deployed function yet, so this errs toward the ceiling
     // being safe. Raise it once the Vercel logs show real headroom.
     cycleBudgetMs: optionalPositiveInt('STENION_CYCLE_BUDGET_MS', 42_000),
-    // 2, not the target count. Each target's deadline no longer depends on how
-    // many targets there are (see cycle.ts `targetDeadline`), so concurrency is
-    // now purely a throughput-vs-RPC-pressure dial rather than a correctness
-    // one. At 2 the peak in-flight request count doubles and then stays there
-    // however large the registry grows; unbounded fan-out would make it grow
-    // with every pool registered. Feasibility at a given target count is
-    // checked and logged per cycle — see `cycleFeasibility`.
-    cycleConcurrency: optionalPositiveInt('STENION_CYCLE_CONCURRENCY', 2),
+    // 1. This shipped as 2 and was reverted to 1 the same day, on measurement:
+    // concurrency 2 drew sustained `429`s from mainnet.sorobanrpc.com, the free
+    // shared public endpoint (blend failed 3 of 7 clean cycles against 0 of 105
+    // target-runs before the change). The full incident is in ARCHITECTURE.md and
+    // must be read before raising this again.
+    //
+    // The root cause is RATE, not peak. Peak in-flight only went 1 -> 2, but the
+    // deployed function is 2-3x faster than the developer machine the original
+    // estimate was computed from, so two concurrent targets issue ~45 requests in
+    // ~4s — about 11/second — and the target running behind that burst is the one
+    // that gets refused.
+    //
+    // Dropping to 1 costs nothing structural: each target's deadline no longer
+    // depends on the target count either way (see cycle.ts `targetDeadline`), so
+    // this is a throughput-vs-RPC-pressure dial and not a correctness one. The
+    // budget-division bug #68 fixed does NOT come back at 1.
+    cycleConcurrency: optionalPositiveInt('STENION_CYCLE_CONCURRENCY', 1),
     // 4 cycles ≈ 20 minutes at the 5-minute cadence. One blip must not page
     // anyone, and a score 20 minutes stale is not an emergency — false pages are
     // how people learn to ignore alerts.
