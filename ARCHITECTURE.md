@@ -200,19 +200,70 @@ still recorded as `failed` — a protocol that is genuinely down still shows as 
 - **The 60s ceiling is the binding constraint.** `maxDuration` is capped at 60 on Vercel's Hobby
   tier and cannot be raised, and a cycle killed mid-flight is worse than one that fails cleanly — it
   can leave one protocol scored and the other neither scored nor recorded as failed. The run loop's
-  budget (`STENION_CYCLE_BUDGET_MS`, default 42s) is divided **per protocol**, as a share of what is
-  left rather than a fixed split, so one protocol failing cannot spend the other's retries while a
-  protocol that finishes early hands its slack on. Worst-case cycle ≈ 42s in the run loop plus cold
-  start, pool connect, upserts, streak queries and a 3s-capped alert POST — comfortably inside 60s.
-  Measured live `fetchRawData` on 2026-08-19: Blend 6.0–7.5s, Kinetic 7.7–10.5s, YieldBlox
-  8.1–12.5s; three sequential targets totalled 24.5–26.9s against the 42s budget.
+  budget is `STENION_CYCLE_BUDGET_MS`, default 42s, leaving room for cold start, pool connect,
+  upserts, streak queries and a 3s-capped alert POST inside 60s.
 
-  **At three targets the first share is 14s, below the 15s attempt timeout.** A first attempt that
-  runs to that cap leaves nothing for a retry, so slow-failure retries are gone for whichever target
-  runs first (fast failures — the common RPC 429/5xx case — still retry with ~12s left). Blend runs
-  first because it is the fastest and most likely to hand slack on. This is the ceiling
-  [`ROADMAP.md`](ROADMAP.md) describes, reached at three targets rather than the four it previously
-  predicted; the fix is concurrency, not a bigger budget, and it is not done here.
+- **Targets run through a bounded worker pool, and the budget is no longer divided between them.**
+  `STENION_CYCLE_CONCURRENCY` (default **2**) targets are in flight at once, pulled from a shared
+  cursor rather than run in fixed batches. Each one's deadline is the end of the budget **minus one
+  full attempt reserved for every wave still queued behind it** (`targetDeadline` in
+  `indexer/src/cycle.ts`).
+
+  **Why the division rule was removed.** It used to be `now + remaining / targetsLeft`, which made
+  every target's deadline a function of how many targets existed: 21s each at two, 14s at three
+  (already below the 15s attempt timeout), and 10.5s at four — **below the healthy fetch duration of
+  two protocols that already work**. Registering a pool could therefore fail protocols that were
+  fine the day before. That is not "adding a pool makes things slower", it is a bug, and no
+  allocation scheme fixes it: at concurrency 1 the registry cannot give three targets one full
+  attempt each inside 42s, whatever the rule.
+
+  **What the new rule guarantees.** Every target gets **at least one full 15s attempt** at any
+  feasible target count — comfortably above the 12.5s slowest observed healthy fetch — and usually
+  far more, because `queuedAfter` is read when a worker picks a target up, so a target that finished
+  early has already shortened the queue and the next one inherits the slack. A target still cannot
+  eat the queue's last chance to be looked at, which is the guarantee the old even division was
+  really buying.
+
+  **The ceiling, as arithmetic rather than folklore:**
+
+  ```
+  ceil(targetCount / STENION_CYCLE_CONCURRENCY) * STENION_ATTEMPT_TIMEOUT_MS <= STENION_CYCLE_BUDGET_MS
+  ```
+
+  At the shipped defaults that holds to **four targets** and fails at five. `cycleFeasibility()`
+  checks it every cycle and at indexer startup, and logs a `[budget]` warning naming the numbers and
+  the levers (raise concurrency, lower the attempt timeout, or shard). It **warns and runs** rather
+  than refusing — taking the whole registry down because someone registered a fifth pool is worse
+  than running five protocols imperfectly and saying so. Past the ceiling it degrades to whole
+  attempts on a first-come basis with the tail failing cleanly (`DeadlineExceededError`) and going
+  visibly stale on `/api/v1/health`, rather than squeezing every target into a length at which none
+  of them can succeed.
+
+- **Concurrency is bounded because the peak is what costs.** Both adapters are strictly sequential
+  internally — every RPC and Horizon call is a bare `await` — so **one target in flight is exactly
+  one request in flight**, and `STENION_CYCLE_CONCURRENCY` _is_ the peak simultaneous load Stenion
+  puts on the shared, rate-limited public RPC. At 2 that peak doubles (from 1) and then stays there
+  however large the registry grows; a `Promise.allSettled` over every target would instead make the
+  peak grow with every pool registered. Total request volume per cycle is unchanged either way —
+  roughly 13 (Blend Fixed, 3 reserves), 23 (YieldBlox, 8) and 22 (Kinetic, 4) — so what concurrency
+  actually changes is the rate, from ~2.3/s to ~4.5/s.
+
+- **Targets are ordered slowest-first** (`orderByLatency` in `indexer/src/index.ts`:
+  YieldBlox → Kinetic → Blend). Under a worker pool, longest-processing-time-first minimises the
+  makespan: a slow target started last is a slow target nothing can overlap with. This is the
+  opposite of the old fastest-first order, which was correct only because the old division rule gave
+  the first target the tightest share and later ones the inherited slack. **A target not in the list
+  sorts first**, i.e. an unmeasured pool is assumed to be the slowest and gets the most generous
+  slot — so `BLEND_POOLS` stays the single list to edit when adding a market.
+
+- **Per-target `durationMs` and whole-cycle `totalMs` ride on the cycle summary**, which the cron
+  route spreads into its JSON response. That is deliberate: the budget arithmetic above can only be
+  validated on Vercel's path to the RPC, and a developer machine's path is not that. `curl`ing the
+  cron route returns the real measurements.
+
+  Measured live `fetchRawData` from a **developer machine** on 2026-08-19: Blend 6.0–7.5s, Kinetic
+  7.7–10.5s, YieldBlox 8.1–12.5s; three sequential targets totalled 24.5–26.9s. Deployed-function
+  numbers are pending the first post-deploy `curl`.
 
 - **The attempt timeout is soft.** It races the attempt against a timer, abandoning the in-flight
   work rather than cancelling it. That bounds the observed attempt duration, which is what the
@@ -490,8 +541,12 @@ The worked examples:
   failed run and continues; `risk_scores` has **never** held a failed row (1,683 rows as of
   2026-08-16, and truncated on 2026-08-19), so nothing about this path is evidenced by it having run
   in production. Also covers retry inside the loop (a transient failure clearing on a later attempt;
-  an exhausted retry still recording `failed` with the adapter's own message), the per-protocol
-  budget share, and alerting against a **seeded** failure streak — including the case that matters
+  an exhausted retry still recording `failed` with the adapter's own message), the budget rule
+  (`targetDeadline` never dropping a target below one full attempt at any feasible target count, and
+  `cycleFeasibility` holding at four targets and failing at five), the worker pool (peak in-flight
+  bounded, results ordered by registration however completion is ordered, a failure isolated to its
+  own target while another is mid-flight), and alerting against a **seeded** failure streak —
+  including the case that matters
   most now, that an empty history raises nothing on the first cycle.
 - **`indexer/src/retry.test.ts`** — the backoff schedule and the deadline, driven by a fake clock so
   the timing is asserted rather than waited on. Pins the two properties the design rests on: it
@@ -509,7 +564,8 @@ The worked examples:
 
 **Environment variables** (all on the one Vercel project, Production + Preview): `DATABASE_URL`
 (Neon pooled), `STENION_RPC_URL`, `STENION_HORIZON_URL`, `CRON_SECRET`, and optionally
-`STENION_ALERT_WEBHOOK_URL` (failure/recovery alerts; unset = alerting off). The retry and
+`STENION_ALERT_WEBHOOK_URL` (failure/recovery alerts; unset = alerting off) and
+`STENION_CYCLE_CONCURRENCY` (targets in flight at once; default 2). The retry and
 threshold knobs — `STENION_RETRY_ATTEMPTS`, `STENION_RETRY_BASE_DELAY_MS`,
 `STENION_ATTEMPT_TIMEOUT_MS`, `STENION_CYCLE_BUDGET_MS`, `STENION_ALERT_THRESHOLD` — all have
 defaults and only need setting to override them; every one is documented in `.env.example`.
@@ -568,12 +624,12 @@ leaderboard ids as a defensive dedupe guard; the one-hour bound limits how long 
 reciprocal cleanup could leave an entry cached after it becomes scorable. A deployment replaces the
 static records and invalidates the old deployment's cache.
 
-| Constant                   | Value | Why                                                                                                                                                                                                                    |
-| -------------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `INDEXER_INTERVAL_SECONDS` | 300   | The cron-job.org cadence; observed median `run_at` spacing is 4m59s.                                                                                                                                                   |
-| `CYCLE_JITTER_SECONDS`     | 45    | `run_at` is stamped when a protocol's _turn_ begins, not when cron fires, so its spacing shifts by however much the protocols ahead of it sped up or slowed down — bounded by `STENION_CYCLE_BUDGET_MS` (default 42s). |
-| `MAX_TTL_SECONDS`          | 45    | Blast radius, not load. See below.                                                                                                                                                                                     |
-| `MIN_TTL_SECONDS`          | 10    | Floor, so the moment around a landing run isn't an uncached hole every client stampedes through.                                                                                                                       |
+| Constant                   | Value | Why                                                                                                                                                                                                                                                                                                                           |
+| -------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `INDEXER_INTERVAL_SECONDS` | 300   | The cron-job.org cadence; observed median `run_at` spacing is 4m59s.                                                                                                                                                                                                                                                          |
+| `CYCLE_JITTER_SECONDS`     | 45    | `run_at` is stamped when a protocol's _turn_ begins, not when cron fires, so its spacing shifts by however much the protocols ahead of it sped up or slowed down — bounded by `STENION_CYCLE_BUDGET_MS` (default 42s). Concurrency only shrinks this (targets sharing a wave start together), so it stays a safe upper bound. |
+| `MAX_TTL_SECONDS`          | 45    | Blast radius, not load. See below.                                                                                                                                                                                                                                                                                            |
+| `MIN_TTL_SECONDS`          | 10    | Floor, so the moment around a landing run isn't an uncached hole every client stampedes through.                                                                                                                                                                                                                              |
 
 The deadline is `lastRunAt + 300 − 45 = lastRunAt + 255`, clamped into `[10, 45]`. On a leaderboard
 response every protocol's `lastRunAt` counts and the tightest deadline wins, because any of them

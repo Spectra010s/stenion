@@ -15,7 +15,17 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 
-import { runCycle, toTarget, type CycleOptions, type IndexTarget } from './cycle.ts';
+import {
+  cycleFeasibility,
+  cycleWaves,
+  feasibilityWarning,
+  orderByLatency,
+  runCycle,
+  targetDeadline,
+  toTarget,
+  type CycleOptions,
+  type IndexTarget,
+} from './cycle.ts';
 import type { StreakAlert } from './alerts.ts';
 import { OperationalLevel } from '@stenion/core';
 import type {
@@ -151,6 +161,7 @@ beforeEach(() => {
   logs = [];
   console.log = (...a: unknown[]) => void logs.push(a.join(' '));
   console.error = (...a: unknown[]) => void logs.push(a.join(' '));
+  console.warn = (...a: unknown[]) => void logs.push(a.join(' '));
 });
 
 // ---------------------------------------------------------------------------
@@ -222,13 +233,20 @@ describe('runCycle — one failure never affects another protocol', () => {
     assert.equal(summary.ran, 3);
     assert.equal(summary.ok, 2);
     assert.equal(summary.failed, 1);
+    // Sorted, because targets run concurrently and the DB writes genuinely
+    // interleave — write ORDER is not a property of this cycle and asserting it
+    // would be asserting the scheduler's internals. What must hold is that every
+    // target got written, with its own outcome. The ORDERED thing is
+    // `summary.results`, asserted separately.
+    assert.deepEqual(written.map((r) => [r.protocolId, r.status]).sort(), [
+      ['alpha', 'ok'],
+      ['beta', 'failed'],
+      ['gamma', 'ok'],
+    ]);
     assert.deepEqual(
-      written.map((r) => [r.protocolId, r.status]),
-      [
-        ['alpha', 'ok'],
-        ['beta', 'failed'],
-        ['gamma', 'ok'],
-      ],
+      summary.results.map((r) => r.id),
+      ['alpha', 'beta', 'gamma'],
+      'the summary reads in registration order regardless of who finished first',
     );
   });
 
@@ -263,7 +281,9 @@ describe('runCycle — one failure never affects another protocol', () => {
   it('returns an empty summary for no targets', async () => {
     const { store } = fakeStore();
     const summary = await runCycle([], store);
-    assert.deepEqual(summary, { ran: 0, ok: 0, failed: 0, results: [] });
+    const { totalMs, ...rest } = summary;
+    assert.deepEqual(rest, { ran: 0, ok: 0, failed: 0, results: [] });
+    assert.equal(typeof totalMs, 'number');
   });
 });
 
@@ -288,9 +308,9 @@ describe('runCycle — a database failure does not abort the cycle', () => {
     // misattribute an infrastructure problem to the protocol.
     const { store } = fakeStore({ failWrites: true });
     const summary = await runCycle([okTarget('alpha', 61)], store);
-    assert.deepEqual(summary.results, [
-      { id: 'alpha', status: 'ok', safetyScore: 61, attempts: 1 },
-    ]);
+    const [{ durationMs, ...result }] = summary.results;
+    assert.deepEqual(result, { id: 'alpha', status: 'ok', safetyScore: 61, attempts: 1 });
+    assert.equal(typeof durationMs, 'number');
   });
 });
 
@@ -519,11 +539,149 @@ describe('runCycle — retry never hides a real failure', () => {
   });
 });
 
+describe('cycleWaves + cycleFeasibility — the ceiling is arithmetic, not folklore', () => {
+  it('counts waves as ceil(targets / concurrency)', () => {
+    assert.equal(cycleWaves(0, 2), 0);
+    assert.equal(cycleWaves(1, 2), 1);
+    assert.equal(cycleWaves(4, 2), 2);
+    assert.equal(cycleWaves(5, 2), 3);
+    // Nonsense inputs must not produce a negative reservation, which would hand
+    // a target MORE than the budget.
+    assert.equal(cycleWaves(-3, 2), 0);
+    assert.equal(cycleWaves(4, 0), 4);
+  });
+
+  it('holds at four targets and fails at five, on the shipped defaults', () => {
+    // This is the number the whole change exists to make checkable. 42s budget,
+    // 15s attempt timeout, 2 at a time.
+    const at = (targetCount: number) =>
+      cycleFeasibility({ targetCount, concurrency: 2, attemptTimeoutMs: 15_000, budgetMs: 42_000 });
+
+    assert.equal(at(3).feasible, true);
+    assert.equal(at(4).feasible, true, 'four targets is the point of this change — it must fit');
+    assert.equal(at(5).feasible, false);
+    assert.deepEqual(
+      { waves: at(5).waves, requiredMs: at(5).requiredMs },
+      { waves: 3, requiredMs: 45_000 },
+      'five targets needs 45s of attempts against a 42s budget',
+    );
+  });
+
+  it('shows that a SEQUENTIAL loop could not have held three, let alone four', () => {
+    // Why concurrency rather than a cleverer division rule: at concurrency 1 the
+    // registry as it stands today already cannot give every target one full
+    // attempt. No allocation scheme fixes that — there is not enough wall clock.
+    const seq = (targetCount: number) =>
+      cycleFeasibility({ targetCount, concurrency: 1, attemptTimeoutMs: 15_000, budgetMs: 42_000 });
+    assert.equal(seq(2).feasible, true);
+    assert.equal(seq(3).feasible, false);
+  });
+
+  it('has nothing to say when there is no bound to check', () => {
+    // An unbounded attempt or budget makes the question meaningless rather than
+    // failed — a caller passing no retry policy must not be warned at.
+    const f = cycleFeasibility({
+      targetCount: 99,
+      concurrency: 1,
+      attemptTimeoutMs: Number.POSITIVE_INFINITY,
+      budgetMs: Number.POSITIVE_INFINITY,
+    });
+    assert.equal(f.feasible, true);
+    assert.equal(feasibilityWarning(f, 99), null);
+  });
+
+  it('names the actual numbers in the warning, and the levers', () => {
+    const f = cycleFeasibility({
+      targetCount: 5,
+      concurrency: 2,
+      attemptTimeoutMs: 15_000,
+      budgetMs: 42_000,
+    });
+    const warning = feasibilityWarning(f, 5);
+    assert.ok(warning, 'an infeasible cycle must warn');
+    for (const fragment of ['5 targets', '45000ms', '42000ms', 'STENION_CYCLE_CONCURRENCY']) {
+      assert.ok(warning.includes(fragment), `the warning should mention ${fragment}: ${warning}`);
+    }
+  });
+});
+
+describe('targetDeadline — a deadline that does not collapse as targets are added', () => {
+  const BUDGET_ENDS_AT = 42_000;
+  const base = { budgetEndsAt: BUDGET_ENDS_AT, now: 0, concurrency: 2, attemptTimeoutMs: 15_000 };
+
+  it('guarantees every target one full attempt at any feasible target count', () => {
+    // THE REGRESSION THIS PINS. Under the old rule the first target's deadline
+    // was budgetMs / targetCount: 14s at three targets and 10.5s at four — and
+    // 10.5s is below the *healthy* fetch duration of Kinetic (7.7-10.5s) and
+    // YieldBlox (8.1-12.5s). Registering a pool could therefore fail protocols
+    // that already worked. Whatever else changes, that must never come back.
+    for (const targetCount of [1, 2, 3, 4]) {
+      const deadline = targetDeadline({ ...base, queuedAfter: targetCount - 1 });
+      assert.ok(
+        deadline >= base.attemptTimeoutMs,
+        `at ${targetCount} targets the first deadline was ${deadline}ms, ` +
+          `below one ${base.attemptTimeoutMs}ms attempt`,
+      );
+      const evenShare = BUDGET_ENDS_AT / targetCount;
+      assert.ok(
+        deadline >= evenShare,
+        `at ${targetCount} targets the new rule (${deadline}ms) must not be worse ` +
+          `than the even division it replaced (${evenShare}ms)`,
+      );
+    }
+  });
+
+  it('clears the slowest observed healthy fetch at four targets, where the old rule did not', () => {
+    // ARCHITECTURE.md, measured 2026-08-19: the slowest healthy fetch is
+    // YieldBlox at 12.5s. The old rule gave the first of four targets 10.5s.
+    const SLOWEST_HEALTHY_MS = 12_500;
+    const deadline = targetDeadline({ ...base, queuedAfter: 3 });
+    assert.ok(deadline >= SLOWEST_HEALTHY_MS, `${deadline}ms would cut off a HEALTHY YieldBlox`);
+    assert.ok(42_000 / 4 < SLOWEST_HEALTHY_MS, 'the old rule really was below it');
+  });
+
+  it('hands slack on when the queue drains, rather than planning it up front', () => {
+    // The one property of the old rule worth keeping: `queuedAfter` is read when
+    // a worker picks a target up, so a target that finished early has already
+    // shortened the queue and the next one sees a longer deadline for free.
+    const withQueue = targetDeadline({ ...base, now: 8_000, queuedAfter: 2 });
+    const drained = targetDeadline({ ...base, now: 8_000, queuedAfter: 0 });
+    assert.ok(drained > withQueue);
+    assert.equal(drained, BUDGET_ENDS_AT, 'the last target may use the whole remaining budget');
+  });
+
+  it('reserves nothing when the attempt timeout is unbounded', () => {
+    // The no-retry default. A caller that passes no policy gets the whole budget,
+    // exactly as it did before any of this existed.
+    assert.equal(
+      targetDeadline({ ...base, queuedAfter: 5, attemptTimeoutMs: Number.POSITIVE_INFINITY }),
+      BUDGET_ENDS_AT,
+    );
+  });
+
+  it('degrades past the ceiling to whole attempts first-come, not a squeeze for everyone', () => {
+    // Five targets at concurrency 2 is infeasible (45s of attempts, 42s budget).
+    // The wrong answer is 8.4s each — a length at which nothing can succeed. The
+    // right one is full attempts while the clock allows and a clean, visible
+    // failure for the tail.
+    const first = targetDeadline({ ...base, queuedAfter: 4 });
+    assert.equal(first, base.attemptTimeoutMs, 'still a whole attempt, not a fifth of the budget');
+  });
+
+  it('grants nothing once the budget is genuinely spent', () => {
+    // A target picked up after an earlier one overran its soft timeout must fail
+    // fast rather than start work the 60s function cannot finish.
+    const deadline = targetDeadline({ ...base, now: 100_000, queuedAfter: 0 });
+    assert.ok(deadline <= 100_000, 'a blown budget must not be topped back up by the floor');
+  });
+});
+
 describe('runCycle — the cycle budget is a hard ceiling', () => {
-  it('lets one protocol exhaust its whole share without costing the other a turn', async () => {
-    // The requirement this pins: one protocol failing must not spend the other's
-    // budget. Blend burns all 21s of its half of a 42s budget across its
-    // retries; Kinetic must still get a full turn and score.
+  it('lets one protocol exhaust its deadline without costing the other a turn', async () => {
+    // The requirement this pins, unchanged from the old division rule: one
+    // protocol failing must not spend the other's budget. Concurrency 1 so the
+    // fake clock models real elapsed time — a shared mutable counter cannot
+    // represent two targets advancing it at once.
     let t = 0;
     const deps = { now: () => t, sleep: async (ms: number) => void (t += ms) };
     const { store, written } = fakeStore();
@@ -531,8 +689,10 @@ describe('runCycle — the cycle budget is a hard ceiling', () => {
     const blend: IndexTarget = {
       metadata: { id: 'blend', name: 'blend', chain: 'stellar', adapterRef: 'FakeAdapter' },
       run: async () => {
-        // Each attempt runs to its cap, as the soft timeout guarantees.
-        t += Math.min(15_000, 21_000 - (t % 21_000 || 0));
+        // Each attempt runs to its cap, as the SOFT timeout permits — it
+        // abandons the attempt rather than cancelling it, so an attempt can and
+        // does overrun the remaining budget.
+        t += 15_000;
         throw new Error('hung rpc');
       },
     };
@@ -540,11 +700,12 @@ describe('runCycle — the cycle budget is a hard ceiling', () => {
     const summary = await runCycle([blend, okTarget('kinetic', 24)], store, {
       retry: { attempts: 3, baseDelayMs: 1000, attemptTimeoutMs: 15_000, minAttemptMs: 1000 },
       budgetMs: 42_000,
+      concurrency: 1,
       deps,
     });
 
     assert.equal(summary.failed, 1);
-    assert.equal(summary.ok, 1, 'kinetic still ran after blend spent its entire share');
+    assert.equal(summary.ok, 1, 'kinetic still ran after blend spent its entire deadline');
     assert.deepEqual(
       written.map((r) => [r.protocolId, r.status]),
       [
@@ -556,10 +717,10 @@ describe('runCycle — the cycle budget is a hard ceiling', () => {
   });
 
   it('fails a later protocol fast and cleanly if the budget is genuinely gone', async () => {
-    // If something overran far past its share, the 60s function is already lost.
-    // Starting work that will be killed mid-flight is the worst outcome — it can
-    // leave a protocol neither scored NOR recorded. Failing immediately at least
-    // writes an honest `failed` row that says we never got to look.
+    // If something overran far past its deadline, the 60s function is already
+    // lost. Starting work that will be killed mid-flight is the worst outcome —
+    // it can leave a protocol neither scored NOR recorded. Failing immediately at
+    // least writes an honest `failed` row that says we never got to look.
     let t = 0;
     const deps = { now: () => t, sleep: async (ms: number) => void (t += ms) };
     const { store, written } = fakeStore();
@@ -588,6 +749,7 @@ describe('runCycle — the cycle budget is a hard ceiling', () => {
     const summary = await runCycle([runaway, kinetic], store, {
       retry: { attempts: 3, baseDelayMs: 1000, attemptTimeoutMs: 15_000, minAttemptMs: 1000 },
       budgetMs: 42_000,
+      concurrency: 1,
       deps,
     });
 
@@ -607,7 +769,7 @@ describe('runCycle — the cycle budget is a hard ceiling', () => {
     );
   });
 
-  it('stops retrying a protocol once its share of the budget is spent', async () => {
+  it('stops retrying a protocol once its deadline is spent', async () => {
     let t = 0;
     const deps = { now: () => t, sleep: async (ms: number) => void (t += ms) };
     const { store } = fakeStore();
@@ -624,13 +786,294 @@ describe('runCycle — the cycle budget is a hard ceiling', () => {
     await runCycle([slow, okTarget('kinetic')], store, {
       retry: { attempts: 3, baseDelayMs: 1000, attemptTimeoutMs: 15_000, minAttemptMs: 1000 },
       budgetMs: 42_000,
+      concurrency: 1,
       deps,
     });
 
-    // Blend's share is 21s. One 15s attempt leaves 6s; after the 1s backoff, 5s
-    // remains, so a second attempt starts and consumes it. The third has nothing.
+    // Blend's deadline is 42s less one 15s attempt reserved for the target still
+    // queued behind it = 27s. One 15s attempt leaves 12s; after the 1s backoff a
+    // second starts and (soft timeout) overruns to 31s. The third has nothing.
     assert.equal(calls, 2, 'the third attempt the policy allows had no budget');
     assert.ok(t <= 42_000, `the run loop stayed inside its budget (ended at ${t}ms)`);
+  });
+
+  it('warns, rather than refusing to run, when the registry outgrows the budget', async () => {
+    // Refusing would take the whole registry down over a config question. Five
+    // targets at concurrency 2 is infeasible; all five must still be attempted.
+    const { store } = fakeStore();
+    const summary = await runCycle(
+      ['a', 'b', 'c', 'd', 'e'].map((id) => okTarget(id)),
+      store,
+      {
+        retry: { attempts: 1, baseDelayMs: 0, attemptTimeoutMs: 15_000 },
+        budgetMs: 42_000,
+        concurrency: 2,
+      },
+    );
+
+    assert.equal(summary.ok, 5, 'an infeasible budget is a warning, never a refusal to run');
+    assert.ok(
+      logs.some((l) => l.includes('[budget]') && l.includes('STENION_CYCLE_CONCURRENCY')),
+      `the cycle must say so out loud; logs were: ${logs.join(' | ')}`,
+    );
+  });
+
+  it('reports per-target and whole-cycle durations, so the budget can be checked in production', () => {
+    // Not a behaviour test — a plumbing one. These numbers are the ONLY way the
+    // arithmetic above gets validated against Vercel's path to the RPC rather
+    // than a developer machine's, because the cron route spreads this summary
+    // into its JSON response.
+    return (async () => {
+      let t = 0;
+      const deps = { now: () => t, sleep: async (ms: number) => void (t += ms) };
+      const { store } = fakeStore();
+      const slow: IndexTarget = {
+        metadata: { id: 'slow', name: 'slow', chain: 'stellar', adapterRef: 'FakeAdapter' },
+        run: async () => {
+          t += 9_000;
+          return {
+            safetyScore: 40,
+            factors: FACTORS,
+            operationalState: OPERATIONAL_STATE,
+            computedAt: COMPUTED_AT,
+          };
+        },
+      };
+
+      const summary = await runCycle([slow, okTarget('fast')], store, {
+        budgetMs: 42_000,
+        concurrency: 1,
+        deps,
+      });
+
+      assert.equal(summary.results[0].durationMs, 9_000);
+      assert.equal(summary.results[1].durationMs, 0);
+      assert.equal(summary.totalMs, 9_000);
+    })();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Concurrency
+//
+// These use real promises rather than the fake clock. A fake clock is a shared
+// mutable counter, and a shared mutable counter cannot represent two targets
+// elapsing time simultaneously — driving concurrency with one would test the
+// counter, not the pool. What matters here is not WHEN things happen but what
+// is true regardless of when: the peak is bounded, the output is ordered, and
+// nothing leaks between targets.
+// ---------------------------------------------------------------------------
+
+/** A target whose completion the test controls. */
+function deferredTarget(id: string, safetyScore = 50) {
+  let settle!: (fail?: unknown) => void;
+  const gate = new Promise<void>((resolve, reject) => {
+    settle = (fail?: unknown) => (fail === undefined ? resolve() : reject(fail));
+  });
+  let started = false;
+  const target: IndexTarget = {
+    metadata: { id, name: id, chain: 'stellar', adapterRef: 'FakeAdapter' },
+    run: async () => {
+      started = true;
+      await gate;
+      return {
+        safetyScore,
+        factors: FACTORS,
+        operationalState: OPERATIONAL_STATE,
+        computedAt: COMPUTED_AT,
+      };
+    },
+  };
+  return {
+    target,
+    finish: () => settle(),
+    fail: (e: unknown) => settle(e),
+    hasStarted: () => started,
+  };
+}
+
+describe('orderByLatency — slowest first, because the pool overlaps the rest', () => {
+  const ids = (targets: IndexTarget[]) => targets.map((t) => t.metadata.id);
+
+  it('puts the slowest measured target first and the fastest last', () => {
+    // The order the indexer actually registers them in is BLEND_POOLS order
+    // (blend, yieldblox) then kinetic. Measured durations put YieldBlox slowest.
+    const ordered = orderByLatency(['blend', 'yieldblox', 'kinetic'].map((id) => okTarget(id)));
+    assert.deepEqual(ids(ordered), ['yieldblox', 'kinetic', 'blend']);
+  });
+
+  it('is the OPPOSITE of the order it replaced, and that is the point', () => {
+    // Fastest-first was correct only under the budget-division rule, where the
+    // first target got the tightest share. Under a worker pool a slow target
+    // started last is a slow target nothing can overlap with.
+    const ordered = orderByLatency(['blend', 'yieldblox', 'kinetic'].map((id) => okTarget(id)));
+    assert.notDeepEqual(ids(ordered), ['blend', 'yieldblox', 'kinetic']);
+    assert.equal(ids(ordered)[0], 'yieldblox', 'the slowest adapter leads');
+  });
+
+  it('treats an unmeasured target as the slowest, so a new pool is not squeezed', () => {
+    // A pool registered in BLEND_POOLS that nobody has timed yet must not land
+    // in the worst slot by default. Assumed-slowest is the conservative reading.
+    const ordered = orderByLatency(
+      ['blend', 'etherfuse', 'kinetic', 'yieldblox'].map((id) => okTarget(id)),
+    );
+    assert.equal(ids(ordered)[0], 'etherfuse');
+  });
+
+  it('keeps registration order between equally-ranked targets', () => {
+    // Two unmeasured pools stay in BLEND_POOLS order rather than being
+    // rearranged by a sort that had nothing to say about them.
+    const ordered = orderByLatency(['new-a', 'new-b'].map((id) => okTarget(id)));
+    assert.deepEqual(ids(ordered), ['new-a', 'new-b']);
+  });
+
+  it('does not mutate the list it was given', () => {
+    const targets = ['blend', 'yieldblox'].map((id) => okTarget(id));
+    orderByLatency(targets);
+    assert.deepEqual(ids(targets), ['blend', 'yieldblox']);
+  });
+});
+
+describe('runCycle — bounded concurrency', () => {
+  it('never has more than `concurrency` targets in flight', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const { store } = fakeStore();
+    const targets: IndexTarget[] = Array.from({ length: 6 }, (_, i) => ({
+      metadata: { id: `p${i}`, name: `p${i}`, chain: 'stellar', adapterRef: 'FakeAdapter' },
+      run: async () => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        // Two turns of the event loop, so an unbounded implementation would have
+        // every target in flight at once by the time the first one resumes.
+        await Promise.resolve();
+        await Promise.resolve();
+        inFlight--;
+        return {
+          safetyScore: 50,
+          factors: FACTORS,
+          operationalState: OPERATIONAL_STATE,
+          computedAt: COMPUTED_AT,
+        };
+      },
+    }));
+
+    const summary = await runCycle(targets, store, { concurrency: 2 });
+
+    assert.equal(summary.ok, 6);
+    assert.equal(peak, 2, `peak in-flight was ${peak}, not the configured 2`);
+  });
+
+  it('really does overlap — the second target starts before the first finishes', async () => {
+    const { store } = fakeStore();
+    const a = deferredTarget('a');
+    const b = deferredTarget('b');
+    const cycle = runCycle([a.target, b.target], store, { concurrency: 2 });
+
+    // Let the pool start both. Neither has been allowed to complete.
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.ok(a.hasStarted() && b.hasStarted(), 'both targets should be in flight');
+
+    a.finish();
+    b.finish();
+    assert.equal((await cycle).ok, 2);
+  });
+
+  it('holds the third target back until a worker frees up', async () => {
+    const { store } = fakeStore();
+    const [a, b, c] = ['a', 'b', 'c'].map((id) => deferredTarget(id));
+    const cycle = runCycle([a.target, b.target, c.target], store, { concurrency: 2 });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(c.hasStarted(), false, 'the third target must wait for a free worker');
+
+    a.finish();
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(c.hasStarted(), true, 'and start as soon as one frees up');
+
+    b.finish();
+    c.finish();
+    assert.equal((await cycle).ok, 3);
+  });
+
+  it('keeps results in registration order however completion is ordered', async () => {
+    const { store } = fakeStore();
+    const a = deferredTarget('alpha', 11);
+    const b = deferredTarget('beta', 22);
+    const cycle = runCycle([a.target, b.target], store, { concurrency: 2 });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    // Finish in the opposite order to registration.
+    b.finish();
+    await new Promise((r) => setTimeout(r, 0));
+    a.finish();
+
+    const summary = await cycle;
+    assert.deepEqual(
+      summary.results.map((r) => [r.id, r.safetyScore]),
+      [
+        ['alpha', 11],
+        ['beta', 22],
+      ],
+      'a summary that reorders itself by whoever the RPC answered first is undiffable',
+    );
+  });
+
+  it('keeps a batched alert in registration order however completion is ordered', async () => {
+    // The one-POST-per-cycle aggregation is asserted elsewhere; what is at stake
+    // here is that its BODY does not reshuffle itself between cycles according to
+    // which protocol the RPC happened to answer first. An alert that renders its
+    // protocols in a different order each time is one nobody can diff.
+    const { store } = fakeStore({ history: { alpha: failedRuns(3), beta: failedRuns(3) } });
+    const { notifier, batches } = fakeNotifier();
+    const a = deferredTarget('alpha');
+    const b = deferredTarget('beta');
+
+    const cycle = runCycle([a.target, b.target], store, alerting({ notifier, concurrency: 2 }));
+    await Promise.resolve();
+    await Promise.resolve();
+    // beta crosses its threshold first; alpha finishes second.
+    b.fail(new Error('Soroban RPC unreachable'));
+    await new Promise((r) => setTimeout(r, 0));
+    a.fail(new Error('Soroban RPC unreachable'));
+
+    const summary = await cycle;
+    assert.equal(batches.length, 1, 'still one POST for the cycle');
+    assert.deepEqual(
+      batches[0].map((al) => al.protocolId),
+      ['alpha', 'beta'],
+    );
+    assert.deepEqual(
+      summary.alerts?.map((al) => al.protocolId),
+      ['alpha', 'beta'],
+    );
+  });
+
+  it('isolates a failure to its own target while another is mid-flight', async () => {
+    const { store, written } = fakeStore();
+    const a = deferredTarget('alpha', 11);
+    const b = deferredTarget('beta', 22);
+    const cycle = runCycle([a.target, b.target], store, { concurrency: 2 });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    a.fail(new Error('Soroban RPC unreachable'));
+    await new Promise((r) => setTimeout(r, 0));
+    b.finish();
+
+    const summary = await cycle;
+    assert.deepEqual(
+      summary.results.map((r) => [r.id, r.status]),
+      [
+        ['alpha', 'failed'],
+        ['beta', 'ok'],
+      ],
+    );
+    const beta = written.find((r) => r.protocolId === 'beta');
+    assert.ok(beta && beta.status === 'ok' && beta.safetyScore === 22);
   });
 });
 

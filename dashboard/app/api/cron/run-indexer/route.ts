@@ -25,6 +25,11 @@ import { runIndexerCycle } from '@stenion/indexer';
 // to 60s (Vercel Hobby max) rather than the 10s default. The cycle's own
 // wall-clock budget (STENION_CYCLE_BUDGET_MS, 42s) is what keeps it inside this
 // ceiling; see ARCHITECTURE.md on why a budget rather than a fixed schedule.
+//
+// The summary this route returns carries per-target `durationMs` and a whole-cycle
+// `totalMs`. That is the ONLY honest way to check the budget arithmetic: it has to
+// be measured on Vercel's path to the RPC, and a developer machine's path is not
+// that one. `curl` this route after a deploy and read the numbers back.
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;

@@ -23,14 +23,35 @@ import { closePool, createStore, getPool, type Store } from '@stenion/db';
 
 import { webhookNotifier } from './alerts';
 import { ConfigError, loadConfig, type IndexerConfig } from './config';
-import { runCycle, toTarget, type CycleOptions, type IndexTarget } from './cycle';
+import {
+  cycleFeasibility,
+  feasibilityWarning,
+  orderByLatency,
+  runCycle,
+  toTarget,
+  type CycleOptions,
+  type IndexTarget,
+} from './cycle';
 
 // The run loop itself lives in ./cycle so it can be tested without this file's
 // CLI concerns (the require.main guard below is CommonJS-only). Re-exported here
 // because @stenion/indexer's entry point is this module — the package's public
 // surface is unchanged.
-export { runCycle, toTarget } from './cycle';
-export type { CycleOptions, CycleRunResult, CycleSummary, IndexTarget } from './cycle';
+export {
+  cycleFeasibility,
+  feasibilityWarning,
+  orderByLatency,
+  runCycle,
+  targetDeadline,
+  toTarget,
+} from './cycle';
+export type {
+  CycleFeasibility,
+  CycleOptions,
+  CycleRunResult,
+  CycleSummary,
+  IndexTarget,
+} from './cycle';
 export type { StreakAlert } from './alerts';
 import type { CycleSummary } from './cycle';
 
@@ -62,17 +83,9 @@ function buildTargets(config: IndexerConfig): IndexTarget[] {
     rpcUrl: config.rpcUrl,
     horizonUrl: config.horizonUrl,
   });
-  // NOTE ON ORDER, because it decides who gets squeezed. runCycle divides the
-  // budget REMAINING by the number of targets LEFT, so the first target gets
-  // exactly budgetMs/N and each later one inherits whatever slack the earlier
-  // ones did not spend. At three targets that first share is 14s against a 15s
-  // attempt timeout, so a first attempt that runs to its cap leaves nothing for
-  // a retry — the ceiling ROADMAP.md describes, reached one protocol earlier
-  // than it predicts. Blend leads because it has the fastest observed fetch
-  // (~6-7s against Kinetic's ~10-11s) and so is likeliest to hand its slack on
-  // rather than consume the tightest share; Kinetic sits last, where the
-  // remainder is largest. This is an ordering, not a fix — see ROADMAP.md.
-  return [...blend, toTarget(kinetic)];
+  // Slowest first — see `orderByLatency` in ./cycle for why that is the right
+  // way round under a worker pool, and why it used to be the other way.
+  return orderByLatency([...blend, toTarget(kinetic)]);
 }
 
 /**
@@ -108,6 +121,7 @@ function cycleOptions(config: IndexerConfig): CycleOptions {
       attemptTimeoutMs: config.attemptTimeoutMs,
     },
     budgetMs: config.cycleBudgetMs,
+    concurrency: config.cycleConcurrency,
     alertThreshold: config.alertThreshold,
     notifier: config.alertWebhookUrl ? webhookNotifier(config.alertWebhookUrl) : undefined,
   };
@@ -160,10 +174,24 @@ async function main(): Promise<void> {
   const { targets, store } = prepared;
 
   console.log(
-    `stenion indexer: ${targets.length} target(s), interval ${config.intervalMs}ms → Postgres` +
+    `stenion indexer: ${targets.length} target(s), ${config.cycleConcurrency} at a time, ` +
+      `interval ${config.intervalMs}ms → Postgres` +
       ` (up to ${config.retryAttempts} attempt(s)/protocol within a ${config.cycleBudgetMs}ms budget; ` +
       `alerting ${config.alertWebhookUrl ? `on after ${config.alertThreshold} consecutive failures` : 'off'})`,
   );
+  // The target-count ceiling, stated at startup rather than discovered by
+  // registering a pool and watching the last protocol fail. runCycle checks the
+  // same condition every cycle; this is the one a human reads first.
+  const warning = feasibilityWarning(
+    cycleFeasibility({
+      targetCount: targets.length,
+      concurrency: config.cycleConcurrency,
+      attemptTimeoutMs: config.attemptTimeoutMs,
+      budgetMs: config.cycleBudgetMs,
+    }),
+    targets.length,
+  );
+  if (warning) console.warn(warning);
   const options = cycleOptions(config);
   await runCycle(targets, store, options);
   if (config.runOnce) {
