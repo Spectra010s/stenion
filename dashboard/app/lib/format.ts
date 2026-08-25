@@ -2,7 +2,7 @@
 // components, and ./api is server-only. A type-only import would be erased
 // either way, but importing from the contract keeps that from being a footgun
 // the day someone needs a value from here.
-import type { RunStatus } from './contract';
+import type { OperationalLevel, RunStatus } from './contract';
 
 /** Compact ISO-ish timestamp → readable UTC, e.g. "2026-08-11 13:24 UTC". */
 export function formatTimestamp(iso: string | null): string {
@@ -145,6 +145,66 @@ export function freshnessPillClass(tone: FreshnessTone): string {
       return 'border-accent/40 bg-accent/10 text-accent-ink';
     default:
       return 'border-line bg-surface-2 text-faint';
+  }
+}
+
+/**
+ * Pill classes and wording for an operational level.
+ *
+ * NO SCORE BAND, EVER — the same non-negotiable that governs
+ * `freshnessPillClass` above, and for a sharper reason. `safe`/`warn`/`danger`
+ * mean risk level, and operational state is precisely the thing Stenion
+ * publishes WITHOUT grading: a pause can be an admin containing a threat or a
+ * market being abandoned, and nothing on chain tells the two apart
+ * (METHODOLOGY.md, "Operational state is published, never scored"). Dressing
+ * "withdrawals halted" in `danger` would make the page assert the verdict the
+ * methodology explicitly declines to reach. `format.test.ts` enforces this
+ * mechanically.
+ *
+ * Accent is out too: the dashboard already spends accent on freshness ("our data
+ * is old"), and a second accent-toned marker on the same row would blur a
+ * distinction that took work to draw.
+ *
+ * So prominence comes from WEIGHT, not hue. The two levels that constrain a
+ * reader's own capital — no new deposits, or no withdrawals at all — get ink
+ * text and a stronger border; the milder ones sit in the same quiet register as
+ * the deployment badge. The words do the work: "Withdrawals halted" is not a
+ * sentence a reader skims past because it is grey.
+ */
+export function operationalPillClass(level: OperationalLevel): string {
+  switch (level) {
+    case 'exitDisabled':
+    case 'entryDisabled':
+      return 'border-ink/30 bg-surface-2 text-ink';
+    default:
+      return 'border-line bg-surface-2 text-muted';
+  }
+}
+
+/**
+ * The label for an operational level, naming the RESTRICTION rather than the
+ * protocol's own term.
+ *
+ * A reader comparing two rows should not have to know that Blend says "On-Ice"
+ * and K2 says "paused" — those vocabularies do not map onto each other, which is
+ * the whole reason the shared level exists. Each protocol's own wording is still
+ * published verbatim in the state's `source` and `detail`.
+ *
+ * `active` deliberately has no label: nothing renders for it. Labelling the
+ * ordinary state turns the exception into noise, and an "all operations
+ * available" pill would read as a safety endorsement — exactly the claim this
+ * whole mechanism refuses to make.
+ */
+export function operationalLabel(level: Exclude<OperationalLevel, 'active'>): string {
+  switch (level) {
+    case 'borrowingDisabled':
+      return 'Borrowing disabled';
+    case 'entryDisabled':
+      return 'Deposits & borrowing disabled';
+    case 'exitDisabled':
+      return 'Withdrawals halted';
+    case 'notOperational':
+      return 'Never opened';
   }
 }
 

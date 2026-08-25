@@ -28,6 +28,9 @@ const scored = (id: string, name: string, safetyScore: number | null): Leaderboa
   deployedOn: null,
   safetyScore,
   computedAt: safetyScore === null ? null : '2026-08-21T00:00:00Z',
+  // Ordering must not depend on it: operational state is published beside a
+  // score, never folded into one, so it takes no part in sorting or ranking.
+  operationalState: null,
   lastRunAt: '2026-08-21T00:00:00Z',
   lastRunStatus: 'ok',
 });

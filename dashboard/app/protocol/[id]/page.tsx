@@ -23,6 +23,7 @@ import { formatTimestamp, freshness } from '../../lib/format';
 import { contractExplorerUrl, shortenContractId } from '../../lib/explorer';
 import { MarkAttribution, ProtocolLogo } from '../../../components/protocol-logo';
 import { DeploymentBadge, DeploymentNotice } from '../../../components/deployment-badge';
+import { OperationalBadge, OperationalNotice } from '../../../components/operational-badge';
 import { ScoreRing } from '../../../components/score-ring';
 import { StatusPill } from '../../../components/status-pill';
 import { FactorCard } from '../../../components/factor-bar';
@@ -86,6 +87,15 @@ export default async function ProtocolDetailPage({ params }: { params: Promise<{
       {detail.deployedOn && (
         <Reveal delay={0.07} className="mt-4">
           <DeploymentNotice deployedOn={detail.deployedOn} name={detail.name} />
+        </Reveal>
+      )}
+
+      {/* Same guard as DeploymentNotice above, and the same reason for the
+          wrapper: a restricted market has to be readable before the factor
+          breakdown, because the breakdown does not account for it. */}
+      {detail.operationalState && detail.operationalState.level !== 'active' && (
+        <Reveal delay={0.08} className="mt-4">
+          <OperationalNotice operationalState={detail.operationalState} name={detail.name} />
         </Reveal>
       )}
 
@@ -247,6 +257,10 @@ function Hero({ detail }: { detail: ProtocolDetail }) {
                 beside it (BlendAdapter on a page titled YieldBlox) otherwise
                 reads as a mistake rather than as the point. */}
             <DeploymentBadge deployedOn={detail.deployedOn} />
+            {/* In the hero for the same reason: this is what a screenshot or a
+                shared card captures, and a score shared without it is the
+                misreading the flag exists to prevent. */}
+            <OperationalBadge operationalState={detail.operationalState} />
           </p>
 
           <div className="mt-5 flex flex-wrap items-center gap-3">

@@ -112,6 +112,24 @@ holds no product data at all:
   ranked, and growing the taxonomy then needs no migration). `methodology_version` records which
   rulebook produced the score — see below. A DB-level CHECK enforces the `ok`/`failed`
   discriminated union.
+
+  `operational_state` (migration 0007) is one more `jsonb` column, stamped per run like the factors
+  and for the same reason: it is a live reading, not identity, and it is only meaningful next to the
+  run whose inputs it was read alongside. It records which user operations a market's own contracts
+  were refusing — and it is **published beside the score, never folded into it**
+  ([`METHODOLOGY.md`](METHODOLOGY.md#operational-state-is-published-never-scored)). It rides both the
+  leaderboard and the detail response, on the same reasoning as `deployedOn`. Nullable, and not part
+  of the CHECK: a `failed` run read nothing, and a row written before the column existed has none.
+  Null means "not read", never "unrestricted".
+
+  > **Deploy order for 0007 is the reverse of 0002/0003/0006's hazard, and it matters.** Those
+  > migrations had to stay writable by the already-deployed indexer. This one is read by the new
+  > `Store` queries, which name `operational_state` in both `SELECT`s — so **the migration must run
+  > before the code that reads it is promoted**, or the leaderboard and detail routes 500 on a
+  > missing column. The old indexer keeps writing happily against the migrated schema in the
+  > meantime (it just leaves the column null), so migrate-then-deploy is safe in both directions;
+  > deploy-then-migrate is not.
+
 - `api_rate_limits` — one token bucket per public-API client, and the odd one out: it is
   infrastructure, not data. It exists in Postgres only because serverless has no shared memory, so
   there is nowhere else every instance can see (`createRateLimiter`, deliberately not part of

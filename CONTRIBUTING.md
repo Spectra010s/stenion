@@ -49,11 +49,43 @@ export interface Adapter<TRawData = unknown> {
   computeRiskFactors(rawData: TRawData): Promise<RiskFactorMap>; // → the five *Safety factors
 
   score(factors: RiskFactorMap): RiskScoreResult; // → weighted safetyScore
+
+  operationalState(rawData: TRawData): OperationalState; // → what the market is refusing, unscored
 }
 ```
 
-Three separate methods (not one `run()`) so the indexer can inspect intermediate output and so
+Separate methods (not one `run()`) so the indexer can inspect intermediate output and so
 `score()` can be unit-tested against fixed factor inputs without touching RPC.
+
+### `operationalState` — required, and it must not touch a factor
+
+Report which user operations your protocol's own gating logic currently refuses. It takes the same
+`rawData` `computeRiskFactors` does, so it costs no extra RPC round trip and the state published
+beside a score is the state that was true when that score's inputs were read. It is synchronous for
+the same reason: anything it needs is already in `rawData`.
+
+Build the result with `toOperationalState` from `@stenion/core` (and `mostRestrictive` where your
+protocol gates per reserve as well as globally, as K2 does). That function owns the shared
+classification rule — which set of blocked operations maps to which level — and hand-rolling the
+object is how two adapters come to disagree about what "frozen" means. Your job is only to read
+what the contracts refuse; pass the operations, not a level you picked.
+
+**This value must never reach a number.** It is published beside the score and deliberately not
+graded — the reasoning is in
+[`METHODOLOGY.md`](METHODOLOGY.md#operational-state-is-published-never-scored) and it is not a
+detail to be revisited in an adapter PR. Both shipped adapters carry a test asserting that
+`computeRiskFactors` returns a byte-identical factor map across every restricted state the protocol
+can be in; **write the same test for yours.** It is the check that keeps the decision a property of
+the code rather than an intention.
+
+Two things to get right, because both shipped adapters had to:
+
+- **Name what is blocked, not what your protocol calls it.** Blend says "On-Ice" and "Frozen", K2
+  says "paused"; those words do not mean the same things, and a reader comparing two rows should
+  not have to know either. Your protocol's own wording goes verbatim in `source` and `detail`.
+- **Never claim a reason.** `origin` says who _could_ have set the state, and `indeterminate` is the
+  honest answer wherever more than one path produces the value. Nothing on chain says _why_ a market
+  is restricted, and an adapter must not imply it does.
 
 ### `adapterRef` must be a hardcoded string literal
 

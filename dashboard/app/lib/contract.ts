@@ -31,6 +31,54 @@ export interface ProtocolDeployment {
   label: string;
 }
 
+/**
+ * How restricted a market is, as its own contracts currently gate it — named by
+ * what a user cannot do rather than by any protocol's own vocabulary.
+ *
+ * NEVER A SCORE, and never rendered as one. `exitDisabled` is not "worse" on a
+ * scale; it is a statement that withdrawals are refused. The registry
+ * deliberately does not grade any of this — nothing on chain distinguishes an
+ * admin freezing a pool to contain a threat from an admin walking away from it,
+ * and the two protocols' restricted states are not even the same shape (Blend
+ * never blocks a withdrawal at any status; K2's pause blocks all of them). See
+ * METHODOLOGY.md, "Operational state is published, never scored".
+ */
+export type OperationalLevel =
+  'active' | 'borrowingDisabled' | 'entryDisabled' | 'exitDisabled' | 'notOperational';
+
+/** One user-facing operation a market can refuse. */
+export type PoolOperation = 'supply' | 'withdraw' | 'borrow' | 'repay' | 'liquidate';
+
+/**
+ * A market's live restrictions as of its latest successful run.
+ *
+ * Anything rendering a protocol's SCORE must render this beside it when the
+ * level is anything but `active` — the same rule, for the same reason, as
+ * ProtocolDeployment. A halted market and a fully open one can publish the same
+ * number, and a reader who scans the registry and leaves must not have been
+ * shown only the number.
+ *
+ * Null means the state was not read — a protocol that has never scored, or a run
+ * predating the field. It never means "nothing is restricted".
+ */
+export interface OperationalState {
+  level: OperationalLevel;
+  /** the protocol's own reading, verbatim, e.g. "PoolConfig.status = 4" */
+  source: string;
+  /** exactly which operations are refused, in a canonical order */
+  blocked: PoolOperation[];
+  /**
+   * Who could have set this, as far as the chain says — never why. `admin`: only
+   * an admin could have. `protocol`: the protocol's own mechanism did.
+   * `indeterminate`: both paths could produce it, or the value carries no origin.
+   */
+  origin: 'admin' | 'protocol' | 'indeterminate';
+  /** one sentence on what was read and what it means for a user */
+  detail: string;
+  /** when the reading was taken, ISO 8601 */
+  asOf: string;
+}
+
 export interface LeaderboardEntry {
   id: string;
   name: string;
@@ -45,6 +93,8 @@ export interface LeaderboardEntry {
   deployedOn: ProtocolDeployment | null;
   safetyScore: number | null;
   computedAt: string | null;
+  /** see OperationalState — null means "not read", never "unrestricted" */
+  operationalState: OperationalState | null;
   lastRunAt: string | null;
   lastRunStatus: RunStatus | null;
 }
@@ -114,6 +164,8 @@ export interface ProtocolDetail {
   safetyScore: number | null;
   computedAt: string | null;
   factors: RiskFactorMap | null;
+  /** see OperationalState — null means "not read", never "unrestricted" */
+  operationalState: OperationalState | null;
   /** rulebook version behind the current score (null if never scored) */
   methodologyVersion: number | null;
   lastRunAt: string | null;

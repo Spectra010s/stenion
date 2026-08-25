@@ -18,6 +18,7 @@ import { GITHUB_URL } from '../lib/site';
 import { ScoreRing } from '../../components/score-ring';
 import { MarkAttribution, ProtocolLogo } from '../../components/protocol-logo';
 import { DeploymentBadge } from '../../components/deployment-badge';
+import { OperationalBadge } from '../../components/operational-badge';
 import { StatusPill } from '../../components/status-pill';
 import { Reveal, RevealGroup, RevealItem } from '../../components/reveal';
 
@@ -166,6 +167,7 @@ export default async function HomePage() {
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
                       <span className="text-xs uppercase tracking-wider text-faint">{p.chain}</span>
                       <DeploymentBadge deployedOn={p.deployedOn} />
+                      <OperationalBadge operationalState={p.operationalState} />
                     </div>
                     <div className="mt-3">
                       <StatusPill

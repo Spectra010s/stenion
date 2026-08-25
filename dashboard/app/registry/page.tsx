@@ -21,6 +21,7 @@ import { cn } from '../lib/cn';
 import { FreshnessTooltip, StatusPill } from '../../components/status-pill';
 import { MarkAttribution, ProtocolLogo } from '../../components/protocol-logo';
 import { DeploymentBadge } from '../../components/deployment-badge';
+import { OperationalBadge } from '../../components/operational-badge';
 import { RegistryControls } from '../../components/registry-controls';
 import { ScoreBar } from '../../components/score-bar';
 import { Reveal, RevealGroup, RevealItem } from '../../components/reveal';
@@ -696,7 +697,13 @@ function ProtocolRow({
             <span className="font-display text-lg font-semibold text-ink">{entry.name}</span>
             <ArrowUpRight className="h-4 w-4 text-faint transition duration-200 ease-out group-hover:text-accent-ink motion-safe:group-hover:translate-x-0.5 motion-safe:group-hover:-translate-y-0.5" />
           </span>
-          <DeploymentBadge deployedOn={entry.deployedOn} className="mt-1" />
+          <span className="mt-1 flex flex-wrap items-center gap-1.5">
+            <DeploymentBadge deployedOn={entry.deployedOn} />
+            {/* Beside the name, on the row, for the reason the whole
+                publish-don't-score decision rests on: a reader who scans the
+                registry and leaves must not have seen only the number. */}
+            <OperationalBadge operationalState={entry.operationalState} />
+          </span>
         </span>
       </div>
 

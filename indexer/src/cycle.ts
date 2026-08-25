@@ -20,7 +20,7 @@
 // a database, a webhook, or a real clock.
 
 import { METHODOLOGY_VERSION } from '@stenion/core';
-import type { Adapter, ProtocolMetadata, RiskFactorMap } from '@stenion/core';
+import type { Adapter, OperationalState, ProtocolMetadata, RiskFactorMap } from '@stenion/core';
 import type { RunRecord, Store } from '@stenion/db';
 
 // Explicit .ts extensions, unlike index.ts's extensionless ones. This module is
@@ -44,7 +44,19 @@ import { withRetry, type RetryDeps, type RetryPolicy } from './retry.ts';
  */
 export interface IndexTarget {
   metadata: ProtocolMetadata;
-  run(): Promise<{ safetyScore: number; factors: RiskFactorMap; computedAt: Date }>;
+  run(): Promise<{
+    safetyScore: number;
+    factors: RiskFactorMap;
+    /**
+     * The market's live restrictions, read from the SAME raw fetch the score was
+     * computed from. That sharing is the point: a state read separately could
+     * describe a different moment than the score it is published beside, and the
+     * pair would then contradict each other on a fast-moving pool. It is never
+     * scored — see @stenion/core's operational-state module.
+     */
+    operationalState: OperationalState;
+    computedAt: Date;
+  }>;
 }
 
 export function toTarget<T>(adapter: Adapter<T>): IndexTarget {
@@ -54,7 +66,13 @@ export function toTarget<T>(adapter: Adapter<T>): IndexTarget {
       const raw = await adapter.fetchRawData();
       const factors = await adapter.computeRiskFactors(raw);
       const result = adapter.score(factors);
-      return { safetyScore: result.score, factors: result.factors, computedAt: result.computedAt };
+      return {
+        safetyScore: result.score,
+        factors: result.factors,
+        // One `raw`, read once, feeding both. See IndexTarget.run.
+        operationalState: adapter.operationalState(raw),
+        computedAt: result.computedAt,
+      };
     },
   };
 }
@@ -140,12 +158,13 @@ export async function runCycle(
     let result: CycleRunResult;
     try {
       const { value, attempts } = await withRetry(() => target.run(), retry, deadlineAt, deps);
-      const { safetyScore, factors, computedAt } = value;
+      const { safetyScore, factors, operationalState, computedAt } = value;
       record = {
         protocolId: target.metadata.id,
         status: 'ok',
         safetyScore,
         factors,
+        operationalState,
         // Stamped here, not by the adapter: one rulebook applies to every
         // protocol, so the version is a property of the run, not of the adapter.
         methodologyVersion: METHODOLOGY_VERSION,

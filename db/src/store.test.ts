@@ -29,7 +29,8 @@ import {
   type ProtocolDetailRow,
   type RunHealthRow,
 } from './store.ts';
-import type { RiskFactorMap } from '@stenion/core';
+import { OperationalLevel, PoolOperation } from '@stenion/core';
+import type { OperationalState, RiskFactorMap } from '@stenion/core';
 
 const RUN_AT = new Date('2026-08-16T11:25:02.000Z');
 const COMPUTED_AT = new Date('2026-08-16T11:25:01.000Z');
@@ -37,6 +38,16 @@ const COMPUTED_AT = new Date('2026-08-16T11:25:01.000Z');
 const FACTORS = {
   collateralSafety: { value: 70, weight: 0.2, detail: 'x' },
 } as unknown as RiskFactorMap;
+
+/** A restricted state, so a mapping that drops the field can't pass by matching a default. */
+const OPERATIONAL_STATE: OperationalState = {
+  level: OperationalLevel.EntryDisabled,
+  source: 'PoolConfig.status = 4',
+  blocked: [PoolOperation.Supply, PoolOperation.Borrow],
+  origin: 'admin',
+  detail: 'pool status 4 (Admin Frozen)',
+  asOf: '2026-08-16T11:25:01.000Z',
+};
 
 /** An `ok` risk_scores row as pg hands it back: numeric as string, timestamptz as Date. */
 const okRow = (over: Partial<HistoryRow> = {}): HistoryRow => ({
@@ -68,6 +79,7 @@ const detailRow = (over: Partial<ProtocolDetailRow> = {}): ProtocolDetailRow => 
   contract_id: 'CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD',
   site_url: 'https://www.blend.capital',
   docs_url: 'https://docs.blend.capital',
+  operational_state: OPERATIONAL_STATE,
   // NULL is the normal case — Blend runs on its own contracts. The YieldBlox
   // pool is the row that sets these; see the deployment suite below.
   deployment_host: null,
@@ -292,6 +304,7 @@ describe('toLeaderboardEntry', () => {
     logo: '/assets/protocols/blend.svg',
     deployment_host: null,
     deployment_label: null,
+    operational_state: OPERATIONAL_STATE,
     safety_score: '53',
     computed_at: COMPUTED_AT,
     last_run_at: RUN_AT,
@@ -308,9 +321,22 @@ describe('toLeaderboardEntry', () => {
       deployedOn: null,
       safetyScore: 53,
       computedAt: COMPUTED_AT.toISOString(),
+      // On the BOARD, not only on the detail response — see LeaderboardEntry.
+      // A halted market and an open one can publish the same number, so a
+      // reader who scans the registry and leaves has to have been shown this.
+      operationalState: OPERATIONAL_STATE,
       lastRunAt: RUN_AT.toISOString(),
       lastRunStatus: 'ok',
     });
+  });
+
+  it('publishes null for a run predating the column, never a fabricated "active"', () => {
+    // Migration 0007 added operational_state; rows written before it, or by a
+    // deploy still running the previous indexer, have none. Null means "not
+    // read". Defaulting to an unrestricted state here would publish a clean
+    // bill of health for a market nobody looked at — the exact fabrication
+    // METHODOLOGY.md ground rule 4 forbids.
+    assert.equal(toLeaderboardEntry(row({ operational_state: null })).operationalState, null);
   });
 
   it('passes a missing logo through as null rather than a placeholder path', () => {
@@ -416,6 +442,7 @@ describe('an empty risk_scores table', () => {
       logo: '/assets/protocols/blend.svg',
       deployment_host: null,
       deployment_label: null,
+      operational_state: null,
       safety_score: null,
       computed_at: null,
       last_run_at: null,
@@ -503,6 +530,7 @@ describe('the deployment label on both public responses', () => {
       logo: null,
       deployment_host: 'Blend',
       deployment_label: 'Blend V2 pool',
+      operational_state: OPERATIONAL_STATE,
       safety_score: '24',
       computed_at: COMPUTED_AT,
       last_run_at: RUN_AT,
