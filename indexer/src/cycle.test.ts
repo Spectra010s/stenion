@@ -16,6 +16,7 @@ import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 
 import {
+  DEFAULT_CONCURRENCY,
   cycleFeasibility,
   cycleWaves,
   feasibilityWarning,
@@ -552,29 +553,61 @@ describe('cycleWaves + cycleFeasibility — the ceiling is arithmetic, not folkl
   });
 
   it('holds at four targets and fails at five, on the shipped defaults', () => {
-    // This is the number the whole change exists to make checkable. 42s budget,
-    // 15s attempt timeout, 2 at a time.
+    // This is the number the whole change exists to make checkable, and these
+    // ARE the shipped defaults — 42s budget, 10s attempt timeout, 1 at a time.
+    // Keep them in step with config.ts: a test asserting a ceiling from numbers
+    // the indexer no longer runs is worse than no test, because it still passes.
     const at = (targetCount: number) =>
-      cycleFeasibility({ targetCount, concurrency: 2, attemptTimeoutMs: 15_000, budgetMs: 42_000 });
+      cycleFeasibility({ targetCount, concurrency: 1, attemptTimeoutMs: 10_000, budgetMs: 42_000 });
 
-    assert.equal(at(3).feasible, true);
-    assert.equal(at(4).feasible, true, 'four targets is the point of this change — it must fit');
+    assert.equal(at(3).feasible, true, 'three targets is today; it must not warn every cycle');
+    assert.equal(
+      at(4).feasible,
+      true,
+      'four targets is #65/Etherfuse — ready without a config change',
+    );
     assert.equal(at(5).feasible, false);
     assert.deepEqual(
       { waves: at(5).waves, requiredMs: at(5).requiredMs },
-      { waves: 3, requiredMs: 45_000 },
-      'five targets needs 45s of attempts against a 42s budget',
+      { waves: 5, requiredMs: 50_000 },
+      'five targets needs 50s of attempts against a 42s budget',
     );
   });
 
-  it('shows that a SEQUENTIAL loop could not have held three, let alone four', () => {
-    // Why concurrency rather than a cleverer division rule: at concurrency 1 the
-    // registry as it stands today already cannot give every target one full
-    // attempt. No allocation scheme fixes that — there is not enough wall clock.
-    const seq = (targetCount: number) =>
-      cycleFeasibility({ targetCount, concurrency: 1, attemptTimeoutMs: 15_000, budgetMs: 42_000 });
-    assert.equal(seq(2).feasible, true);
-    assert.equal(seq(3).feasible, false);
+  it('would have warned every cycle at the old 15s timeout, which is why it moved', () => {
+    // The 429 fix was concurrency 1, and concurrency 1 at a 15s attempt timeout
+    // is infeasible at THREE targets — the registry as it stands. Lowering the
+    // timeout to 10s (justified by the deployed measurement: nothing healthy
+    // exceeds 6.1s) is the half of the fix that stops the guard crying wolf.
+    const old = cycleFeasibility({
+      targetCount: 3,
+      concurrency: 1,
+      attemptTimeoutMs: 15_000,
+      budgetMs: 42_000,
+    });
+    assert.equal(old.feasible, false, '3 x 15s = 45s > 42s');
+  });
+
+  it('is a budget question, not a concurrency one — both dials move the same ceiling', () => {
+    // Worth pinning because the first fix reached for concurrency and the second
+    // reached for the timeout, and they are the same lever seen from two sides.
+    // Four targets fit either way; what differs is the load on the RPC.
+    const cheap = cycleFeasibility({
+      targetCount: 4,
+      concurrency: 1,
+      attemptTimeoutMs: 10_000,
+      budgetMs: 42_000,
+    });
+    const loud = cycleFeasibility({
+      targetCount: 4,
+      concurrency: 2,
+      attemptTimeoutMs: 15_000,
+      budgetMs: 42_000,
+    });
+    assert.equal(cheap.feasible, true);
+    assert.equal(loud.feasible, true);
+    // ...and only one of them survived contact with the public RPC.
+    assert.ok(cheap.requiredMs < loud.requiredMs * 2);
   });
 
   it('has nothing to say when there is no bound to check', () => {
@@ -613,8 +646,11 @@ describe('targetDeadline — a deadline that does not collapse as targets are ad
     // THE REGRESSION THIS PINS. Under the old rule the first target's deadline
     // was budgetMs / targetCount: 14s at three targets and 10.5s at four — and
     // 10.5s is below the *healthy* fetch duration of Kinetic (7.7-10.5s) and
-    // YieldBlox (8.1-12.5s). Registering a pool could therefore fail protocols
-    // that already worked. Whatever else changes, that must never come back.
+    // YieldBlox (8.1-12.5s) as measured on a developer machine, which is what
+    // was known when the rule was changed. Registering a pool could therefore
+    // fail protocols that already worked. Whatever else changes, that must never
+    // come back. (The deployed function is 2-3x faster — see ARCHITECTURE.md —
+    // so the bar below is the conservative one, deliberately.)
     for (const targetCount of [1, 2, 3, 4]) {
       const deadline = targetDeadline({ ...base, queuedAfter: targetCount - 1 });
       assert.ok(
@@ -632,8 +668,10 @@ describe('targetDeadline — a deadline that does not collapse as targets are ad
   });
 
   it('clears the slowest observed healthy fetch at four targets, where the old rule did not', () => {
-    // ARCHITECTURE.md, measured 2026-08-19: the slowest healthy fetch is
-    // YieldBlox at 12.5s. The old rule gave the first of four targets 10.5s.
+    // The slowest healthy fetch ever observed anywhere: YieldBlox at 12.5s on a
+    // developer machine (2026-08-19). Deployed, nothing exceeds 6.1s — so this
+    // is the conservative bar, kept deliberately rather than relaxed to the
+    // measured one. The old rule gave the first of four targets 10.5s.
     const SLOWEST_HEALTHY_MS = 12_500;
     const deadline = targetDeadline({ ...base, queuedAfter: 3 });
     assert.ok(deadline >= SLOWEST_HEALTHY_MS, `${deadline}ms would cut off a HEALTHY YieldBlox`);
@@ -897,9 +935,10 @@ describe('orderByLatency — slowest first, because the pool overlaps the rest',
 
   it('puts the slowest measured target first and the fastest last', () => {
     // The order the indexer actually registers them in is BLEND_POOLS order
-    // (blend, yieldblox) then kinetic. Measured durations put YieldBlox slowest.
+    // (blend, yieldblox) then kinetic. Deployed-function durations put Kinetic
+    // slowest and Blend Fixed fastest — see ARCHITECTURE.md.
     const ordered = orderByLatency(['blend', 'yieldblox', 'kinetic'].map((id) => okTarget(id)));
-    assert.deepEqual(ids(ordered), ['yieldblox', 'kinetic', 'blend']);
+    assert.deepEqual(ids(ordered), ['kinetic', 'yieldblox', 'blend']);
   });
 
   it('is the OPPOSITE of the order it replaced, and that is the point', () => {
@@ -908,7 +947,8 @@ describe('orderByLatency — slowest first, because the pool overlaps the rest',
     // started last is a slow target nothing can overlap with.
     const ordered = orderByLatency(['blend', 'yieldblox', 'kinetic'].map((id) => okTarget(id)));
     assert.notDeepEqual(ids(ordered), ['blend', 'yieldblox', 'kinetic']);
-    assert.equal(ids(ordered)[0], 'yieldblox', 'the slowest adapter leads');
+    assert.equal(ids(ordered)[0], 'kinetic', 'the slowest adapter leads');
+    assert.equal(ids(ordered).at(-1), 'blend', 'and the fastest is what the last wave gets');
   });
 
   it('treats an unmeasured target as the slowest, so a new pool is not squeezed', () => {
@@ -935,6 +975,41 @@ describe('orderByLatency — slowest first, because the pool overlaps the rest',
 });
 
 describe('runCycle — bounded concurrency', () => {
+  it('defaults to one target in flight, because two was measured and 429d', () => {
+    // Not a style preference. Concurrency 2 shipped and was reverted the same day
+    // after mainnet.sorobanrpc.com began refusing the target that ran behind the
+    // burst. Anyone raising this default should have to change this test, and
+    // therefore read why. See ARCHITECTURE.md's incident note.
+    assert.equal(DEFAULT_CONCURRENCY, 1);
+  });
+
+  it('runs targets one at a time when the caller says nothing', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const { store } = fakeStore();
+    const targets: IndexTarget[] = Array.from({ length: 4 }, (_, i) => ({
+      metadata: { id: `p${i}`, name: `p${i}`, chain: 'stellar', adapterRef: 'FakeAdapter' },
+      run: async () => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await Promise.resolve();
+        await Promise.resolve();
+        inFlight--;
+        return {
+          safetyScore: 50,
+          factors: FACTORS,
+          operationalState: OPERATIONAL_STATE,
+          computedAt: COMPUTED_AT,
+        };
+      },
+    }));
+
+    // No `concurrency` passed — this is what production runs.
+    const summary = await runCycle(targets, store, {});
+    assert.equal(summary.ok, 4);
+    assert.equal(peak, 1, `peak in-flight was ${peak}; the shipped default must not burst`);
+  });
+
   it('never has more than `concurrency` targets in flight', async () => {
     let inFlight = 0;
     let peak = 0;
@@ -1020,6 +1095,42 @@ describe('runCycle — bounded concurrency', () => {
       ],
       'a summary that reorders itself by whoever the RPC answered first is undiffable',
     );
+  });
+
+  it('produces byte-identical alerting at concurrency 1 and 2', async () => {
+    // The streak read is per-protocol and sits inside its own target's task, and
+    // the POST happens after the pool joins — so neither depends on how many
+    // workers exist. Asserted rather than reasoned about, because the shipped
+    // default moved from 2 to 1 after the 429 incident and the alerting path was
+    // originally only exercised at 2.
+    const run = async (concurrency: number) => {
+      const { store } = fakeStore({
+        history: { alpha: failedRuns(3), beta: failedRuns(3), gamma: failedRuns(3) },
+      });
+      const { notifier, batches } = fakeNotifier();
+      const summary = await runCycle(
+        ['alpha', 'beta', 'gamma'].map((id) => throwingTarget(id)),
+        store,
+        alerting({ notifier, concurrency }),
+      );
+      return {
+        posts: batches.length,
+        posted: batches[0]?.map((a) => [a.kind, a.protocolId, a.consecutiveFailures]),
+        summarised: summary.alerts?.map((a) => [a.kind, a.protocolId, a.consecutiveFailures]),
+        results: summary.results.map((r) => [r.id, r.status]),
+      };
+    };
+
+    const one = await run(1);
+    const two = await run(2);
+    assert.equal(one.posts, 1, 'one POST per cycle at concurrency 1');
+    assert.equal(two.posts, 1, 'one POST per cycle at concurrency 2');
+    assert.deepEqual(one, two, 'dropping to a single worker changes nothing an operator sees');
+    assert.deepEqual(one.posted, [
+      ['failing', 'alpha', 4],
+      ['failing', 'beta', 4],
+      ['failing', 'gamma', 4],
+    ]);
   });
 
   it('keeps a batched alert in registration order however completion is ordered', async () => {

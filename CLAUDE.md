@@ -192,6 +192,14 @@ computed per response from the body rather than being a constant.
 > `budgetMs / targetCount` did, and #68 removed it. The replacement's ceiling is the explicit
 > condition `ceil(targets / concurrency) * attemptTimeoutMs <= budgetMs`, checked by
 > `cycleFeasibility()` and warned about every cycle, never discovered by adding a pool.
+>
+> **`STENION_CYCLE_CONCURRENCY` ships at 1, and raising it is a measurement question, not a
+> judgement call.** It shipped at 2 and was reverted the same day when the free shared public RPC
+> started returning `429` to the target running behind the burst — the root cause was request
+> _rate_, which the pre-deploy estimate got wrong by computing it from developer-machine durations.
+> **Never make an RPC-load claim from local timings; measure the deployed function** (the cron
+> route returns per-target `durationMs` and `totalMs` for exactly this). Full incident in
+> `ARCHITECTURE.md`.
 
 > **Local hazard:** never run `next build`/`next start`/a second `next dev` against the same checkout
 > while a dev server is up — they share one `.next` and corrupt each other. Vercel builds in

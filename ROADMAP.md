@@ -302,7 +302,11 @@ Roughly in priority order, but not committed to dates:
   `STENION_CYCLE_BUDGET_MS / targetCount`: 14s at three targets — already below the 15s
   `STENION_ATTEMPT_TIMEOUT_MS` — and 10.5s at four, which is **below the healthy fetch duration of
   Kinetic (7.7–10.5s) and YieldBlox (8.1–12.5s), both already live**. Registering a pool could
-  silently fail protocols that worked the day before. The two obvious fixes both fail: the budget
+  silently fail protocols that worked the day before. (Those durations are developer-machine
+  figures, which is what was known at the time. The deployed function has since been measured at
+  2.3–6.1s per target — see [`ARCHITECTURE.md`](ARCHITECTURE.md) — so the _margin_ was wider than it
+  looked, but the shape of the bug was not: a deadline that shrinks as the registry grows is wrong
+  whatever the constants happen to be.) The two obvious fixes both fail: the budget
   cannot be raised past Vercel Hobby's `maxDuration = 60`, and lowering the attempt timeout moves the
   cutoff earlier rather than removing it.
 
@@ -319,11 +323,22 @@ Roughly in priority order, but not committed to dates:
   than discovered by someone adding a pool. Past it, behaviour degrades to whole attempts first-come
   with the tail failing cleanly and visibly on `/api/v1/health`, not a squeeze for everyone.
 
-  **The RPC-load cost, concretely.** Both adapters are strictly sequential internally, so one target
-  in flight is one request in flight: the peak goes from 1 to 2 and stays at 2 however large the
-  registry grows. Total requests per cycle are unchanged (~58 across three targets); the rate roughly
-  doubles, ~2.3/s to ~4.5/s. Unbounded fan-out was rejected precisely because it makes the peak a
-  function of registry size.
+  **The RPC-load cost — and the estimate that was wrong.** Both adapters are strictly sequential
+  internally, so one target in flight is one request in flight. Total requests per cycle are
+  unchanged whatever the concurrency (~58 across three targets), and unbounded fan-out was rejected
+  because it makes the peak a function of registry size.
+
+  What this entry originally claimed — that concurrency 2 moves the rate from ~2.3/s to ~4.5/s — was
+  **wrong**, because it divided the request count by developer-machine durations. The deployed
+  function is 2-3x faster, so wave 1 actually runs at ~11 requests/second, and
+  `mainnet.sorobanrpc.com` (free, shared, keyless) started refusing the target behind the burst:
+  **0 failures in 102 pre-deploy target-runs, then 4 of 8 cycles for Blend in a clean post-deploy
+  window.** Shipped concurrency was reverted to **1** the same day, with
+  `STENION_ATTEMPT_TIMEOUT_MS` lowered 15s → 10s alongside so a single-worker cycle stays feasible to
+  four targets. Full incident, numbers and reasoning in [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
+  The durable lesson, and the reason the incident record is kept: **measure the deployed function;
+  never compute an RPC-load claim from developer-machine timings.**
 
   **Ordering flipped with it.** Targets now run slowest-first (YieldBlox → Kinetic → Blend), because
   under a worker pool longest-processing-time-first minimises the makespan. Fastest-first was correct
