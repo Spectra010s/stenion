@@ -8,23 +8,20 @@ are about to interact with, this is the whole surface area.
 
 The scored examples below were captured from the live production API, not written from the type
 definitions. Their responses are verbatim bodies from a snapshot taken at
-**2026-08-20T11:05–11:10Z**; the numbers move every ~5 minutes, the shapes do not. The coverage
-example was captured with `curl` from the built route on **2026-08-21T22:15Z**, backed by a fresh
-local database, before that new endpoint had a production URL to call. Recapture it against
-production after promotion.
+**2026-08-25T18:05Z**; the numbers move every ~5 minutes, the shapes do not.
 
-> **`operationalState` is documented below but is not yet in the captured bodies.** It ships in
-> the same change as this documentation, and the snapshots above predate it — an example body here
-> is a verbatim live capture, never a shape written from the types, so it is not edited by hand to
-> add a field. **Recapture the `/v1/protocols` and `/v1/protocol/:id` examples after this deploys**
-> and delete this note. Until then, read the field table for the contract and expect the live
-> responses to carry one more key than the JSON here shows.
+The coverage example was `curl`ed from production on **2026-08-25T18:20Z**.
+
+One consequence of "verbatim" worth knowing before you diff these against the field tables: the keys
+inside `operationalState` come back in a different order from the tables below, because the value is
+stored as Postgres `jsonb`, which does not preserve key order. JSON objects are unordered and no
+consumer should care — but the examples are copied from the wire rather than tidied, so the
+difference is real and is left alone.
 
 The `/v1/health` examples are mixed, and marked individually at the endpoint. The `healthy` body was
-captured from the route's code path against the live production database on **2026-08-22T18:29Z**,
-before that endpoint had a public URL to `curl` — recapture it over HTTP after promotion. The
-`degraded` body is **constructed, not captured**: `risk_scores` has never held a failed run, so that
-state has never occurred in production and cannot be observed until it does.
+`curl`ed from production on **2026-08-25T18:20Z**. The `degraded` body is **constructed, not
+captured**: `risk_scores` has never held a failed run, so that state has never occurred in production
+and cannot be observed until it does.
 
 ---
 
@@ -120,9 +117,17 @@ curl https://stenion.vercel.app/api/v1/protocols
       "chain": "stellar",
       "logo": "/assets/protocols/blend.svg",
       "deployedOn": null,
-      "safetyScore": 53,
-      "computedAt": "2026-08-20T11:05:05.600Z",
-      "lastRunAt": "2026-08-20T11:05:02.641Z",
+      "safetyScore": 51,
+      "computedAt": "2026-08-25T18:05:07.129Z",
+      "operationalState": {
+        "asOf": "2026-08-25T18:05:07.000Z",
+        "level": "active",
+        "detail": "pool status 1 (Active) — all operations available.",
+        "origin": "protocol",
+        "source": "PoolConfig.status = 1",
+        "blocked": []
+      },
+      "lastRunAt": "2026-08-25T18:05:04.178Z",
       "lastRunStatus": "ok"
     },
     {
@@ -131,23 +136,39 @@ curl https://stenion.vercel.app/api/v1/protocols
       "chain": "stellar",
       "logo": "/assets/protocols/kinetic.png",
       "deployedOn": null,
-      "safetyScore": 27,
-      "computedAt": "2026-08-20T11:05:15.167Z",
-      "lastRunAt": "2026-08-20T11:05:10.083Z",
+      "safetyScore": 47,
+      "computedAt": "2026-08-25T18:05:18.995Z",
+      "operationalState": {
+        "asOf": "2026-08-25T18:05:15.000Z",
+        "level": "active",
+        "detail": "the router is not paused",
+        "origin": "indeterminate",
+        "source": "router.is_paused() = false",
+        "blocked": []
+      },
+      "lastRunAt": "2026-08-25T18:05:12.401Z",
       "lastRunStatus": "ok"
     },
     {
       "id": "yieldblox",
       "name": "YieldBlox",
       "chain": "stellar",
-      "logo": null,
+      "logo": "/assets/protocols/yieldblox.png",
       "deployedOn": {
         "host": "Blend",
         "label": "Blend V2 pool"
       },
-      "safetyScore": 24,
-      "computedAt": "2026-08-20T11:05:09.897Z",
-      "lastRunAt": "2026-08-20T11:05:05.786Z",
+      "safetyScore": 26,
+      "computedAt": "2026-08-25T18:05:12.213Z",
+      "operationalState": {
+        "asOf": "2026-08-25T18:05:12.000Z",
+        "level": "active",
+        "detail": "pool status 0 (Admin Active) — all operations available.",
+        "origin": "admin",
+        "source": "PoolConfig.status = 0",
+        "blocked": []
+      },
+      "lastRunAt": "2026-08-25T18:05:07.315Z",
       "lastRunStatus": "ok"
     }
   ]
@@ -188,8 +209,8 @@ curl https://stenion.vercel.app/api/v1/coverage
 
 **Response** `200 OK`
 
-> The first entry is shown below for readability. The live response returns every current entry in
-> the `coverage` array; this object is verbatim from the live route capture.
+> The first entry is shown below for readability. The live response returned 4 entries in the
+> `coverage` array; this object is verbatim from a production `curl`.
 
 ```json
 {
@@ -308,8 +329,8 @@ curl https://stenion.vercel.app/api/v1/protocol/blend
   "site": "https://www.blend.capital",
   "docs": "https://docs.blend.capital",
   "deployedOn": null,
-  "safetyScore": 53,
-  "computedAt": "2026-08-20T11:10:07.254Z",
+  "safetyScore": 51,
+  "computedAt": "2026-08-25T18:05:07.129Z",
   "factors": {
     "oracleSafety": {
       "value": 99,
@@ -348,45 +369,53 @@ curl https://stenion.vercel.app/api/v1/protocol/blend
       "weight": 0.2
     },
     "liquiditySafety": {
-      "value": 23,
-      "detail": "worst reserve (CCW67T…) has 23% of supply as free liquidity",
+      "value": 21,
+      "detail": "worst reserve (CCW67T…) has 21% of supply as free liquidity",
       "weight": 0.15
     },
     "collateralSafety": {
-      "value": 68,
-      "detail": "top reserve holds 67% of supplied value across 3 reserves (HHI 0.55)",
+      "value": 64,
+      "detail": "top reserve holds 70% of supplied value across 3 reserves (HHI 0.57)",
       "weight": 0.2
     },
     "utilizationSafety": {
-      "value": 14,
-      "detail": "worst reserve (CCW67T…) at 77% util vs 90% cap",
+      "value": 12,
+      "detail": "worst reserve (CCW67T…) at 79% util vs 90% cap",
       "weight": 0.2
     }
   },
+  "operationalState": {
+    "asOf": "2026-08-25T18:05:07.000Z",
+    "level": "active",
+    "detail": "pool status 1 (Active) — all operations available.",
+    "origin": "protocol",
+    "source": "PoolConfig.status = 1",
+    "blocked": []
+  },
   "methodologyVersion": 1,
-  "lastRunAt": "2026-08-20T11:10:04.814Z",
+  "lastRunAt": "2026-08-25T18:05:04.178Z",
   "lastRunStatus": "ok",
   "history": [
     {
       "status": "ok",
-      "safetyScore": 53,
+      "safetyScore": 51,
       "methodologyVersion": 1,
-      "computedAt": "2026-08-20T11:10:07.254Z",
-      "runAt": "2026-08-20T11:10:04.814Z"
+      "computedAt": "2026-08-25T18:05:07.129Z",
+      "runAt": "2026-08-25T18:05:04.178Z"
     },
     {
       "status": "ok",
-      "safetyScore": 53,
+      "safetyScore": 51,
       "methodologyVersion": 1,
-      "computedAt": "2026-08-20T11:05:05.600Z",
-      "runAt": "2026-08-20T11:05:02.641Z"
+      "computedAt": "2026-08-25T18:00:10.167Z",
+      "runAt": "2026-08-25T18:00:07.049Z"
     },
     {
       "status": "ok",
-      "safetyScore": 53,
+      "safetyScore": 51,
       "methodologyVersion": 1,
-      "computedAt": "2026-08-20T11:00:09.773Z",
-      "runAt": "2026-08-20T11:00:07.298Z"
+      "computedAt": "2026-08-25T17:55:07.015Z",
+      "runAt": "2026-08-25T17:55:04.082Z"
     }
   ]
 }
@@ -606,8 +635,10 @@ curl -i https://stenion.vercel.app/api/v1/health
 
 **Response** — `200 OK`
 
-This one is a real capture: taken from the route's own code path against the live production
-database on **2026-08-22T18:29Z**, before the endpoint had a public URL to `curl`.
+This one is a real capture: `curl`ed over HTTP from the production endpoint on
+**2026-08-25T18:20Z**. The `Cache-Control: no-store` described under [Caching](#caching) was verified
+on the same request — staleness here advances with the wall clock, so any TTL could serve a
+`healthy` 200 after the true answer had become `degraded`.
 
 ```json
 {
@@ -616,24 +647,24 @@ database on **2026-08-22T18:29Z**, before the endpoint had a public URL to `curl
   "protocols": [
     {
       "id": "blend",
-      "lastSuccessfulRunAt": "2026-08-22T18:25:03.624Z",
-      "lastRunAt": "2026-08-22T18:25:03.624Z",
+      "lastSuccessfulRunAt": "2026-08-25T18:20:04.609Z",
+      "lastRunAt": "2026-08-25T18:20:04.609Z",
       "lastRunStatus": "ok",
-      "staleMinutes": 5
+      "staleMinutes": 0
     },
     {
       "id": "kinetic",
-      "lastSuccessfulRunAt": "2026-08-22T18:25:10.953Z",
-      "lastRunAt": "2026-08-22T18:25:10.953Z",
+      "lastSuccessfulRunAt": "2026-08-25T18:20:11.751Z",
+      "lastRunAt": "2026-08-25T18:20:11.751Z",
       "lastRunStatus": "ok",
-      "staleMinutes": 4
+      "staleMinutes": 0
     },
     {
       "id": "yieldblox",
-      "lastSuccessfulRunAt": "2026-08-22T18:25:06.632Z",
-      "lastRunAt": "2026-08-22T18:25:06.632Z",
+      "lastSuccessfulRunAt": "2026-08-25T18:20:07.446Z",
+      "lastRunAt": "2026-08-25T18:20:07.446Z",
       "lastRunStatus": "ok",
-      "staleMinutes": 4
+      "staleMinutes": 0
     }
   ]
 }
