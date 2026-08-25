@@ -13,11 +13,20 @@
 // relative imports, both of which are CommonJS-only and make the module
 // impossible to load from a test under Node's native type stripping.
 //
-// Retry and alerting are wired in here but configured OUTSIDE here: the policy,
-// the budget and the notifier all arrive as arguments (see CycleOptions), so
-// this module still reaches for no env and no pool. That is what lets the tests
-// drive a four-cycle failure streak and a deliberately throwing adapter without
-// a database, a webhook, or a real clock.
+// Retry, scheduling and alerting are wired in here but configured OUTSIDE here:
+// the policy, the budget, the concurrency and the notifier all arrive as
+// arguments (see CycleOptions), so this module still reaches for no env and no
+// pool. That is what lets the tests drive a four-cycle failure streak and a
+// deliberately throwing adapter without a database, a webhook, or a real clock.
+//
+// SCHEDULING. Targets run through a bounded worker pool rather than one at a
+// time, and the budget is NOT divided between them — see `targetDeadline` for
+// the rule that replaced the division and why the division was a bug rather
+// than a tradeoff. Two things survive that change unaltered, and both are
+// asserted in the tests: per-target error isolation (each target's outcome is
+// built and persisted inside its own task, so nothing another target does can
+// reach it), and ONE alert POST per cycle (the notifier fires after the pool
+// joins, outside any worker, so it cannot become one message per protocol).
 
 import { METHODOLOGY_VERSION } from '@stenion/core';
 import type { Adapter, OperationalState, ProtocolMetadata, RiskFactorMap } from '@stenion/core';
@@ -85,6 +94,18 @@ export interface CycleRunResult {
   error?: string;
   /** Attempts actually made (1 = succeeded, or failed, first time). */
   attempts?: number;
+  /**
+   * Wall-clock ms this target's scoring took, retries and backoff included, from
+   * the moment a worker picked it up to the moment its outcome was decided. The
+   * DB write is deliberately outside it: this measures the adapter, not Neon.
+   *
+   * Published so the one measurement that matters can be taken FROM THE DEPLOYED
+   * FUNCTION. The cron route spreads this summary into its JSON response, so
+   * `curl`ing it returns real per-target durations on Vercel's path to the RPC —
+   * which is not a developer machine's path, and is the only reason any of the
+   * budget arithmetic here can be checked rather than assumed.
+   */
+  durationMs?: number;
 }
 
 /** What one cycle did — returned so the cron route can respond with a summary. */
@@ -95,6 +116,13 @@ export interface CycleSummary {
   results: CycleRunResult[];
   /** Alerts raised this cycle, whether or not the notifier delivered them. */
   alerts?: StreakAlert[];
+  /**
+   * Wall-clock ms for the whole run loop — every target, its DB write, its
+   * streak query and the alert POST. This is the number to compare against
+   * `maxDuration = 60`; the per-target `durationMs` values will not sum to it,
+   * because targets overlap.
+   */
+  totalMs?: number;
 }
 
 /**
@@ -109,13 +137,33 @@ export interface CycleSummary {
 export interface CycleOptions {
   retry?: RetryPolicy;
   /**
-   * Wall-clock budget for the whole run loop, divided between the targets. The
-   * hard constraint behind it is Vercel Hobby's `maxDuration = 60`, which cannot
-   * be raised: a cycle killed mid-flight can leave one protocol scored and
-   * another neither scored nor recorded as failed, which is strictly worse than
-   * a protocol that ran out of retries and failed cleanly.
+   * Wall-clock budget for the whole run loop. The hard constraint behind it is
+   * Vercel Hobby's `maxDuration = 60`, which cannot be raised: a cycle killed
+   * mid-flight can leave one protocol scored and another neither scored nor
+   * recorded as failed, which is strictly worse than a protocol that ran out of
+   * retries and failed cleanly.
+   *
+   * NOT divided per target — see `targetDeadline`. It used to be, and that made
+   * every target's deadline a function of how many targets existed.
    */
   budgetMs?: number;
+  /**
+   * How many targets may be in flight at once. Default `DEFAULT_CONCURRENCY`.
+   *
+   * BOUNDED rather than unbounded, because the ceiling being bought here is not
+   * free: both adapters are strictly sequential internally (every RPC and
+   * Horizon call is a bare `await`), so one target is exactly one in-flight
+   * request, and this number IS the peak simultaneous load Stenion puts on a
+   * shared, rate-limited public RPC — which is itself a source of the failures
+   * the retries exist for. At 2 the peak doubles and stops there, whatever the
+   * registry grows to. `Promise.allSettled` over every target would make the
+   * peak equal to the target count, i.e. a number that grows every time a pool
+   * is registered, which is the wrong dial to leave unbounded.
+   *
+   * 1 restores a sequential loop (not the old *budget division* — that is gone
+   * either way).
+   */
+  concurrency?: number;
   /** Consecutive failures before a `failing` alert fires. */
   alertThreshold?: number;
   notifier?: Notifier;
@@ -129,6 +177,166 @@ const NO_RETRY: RetryPolicy = {
   attemptTimeoutMs: Number.POSITIVE_INFINITY,
 };
 
+/** Targets in flight at once when the caller says nothing. See CycleOptions.concurrency. */
+export const DEFAULT_CONCURRENCY = 2;
+
+/**
+ * How many sequential "waves" `queued` targets take at this concurrency.
+ *
+ * The unit the whole budget rule is expressed in. With a worker pool the queue
+ * does not actually drain in lockstep waves — a fast target frees its worker
+ * early — so this is an upper bound, which is the direction a reservation has
+ * to err in.
+ */
+export function cycleWaves(queued: number, concurrency: number): number {
+  return Math.ceil(Math.max(0, queued) / Math.max(1, concurrency));
+}
+
+/**
+ * Slowest target first, measured rather than guessed.
+ *
+ * WHY THIS FLIPPED. It used to be fastest-first, in `buildTargets`, and that was
+ * right under the old rule: the budget was divided by the number of targets
+ * LEFT, so the first target got the tightest share and each later one inherited
+ * whatever slack was unspent — leading with the fastest adapter maximised the
+ * slack handed on. That rule is gone (see `targetDeadline`), and under a worker
+ * pool the ordering heuristic is the opposite one: longest-processing-time-first
+ * minimises the makespan, because a slow target started last is a slow target
+ * nothing can overlap with. Keeping the old order after removing the rule that
+ * justified it would have been the quiet regression.
+ *
+ * Durations are the live `fetchRawData` measurements in ARCHITECTURE.md
+ * (2026-08-19, developer machine): YieldBlox 8.1-12.5s, Kinetic 7.7-10.5s,
+ * Blend Fixed 6.0-7.5s.
+ *
+ * It lives here rather than beside `buildTargets` for one blunt reason: index.ts
+ * is a CommonJS CLI entry point and cannot be imported by a test, so an ordering
+ * decision made there is an ordering decision nothing can check.
+ */
+const SLOWEST_FIRST: readonly string[] = ['yieldblox', 'kinetic', 'blend'];
+
+/**
+ * Order targets slowest-first. Pure, and total on ids it has never heard of.
+ *
+ * AN UNMEASURED TARGET SORTS FIRST, i.e. is assumed to be the slowest. That is
+ * the conservative reading of "nobody has timed this one", and it means a newly
+ * registered pool gets the most generous slot until someone measures it and puts
+ * it in its place above. It also keeps `BLEND_POOLS` the single list to edit when
+ * adding a market — an unmeasured pool is ordered sensibly by default instead of
+ * needing a second list kept in step, which is how such lists come apart.
+ */
+export function orderByLatency(targets: IndexTarget[]): IndexTarget[] {
+  const rank = (id: string): number => {
+    const i = SLOWEST_FIRST.indexOf(id);
+    return i === -1 ? -1 : i;
+  };
+  // Array.prototype.sort is stable, so equally-ranked targets keep registration
+  // order — two unmeasured pools stay in BLEND_POOLS order.
+  return [...targets].sort((a, b) => rank(a.metadata.id) - rank(b.metadata.id));
+}
+
+/**
+ * When may this target run until?
+ *
+ * THE RULE THAT CHANGED, and the point of this module's rewrite. It used to be
+ * `now + remaining / targetsLeft` — an even share of what was left. That made
+ * every target's deadline a function of HOW MANY TARGETS EXISTED, so registering
+ * a pool silently shortened every other pool's deadline. At three targets the
+ * first share was already 14s against a 15s attempt timeout, and at four it
+ * would have been 10.5s — below the *healthy* fetch duration of two protocols
+ * that work today. "Adding a pool can fail protocols that already work" is not a
+ * tradeoff, it is a bug.
+ *
+ * The rule now is: run until the end of the budget, MINUS one full attempt
+ * reserved for each wave of targets still queued behind you. So
+ *
+ *   - a target's deadline does not shrink because a target was added, as long
+ *     as the cycle is feasible at all (see `cycleFeasibility`);
+ *   - a target still cannot eat the queue's last chance to be looked at, which
+ *     is the guarantee the old even division was really buying;
+ *   - a target that finishes early hands its slack on for free, because
+ *     `queuedAfter` is read at pick time rather than planned up front — the one
+ *     property of the old rule worth keeping.
+ *
+ * `atLeastOneAttempt` is the floor, and it is what makes this degrade rather
+ * than cliff. Past the feasibility ceiling the reservation would drop a target
+ * below a single full attempt — an attempt that can only time out, having
+ * proved nothing about the protocol. The honest degradation there is whole
+ * attempts on a first-come basis with the tail failing cleanly and visibly
+ * (`DeadlineExceededError`, plus a stale row on `/api/v1/health`), NOT everyone
+ * squeezed equally into a length at which nobody can succeed.
+ *
+ * An infinite attempt timeout (the no-retry default) reserves nothing, so a
+ * caller that passes no retry policy gets the whole budget, exactly as before.
+ */
+export function targetDeadline(opts: {
+  /** Absolute epoch ms the cycle's budget runs out at. */
+  budgetEndsAt: number;
+  /** Now, from the injected clock. */
+  now: number;
+  /** Targets not yet picked up by any worker. */
+  queuedAfter: number;
+  concurrency: number;
+  attemptTimeoutMs: number;
+}): number {
+  const { budgetEndsAt, now, queuedAfter, concurrency, attemptTimeoutMs } = opts;
+  const attempt = Number.isFinite(attemptTimeoutMs) ? attemptTimeoutMs : 0;
+  const reserved = cycleWaves(queuedAfter, concurrency) * attempt;
+  const atLeastOneAttempt = now + Math.min(attempt, budgetEndsAt - now);
+  return Math.max(budgetEndsAt - reserved, atLeastOneAttempt);
+}
+
+/** Whether every target in a cycle can get one full attempt inside the budget. */
+export interface CycleFeasibility {
+  feasible: boolean;
+  /** Waves the registry takes at this concurrency. */
+  waves: number;
+  /** Budget one full attempt per wave needs. */
+  requiredMs: number;
+  budgetMs: number;
+}
+
+/**
+ * The ceiling on target count, as an arithmetic condition rather than a thing
+ * someone discovers by registering a pool and finding out.
+ *
+ * `ceil(targets / concurrency) * attemptTimeoutMs <= budgetMs` — can every
+ * target get one attempt of full length? At the shipped defaults (42s budget,
+ * 15s attempt timeout, concurrency 2) that holds up to **four targets** and
+ * fails at five, and the answer at five is a higher concurrency, a lower attempt
+ * timeout, or sharding — all of which this makes a decision at the moment it
+ * stops being true.
+ *
+ * Reported, never thrown. Refusing to run because someone registered a fifth
+ * pool would take the whole registry down over a config question, which is
+ * strictly worse than running four protocols well and saying so loudly.
+ */
+export function cycleFeasibility(opts: {
+  targetCount: number;
+  concurrency: number;
+  attemptTimeoutMs: number;
+  budgetMs: number;
+}): CycleFeasibility {
+  const { targetCount, concurrency, attemptTimeoutMs, budgetMs } = opts;
+  const waves = cycleWaves(targetCount, concurrency);
+  const requiredMs = waves * attemptTimeoutMs;
+  // An unbounded attempt or an unbounded budget makes the question meaningless
+  // rather than answerable — there is nothing to check, so nothing to warn about.
+  const checkable = Number.isFinite(attemptTimeoutMs) && Number.isFinite(budgetMs);
+  return { feasible: !checkable || requiredMs <= budgetMs, waves, requiredMs, budgetMs };
+}
+
+/** The warning for an infeasible cycle, or null when there is nothing to say. */
+export function feasibilityWarning(f: CycleFeasibility, targetCount: number): string | null {
+  if (f.feasible) return null;
+  return (
+    `[budget] ${targetCount} targets take ${f.waves} wave(s) at this concurrency, needing ` +
+    `${f.requiredMs}ms for one full attempt each against a ${f.budgetMs}ms budget. Targets late ` +
+    `in the cycle will be cut short or recorded as failed for want of time. Raise ` +
+    `STENION_CYCLE_CONCURRENCY, lower STENION_ATTEMPT_TIMEOUT_MS, or reduce the registry.`
+  );
+}
+
 export async function runCycle(
   targets: IndexTarget[],
   store: Store,
@@ -137,20 +345,47 @@ export async function runCycle(
   const retry = options.retry ?? NO_RETRY;
   const deps = options.deps ?? {};
   const now = deps.now ?? Date.now;
-  const budgetEndsAt = now() + (options.budgetMs ?? Number.POSITIVE_INFINITY);
+  const budgetMs = options.budgetMs ?? Number.POSITIVE_INFINITY;
+  const startedAt = now();
+  const budgetEndsAt = startedAt + budgetMs;
+  const concurrency = Math.max(1, Math.trunc(options.concurrency ?? DEFAULT_CONCURRENCY));
 
-  const results: CycleRunResult[] = [];
-  const alerts: StreakAlert[] = [];
+  const warning = feasibilityWarning(
+    cycleFeasibility({
+      targetCount: targets.length,
+      concurrency,
+      attemptTimeoutMs: retry.attemptTimeoutMs,
+      budgetMs,
+    }),
+    targets.length,
+  );
+  if (warning) console.warn(warning);
 
-  for (const [index, target] of targets.entries()) {
+  // Indexed slots, not `push`. Workers finish in whatever order the RPC hands
+  // them back, so a summary assembled in completion order would reorder itself
+  // between cycles for no reason anyone could act on — and the alert body, which
+  // is rendered from the same array, would too. Slots are filled by target index
+  // and flattened at the end, so both read in registration order however the
+  // cycle actually ran. The DB writes genuinely do interleave; that is fine,
+  // because every read of them is ordered by `run_at`, per protocol.
+  const slots: (CycleRunResult | undefined)[] = new Array(targets.length);
+  const alertSlots: (StreakAlert | undefined)[] = new Array(targets.length);
+
+  /**
+   * One target, start to finish: score it, persist the outcome, then read its
+   * streak. Never throws — per-target error isolation is the contract, and it is
+   * what lets the workers below be a plain `Promise.all`.
+   */
+  async function runOne(target: IndexTarget, index: number, queuedAfter: number): Promise<void> {
     const runAt = new Date().toISOString();
-
-    // Per-protocol share of what's LEFT, not a fixed split of the whole budget.
-    // One protocol failing must not cost the other its retries — but a protocol
-    // that finishes early should hand its slack on rather than waste it, which
-    // recomputing the remainder each iteration does for free.
-    const targetsLeft = targets.length - index;
-    const deadlineAt = now() + (budgetEndsAt - now()) / targetsLeft;
+    const startedTargetAt = now();
+    const deadlineAt = targetDeadline({
+      budgetEndsAt,
+      now: startedTargetAt,
+      queuedAfter,
+      concurrency,
+      attemptTimeoutMs: retry.attemptTimeoutMs,
+    });
 
     // Build the run outcome first (adapter errors caught here), then persist it
     // separately so a DB write failure is logged without aborting the cycle.
@@ -173,7 +408,10 @@ export async function runCycle(
       };
       result = { id: target.metadata.id, status: 'ok', safetyScore, attempts };
       const retried = attempts > 1 ? ` (after ${attempts} attempts)` : '';
-      console.log(`[${runAt}] ${target.metadata.id}: safetyScore=${safetyScore}${retried}`);
+      console.log(
+        `[${runAt}] ${target.metadata.id}: safetyScore=${safetyScore}${retried} ` +
+          `in ${now() - startedTargetAt}ms`,
+      );
     } catch (err) {
       // Retries reduce false failures; they never hide real ones. Exhausting
       // them records exactly the failure that would have been recorded without
@@ -181,8 +419,11 @@ export async function runCycle(
       const error = err instanceof Error ? err.message : String(err);
       record = { protocolId: target.metadata.id, status: 'failed', error, runAt };
       result = { id: target.metadata.id, status: 'failed', error, attempts: retry.attempts };
-      console.error(`[${runAt}] ${target.metadata.id}: FAILED — ${error}`);
+      console.error(
+        `[${runAt}] ${target.metadata.id}: FAILED — ${error} (after ${now() - startedTargetAt}ms)`,
+      );
     }
+    result.durationMs = now() - startedTargetAt;
 
     let wrote = true;
     try {
@@ -193,20 +434,44 @@ export async function runCycle(
       console.error(`[${runAt}] ${target.metadata.id}: DB write failed — ${error}`);
     }
 
-    results.push(result);
+    slots[index] = result;
 
     // The streak is read AFTER the write, so what an alert describes is literally
     // the rows in the table. If the write didn't land there is nothing new to
     // read and this cycle is skipped — a streak we could not record is not one
     // we should page anyone about.
+    //
+    // Concurrency changes nothing here: `listRecentRuns` is filtered to one
+    // protocol and ordered by `run_at`, and this call sits inside the same task
+    // as that protocol's own write, so the read-after-write it depends on holds
+    // whatever another target is doing at the same moment.
     if (wrote && options.notifier && options.alertThreshold) {
       const alert = await checkStreak(store, target.metadata, options.alertThreshold);
-      if (alert) alerts.push(alert);
+      if (alert) alertSlots[index] = alert;
     }
   }
 
+  // A worker pool over a shared cursor, rather than fixed batches of K: a batch
+  // runs at the speed of its slowest member and leaves workers idle waiting on
+  // it, which at these durations is a large fraction of the budget.
+  let nextIndex = 0;
+  async function worker(): Promise<void> {
+    for (;;) {
+      const index = nextIndex++;
+      if (index >= targets.length) return;
+      // Read AFTER the increment, so it counts targets no worker has taken yet.
+      await runOne(targets[index], index, targets.length - nextIndex);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, targets.length) }, () => worker()));
+
+  const results = slots.filter((r): r is CycleRunResult => r !== undefined);
+  const alerts = alertSlots.filter((a): a is StreakAlert => a !== undefined);
+
   // One POST per cycle: an RPC-wide outage taking out every protocol at once
-  // should read as one incident, not as a message per protocol.
+  // should read as one incident, not as a message per protocol. Outside the
+  // worker pool by construction — it cannot fire per target even accidentally.
   if (alerts.length > 0 && options.notifier) {
     try {
       await options.notifier(alerts);
@@ -225,6 +490,7 @@ export async function runCycle(
     failed: results.filter((r) => r.status === 'failed').length,
     results,
     ...(alerts.length > 0 ? { alerts } : {}),
+    totalMs: now() - startedAt,
   };
 }
 

@@ -180,10 +180,18 @@ rule here is that **caching must never mask `lastRunAt`/`lastRunStatus`**, which
 computed per response from the body rather than being a constant.
 
 > **The 60s ceiling is load-bearing.** `maxDuration` is capped at 60 on Vercel's Hobby tier and
-> cannot be raised. The indexer's retry budget (`STENION_CYCLE_BUDGET_MS`, default 42s, divided per
-> protocol) exists to stay inside it: a cycle killed mid-flight can leave one protocol scored and the
-> other neither scored nor recorded as failed, which is worse than a clean failure. Raise the budget
-> only against observed cycle durations, never by arithmetic alone.
+> cannot be raised. The indexer's retry budget (`STENION_CYCLE_BUDGET_MS`, default 42s) exists to
+> stay inside it: a cycle killed mid-flight can leave one protocol scored and the other neither
+> scored nor recorded as failed, which is worse than a clean failure. Raise the budget only against
+> observed cycle durations, never by arithmetic alone.
+>
+> **The budget is NOT divided per target, and must not go back to being.** Targets run through a
+> bounded worker pool (`STENION_CYCLE_CONCURRENCY`, default 2) and each gets the end of the budget
+> less one full attempt reserved per queued wave (`targetDeadline`). A rule where a target's
+> deadline shrinks as the registry grows can fail protocols that already work — that is what
+> `budgetMs / targetCount` did, and #68 removed it. The replacement's ceiling is the explicit
+> condition `ceil(targets / concurrency) * attemptTimeoutMs <= budgetMs`, checked by
+> `cycleFeasibility()` and warned about every cycle, never discovered by adding a pool.
 
 > **Local hazard:** never run `next build`/`next start`/a second `next dev` against the same checkout
 > while a dev server is up — they share one `.next` and corrupt each other. Vercel builds in

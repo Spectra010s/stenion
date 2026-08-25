@@ -24,7 +24,11 @@ export interface IndexerConfig {
   /** Soft cap on a single attempt — see RetryPolicy.attemptTimeoutMs. */
   attemptTimeoutMs: number;
   /**
-   * Wall-clock budget for one cycle's run loop, split between protocols.
+   * Wall-clock budget for one cycle's run loop.
+   *
+   * NOT split between protocols — each target's deadline is the end of this
+   * budget less a reservation for whatever is still queued, so it does not
+   * shrink as targets are added. See cycle.ts `targetDeadline`.
    *
    * The ceiling is Vercel Hobby's `maxDuration = 60`, which cannot be raised, so
    * this must leave room for cold start, pool connect, the protocol upserts, the
@@ -33,6 +37,16 @@ export interface IndexerConfig {
    * nor recorded as failed, which is worse than a retry that never happened.
    */
   cycleBudgetMs: number;
+  /**
+   * How many protocols the run loop scores at once.
+   *
+   * This is the peak simultaneous load Stenion puts on the shared public RPC,
+   * exactly: both adapters are strictly sequential internally, so one target in
+   * flight is one request in flight. Raising it buys headroom for more targets
+   * and costs proportionally more concurrent pressure on the endpoint that is
+   * itself a common source of the failures being retried.
+   */
+  cycleConcurrency: number;
   /** Consecutive failed cycles before a protocol raises an alert. */
   alertThreshold: number;
   /** Webhook alerts are POSTed to, or null when alerting is disabled. */
@@ -189,6 +203,14 @@ export function loadConfig(cwd: string = process.cwd()): IndexerConfig {
     // durations from the deployed function yet, so this errs toward the ceiling
     // being safe. Raise it once the Vercel logs show real headroom.
     cycleBudgetMs: optionalPositiveInt('STENION_CYCLE_BUDGET_MS', 42_000),
+    // 2, not the target count. Each target's deadline no longer depends on how
+    // many targets there are (see cycle.ts `targetDeadline`), so concurrency is
+    // now purely a throughput-vs-RPC-pressure dial rather than a correctness
+    // one. At 2 the peak in-flight request count doubles and then stays there
+    // however large the registry grows; unbounded fan-out would make it grow
+    // with every pool registered. Feasibility at a given target count is
+    // checked and logged per cycle — see `cycleFeasibility`.
+    cycleConcurrency: optionalPositiveInt('STENION_CYCLE_CONCURRENCY', 2),
     // 4 cycles ≈ 20 minutes at the 5-minute cadence. One blip must not page
     // anyone, and a score 20 minutes stale is not an emergency — false pages are
     // how people learn to ignore alerts.

@@ -293,41 +293,47 @@ Roughly in priority order, but not committed to dates:
   already there, but the API exposes only `safetyScore` per history point. Charting a single
   factor over time — watching `oracleSafety` sawtooth on its own axis — is deliberately deferred
   until the window question above is settled, because it multiplies the same payload by five.
-- **Concurrent targets within a cycle — the ceiling is here, one target earlier than this document
-  used to predict.** The indexer runs targets sequentially and divides one wall-clock budget between
-  them, so the **first** target's share is `STENION_CYCLE_BUDGET_MS / targetCount` (later ones
-  inherit whatever slack the earlier ones did not spend). At the 42s default that is 21s each for
-  two and **14s for three** — and 14s is already **below the 15s `STENION_ATTEMPT_TIMEOUT_MS`**.
+- **Concurrent targets within a cycle — DONE (#68).** The indexer no longer runs targets
+  sequentially and no longer divides one budget between them. `STENION_CYCLE_CONCURRENCY` targets
+  (default 2) run through a bounded worker pool, and each target's deadline is the end of
+  `STENION_CYCLE_BUDGET_MS` minus one full attempt reserved for each wave still queued behind it.
 
-  **Correction to what was written here before.** This entry used to name four targets as the
-  trigger, on the arithmetic that four gives 10.5s. The arithmetic was right and the conclusion was
-  off by one: the condition is "share < attempt timeout", and three targets already meets it. Adding
-  the YieldBlox pool crossed it.
+  **What was actually wrong.** Under the old rule the first target's share was
+  `STENION_CYCLE_BUDGET_MS / targetCount`: 14s at three targets — already below the 15s
+  `STENION_ATTEMPT_TIMEOUT_MS` — and 10.5s at four, which is **below the healthy fetch duration of
+  Kinetic (7.7–10.5s) and YieldBlox (8.1–12.5s), both already live**. Registering a pool could
+  silently fail protocols that worked the day before. The two obvious fixes both fail: the budget
+  cannot be raised past Vercel Hobby's `maxDuration = 60`, and lowering the attempt timeout moves the
+  cutoff earlier rather than removing it.
 
-  What that actually costs, stated precisely rather than as "retries stop":
+  **A fixed per-target floor with a shared overflow pool was costed first and rejected on
+  arithmetic.** Any guaranteed floor `F` in a sequential loop needs `N × F <= budget`. At four
+  targets `4 × 12s = 48s > 42s`, so the floor cannot be honoured at all — and 12s does not clear the
+  12.5s slowest observed healthy fetch anyway, so the principled floor is 15s, which caps a
+  sequential loop at **two** targets. It could not have unblocked a fourth target; its one good idea,
+  an explicit checkable condition, survives as `cycleFeasibility()`.
 
-  - The first target's first attempt is capped at **14s instead of 15s** (`withRetry` caps each
-    attempt at whatever is left).
-  - A first attempt that **runs to that cap** leaves 0ms, which is below
-    `baseDelayMs + minAttemptMs` (1s + 1s), so **no retry is started**. At two targets the same
-    timed-out attempt still left 6s and bought one (5s-capped) retry.
-  - A first attempt that **fails fast** — an RPC 429 or 5xx, which is the common transient case and
-    returns in well under a second — still retries normally, with ~12s left to do it in.
+  **The ceiling is now explicit:**
+  `ceil(targets / concurrency) * attemptTimeoutMs <= budgetMs` — four targets at the shipped
+  defaults, failing at five, logged as a `[budget]` warning naming the numbers and the levers rather
+  than discovered by someone adding a pool. Past it, behaviour degrades to whole attempts first-come
+  with the tail failing cleanly and visibly on `/api/v1/health`, not a squeeze for everyone.
 
-  So retries are not gone; they are gone for the slow-failure case on whichever target runs first.
-  Measured `fetchRawData` durations (2026-08-19, from a developer machine — Vercel's path to the RPC
-  is not this one): Blend 6.0–7.5s, Kinetic 10.2–11.4s, YieldBlox 8.1–12.5s; three sequential
-  targets totalled 24.5–26.9s against the 42s budget, so a healthy cycle has real headroom and it is
-  only the retry margin that is tight. Blend runs first because it is the fastest and so most likely
-  to pass slack on.
+  **The RPC-load cost, concretely.** Both adapters are strictly sequential internally, so one target
+  in flight is one request in flight: the peak goes from 1 to 2 and stays at 2 however large the
+  registry grows. Total requests per cycle are unchanged (~58 across three targets); the rate roughly
+  doubles, ~2.3/s to ~4.5/s. Unbounded fan-out was rejected precisely because it makes the peak a
+  function of registry size.
 
-  The fix is running targets concurrently (each then gets the full budget), not a longer budget —
-  the 60s `maxDuration` ceiling on Vercel Hobby cannot be raised. Still deliberately not done:
-  concurrency triples simultaneous load on a shared, rate-limited public RPC, which is itself a
-  source of the failures being retried. The cheaper interim lever, if slow-failure retries matter
-  more than long attempts, is **lowering** `STENION_ATTEMPT_TIMEOUT_MS` (10s would restore a retry
-  inside a 14s share) — a config change, not code. **Before adding a fourth target, this stops being
-  optional.**
+  **Ordering flipped with it.** Targets now run slowest-first (YieldBlox → Kinetic → Blend), because
+  under a worker pool longest-processing-time-first minimises the makespan. Fastest-first was correct
+  only under the division rule that has been removed. An unmeasured target sorts first, i.e. is
+  assumed slowest.
+
+  Still open: **sharding targets across cron invocations**, if RPC rate limits ever make even a peak
+  of 2 unwelcome. `/api/v1/health` is what would make it shippable — a target skipped by a shard goes
+  visibly stale rather than silently — but it makes a protocol's freshness a function of registry
+  size, so it is a last resort rather than the next step.
 
 - **An `AbortSignal` through `Adapter.fetchRawData`.** The per-attempt timeout is currently _soft_ —
   it races the attempt against a timer and abandons the loser rather than cancelling it, because no
