@@ -17,6 +17,23 @@ commitment — priorities shift as protocols launch and as the project finds fun
     Scored by `BlendAdapter` pointed at a second pool, and labelled as a Blend V2 pool everywhere it
     appears. See "Multi-pool Blend targeting" below.
 
+- **Operational state, published beside every score and deliberately not scored.** Both adapters
+  had always read a pause/frozen signal (Blend's `PoolConfig.status`, K2's `router.is_paused()`)
+  and neither had ever used it. Resolved in #15 as a decision **not** to grade it: nothing on chain
+  separates an admin freezing a pool to contain a threat from an admin abandoning it, and the two
+  protocols' restricted states are not even the same shape — Blend never blocks a withdrawal at any
+  of its seven statuses, while K2's pause blocks withdrawals, repayments and liquidations alike. So
+  each market publishes a typed `operationalState` (what is blocked, the protocol's own reading
+  verbatim, whether only an admin could have set it, when it was read), on the leaderboard and the
+  detail response both, rendered beside the name and score everywhere either appears.
+  `METHODOLOGY_VERSION` stayed at **1** — no formula, threshold or weight moved, and both adapter
+  suites assert a byte-identical factor map across every restricted state. K2's per-reserve gating
+  flags are now read too, out of the bitmap the adapter already fetched for decimals, so a market
+  open in USDC and halted in PYUSD reports the halt. Full reasoning, including the two scored
+  designs that were rejected and why, in
+  [`METHODOLOGY.md`](METHODOLOGY.md#operational-state-is-published-never-scored).
+  `ADAPTER_INTERFACE_VERSION` is now **2**: `operationalState(raw)` is required of every adapter.
+
 - **Multi-pool Blend targeting.** `BlendAdapter` takes a `BlendPool` config — slug, display name,
   pool contract, mark, links, deployment label — instead of hardcoding one pool, and the indexer
   iterates `BLEND_POOLS`. Every Blend market runs the same pool wasm (both live pools report code
@@ -378,10 +395,6 @@ Roughly in priority order, but not committed to dates:
     a defensible anchor. (Several other candidates — TWAP, provider identity, source counting, and a
     Stenion-computed deviation — were investigated and **rejected**; the reasoning is recorded in
     [`METHODOLOGY.md`](METHODOLOGY.md) §2 so they aren't re-proposed.)
-  - **Pause / frozen-pool state as a scored signal.** Both adapters already capture pause status in
-    raw data (Blend's pool `status`, K2's `is_paused()`), but neither feeds a factor yet. Whether a
-    paused pool should take a score hit — and how (new factor? multiplier? display-only flag?) — is a
-    taxonomy decision affecting every adapter, so it's not been done ad hoc.
   - **Beyond lending: a taxonomy per protocol category.** The five `*Safety` factors are
     lending-specific by design — utilization against a borrow cap and liquidity headroom for
     withdrawals don't mean anything for an AMM. Scoring other categories means designing a taxonomy

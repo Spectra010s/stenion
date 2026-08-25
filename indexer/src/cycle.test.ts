@@ -17,7 +17,14 @@ import { beforeEach, describe, it } from 'node:test';
 
 import { runCycle, toTarget, type CycleOptions, type IndexTarget } from './cycle.ts';
 import type { StreakAlert } from './alerts.ts';
-import type { Adapter, ProtocolMetadata, RiskFactorMap, RiskScoreResult } from '@stenion/core';
+import { OperationalLevel } from '@stenion/core';
+import type {
+  Adapter,
+  OperationalState,
+  ProtocolMetadata,
+  RiskFactorMap,
+  RiskScoreResult,
+} from '@stenion/core';
 import type { RecentRun, RunRecord, Store } from '@stenion/db';
 
 // ---------------------------------------------------------------------------
@@ -100,11 +107,31 @@ const FACTORS = {
 
 const COMPUTED_AT = new Date('2026-08-16T10:00:00.000Z');
 
+/**
+ * A stand-in operational state. Deliberately `Active`/empty: these tests are
+ * about the run loop, not about classification, and a restricted state here
+ * would read as a claim about a fake protocol. The rules that turn on a real
+ * state are tested in @stenion/core and in the adapters.
+ */
+const OPERATIONAL_STATE: OperationalState = {
+  level: OperationalLevel.Active,
+  source: 'fake',
+  blocked: [],
+  origin: 'indeterminate',
+  detail: 'fixture',
+  asOf: COMPUTED_AT.toISOString(),
+};
+
 /** A target that succeeds with a fixed score. */
 function okTarget(id: string, safetyScore = 53): IndexTarget {
   return {
     metadata: { id, name: id, chain: 'stellar', adapterRef: 'FakeAdapter' },
-    run: async () => ({ safetyScore, factors: FACTORS, computedAt: COMPUTED_AT }),
+    run: async () => ({
+      safetyScore,
+      factors: FACTORS,
+      operationalState: OPERATIONAL_STATE,
+      computedAt: COMPUTED_AT,
+    }),
   };
 }
 
@@ -311,6 +338,10 @@ describe('toTarget — the adapter pipeline wrapper', () => {
         calls.push('score');
         return { score: 53, factors, computedAt: COMPUTED_AT };
       },
+      operationalState(raw) {
+        calls.push(`operationalState(${raw.n})`);
+        return OPERATIONAL_STATE;
+      },
     };
   }
 
@@ -319,7 +350,13 @@ describe('toTarget — the adapter pipeline wrapper', () => {
     const target = toTarget(fakeAdapter('blend', calls));
     const out = await target.run();
 
-    assert.deepEqual(calls, ['fetchRawData', 'computeRiskFactors(1)', 'score']);
+    assert.deepEqual(calls, [
+      'fetchRawData',
+      'computeRiskFactors(1)',
+      'score',
+      // Same `raw`, not a second fetch — see IndexTarget.run.
+      'operationalState(1)',
+    ]);
     assert.equal(out.safetyScore, 53);
     assert.equal(out.computedAt, COMPUTED_AT);
   });
@@ -352,6 +389,9 @@ describe('toTarget — the adapter pipeline wrapper', () => {
       score(factors: RiskFactorMap): RiskScoreResult {
         return { score: 1, factors, computedAt: COMPUTED_AT };
       }
+      operationalState(): OperationalState {
+        return OPERATIONAL_STATE;
+      }
     }
 
     const target = toTarget(new MinifiedToSomethingElse());
@@ -362,7 +402,12 @@ describe('toTarget — the adapter pipeline wrapper', () => {
   it('lets a failure anywhere in the pipeline surface to runCycle', async () => {
     // Each stage throws for real reasons — RPC down, a price that won't decode.
     // None of them may be swallowed inside the wrapper.
-    for (const stage of ['fetchRawData', 'computeRiskFactors', 'score'] as const) {
+    for (const stage of [
+      'fetchRawData',
+      'computeRiskFactors',
+      'score',
+      'operationalState',
+    ] as const) {
       const adapter = fakeAdapter('blend', []);
       const boom = new Error(`${stage} exploded`);
       Object.assign(adapter, {
@@ -391,7 +436,12 @@ function flakyTarget(id: string, failures: number, safetyScore = 53) {
     run: async () => {
       calls++;
       if (calls <= failures) throw new Error('Soroban RPC unreachable');
-      return { safetyScore, factors: FACTORS, computedAt: COMPUTED_AT };
+      return {
+        safetyScore,
+        factors: FACTORS,
+        operationalState: OPERATIONAL_STATE,
+        computedAt: COMPUTED_AT,
+      };
     },
   };
   return { target, calls: () => calls };
@@ -526,7 +576,12 @@ describe('runCycle — the cycle budget is a hard ceiling', () => {
       metadata: { id: 'kinetic', name: 'kinetic', chain: 'stellar', adapterRef: 'FakeAdapter' },
       run: async () => {
         kineticStarted++;
-        return { safetyScore: 24, factors: FACTORS, computedAt: COMPUTED_AT };
+        return {
+          safetyScore: 24,
+          factors: FACTORS,
+          operationalState: OPERATIONAL_STATE,
+          computedAt: COMPUTED_AT,
+        };
       },
     };
 

@@ -17,6 +17,7 @@ import { rpc } from '@stellar/stellar-sdk';
 // which has no runtime `Adapter` export. Keep type-only names under
 // `import type`.
 import {
+  PoolOperation,
   RiskFactorType,
   describePriceAges,
   describeWorst,
@@ -24,11 +25,14 @@ import {
   freshnessWindow,
   scoreFactors,
   sizeReserves,
+  toOperationalState,
   worstReserves,
 } from '@stenion/core';
 import type {
   Adapter,
   ExcludedReserve,
+  OperationalOrigin,
+  OperationalState,
   ProtocolDeployment,
   ProtocolLinks,
   ProtocolMetadata,
@@ -366,6 +370,144 @@ async function readInstanceStorage(
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Pool status -> shared operational state
+//
+// `PoolConfig.status` is a u32 with seven meanings, and this table is the whole
+// mapping. It was built by reading the contract, not the docs: the public
+// documentation names the states (Setup / Active / On-Ice / Frozen) but publishes
+// no numeric mapping, and a web search returns a partial and partly wrong one.
+// The two functions that define every value are in blend-contracts-v2:
+//
+//   pool/src/pool/status.rs   execute_set_pool_status (admin) and
+//                             execute_update_pool_status (permissionless)
+//   pool/src/pool/pool.rs     require_action_allowed, which is the gate itself:
+//
+//     if (status > 1 && (action == 4 || action == 9))       // Borrow, DeleteLiquidationAuction
+//     || (status > 3 && (action == 2 || action == 0))       // SupplyCollateral, Supply
+//     { panic!(InvalidPoolStatus) }
+//
+// RequestType numbering is from pool/src/pool/actions.rs: 0 Supply, 1 Withdraw,
+// 2 SupplyCollateral, 3 WithdrawCollateral, 4 Borrow, 5 Repay, 6-8 auction fills,
+// 9 DeleteLiquidationAuction.
+//
+// TWO THINGS THAT FALL OUT OF THAT GATE, both load-bearing here:
+//
+// 1. **Blend never blocks withdrawals, repayments or liquidation fills at any
+//    status.** Only action 9 — *cancelling* an in-flight liquidation auction — is
+//    blocked, which is a wind-down-safely posture rather than a restriction on
+//    users. So no Blend status can produce `ExitDisabled`, and that is a fact
+//    about Blend rather than a gap in this table. K2's pause does block exits,
+//    which is exactly why the shared representation is built on which operations
+//    are blocked instead of on either protocol's own vocabulary.
+// 2. **Even/odd is nearly an origin signal and is not one.** 0/2/4 are settable
+//    only by the admin and 1/5 only by the permissionless backstop path, but 3 is
+//    settable by both (`execute_set_pool_status` accepts 0, 2, 3 and 4). Reading
+//    parity as "who did this" would therefore be right six times in seven and
+//    wrong on the one value where it matters most, so status 3 reports
+//    `indeterminate`.
+//
+// Status 6 (Setup) is the pool's state at deployment, before its configuration
+// is timelocked (`config.rs` requires a timelock only when `status != 6`). It
+// supersedes everything: the permissionless update path panics rather than
+// moving a Setup pool. Every Setup pool found in the 2026-08-22 factory survey
+// (issue #65) held exactly $0.00 and is excluded by the market-size floor
+// regardless — this row exists so that if one is ever pointed at, it reads as
+// "never opened" rather than as a market that restricted its users.
+interface BlendStatusMeaning {
+  /** Blend's own name for the state, as its documentation uses it */
+  name: string;
+  blocked: readonly PoolOperation[];
+  origin: OperationalOrigin;
+  neverOpened?: true;
+  /**
+   * Set on the RESTRICTED states the backstop's own update path can produce (3
+   * and 5), never on status 1.
+   *
+   * Deliberately a flag rather than `origin === 'protocol'`, which is what it
+   * was first written as and which was wrong on live data: status 1 is also
+   * permissionless, but it is the state the backstop sets when it is HEALTHY.
+   * Deriving the note from origin appended "the backstop can set this when
+   * deposits fall below the threshold" to the Blend Fixed pool's perfectly
+   * ordinary Active reading — a stress explanation attached to a healthy pool.
+   */
+  backstopDriven?: true;
+  /** what a user can still do, phrased for someone deciding whether to care */
+  effect: string;
+}
+
+const BLEND_POOL_STATUS: Record<number, BlendStatusMeaning> = {
+  0: {
+    name: 'Admin Active',
+    blocked: [],
+    origin: 'admin',
+    effect: 'all operations available',
+  },
+  1: {
+    name: 'Active',
+    blocked: [],
+    origin: 'protocol',
+    effect: 'all operations available',
+  },
+  2: {
+    name: 'Admin On-Ice',
+    blocked: [PoolOperation.Borrow],
+    origin: 'admin',
+    effect: 'borrowing is disabled; supplying, withdrawing and repaying still work',
+  },
+  3: {
+    name: 'On-Ice',
+    blocked: [PoolOperation.Borrow],
+    origin: 'indeterminate',
+    backstopDriven: true,
+    effect: 'borrowing is disabled; supplying, withdrawing and repaying still work',
+  },
+  4: {
+    name: 'Admin Frozen',
+    blocked: [PoolOperation.Supply, PoolOperation.Borrow],
+    origin: 'admin',
+    effect: 'borrowing and supplying are disabled; withdrawals and repayments still work',
+  },
+  5: {
+    name: 'Frozen',
+    blocked: [PoolOperation.Supply, PoolOperation.Borrow],
+    origin: 'protocol',
+    backstopDriven: true,
+    effect: 'borrowing and supplying are disabled; withdrawals and repayments still work',
+  },
+  6: {
+    name: 'Setup',
+    blocked: [PoolOperation.Supply, PoolOperation.Borrow],
+    origin: 'indeterminate',
+    neverOpened: true,
+    effect: 'the pool has never been opened — borrowing and supplying are disabled',
+  },
+};
+
+/**
+ * How a RESTRICTED status could have come about, appended to the detail of the
+ * two values (3 and 5) the backstop's own update path can impose.
+ *
+ * Not status 1: that is permissionless too, but it is what the backstop sets
+ * when it is healthy, so this clause would read as a stress warning on a pool
+ * with nothing wrong with it. See BlendStatusMeaning.backstopDriven.
+ *
+ * The update path sets 3 and 5 off two readable conditions: the pool's backstop deposits falling under
+ * the required threshold, or `q4w_pct` — the share of backstop capital queued
+ * for withdrawal — crossing 30%/60%/75%. Naming the mechanism is worth a clause
+ * because "On-Ice" alone reads as a choice somebody made, and for these values it
+ * may well not be.
+ *
+ * Stated as what the mechanism *can* do, not as a diagnosis of what happened:
+ * this adapter does not read backstop data, so it cannot say which condition
+ * fired, and pretending otherwise would be a fabricated finding.
+ */
+const BACKSTOP_DRIVEN =
+  " Blend's backstop can impose this restriction on its own — when the pool's " +
+  'backstop deposits fall below the required threshold, or when a large share of ' +
+  'them is queued for withdrawal — and it can also be set deliberately. Which ' +
+  'happened here is not readable from the status alone.';
 
 /** Read one reserve's ResConfig + ResData persistent entries and normalize field names. */
 async function readReserve(
@@ -785,6 +927,53 @@ export class BlendAdapter implements Adapter<BlendRawData> {
       [RiskFactorType.LiquiditySafety]: this.liquiditySafety(raw),
       [RiskFactorType.UtilizationSafety]: this.utilizationSafety(raw),
     };
+  }
+
+  /**
+   * `PoolConfig.status` → the shared operational state. Not scored; see
+   * BLEND_POOL_STATUS above for the mapping and where it came from.
+   *
+   * Blend gates at the POOL level only — `require_action_allowed` reads
+   * `self.config.status` and nothing per-reserve — so there is exactly one
+   * reading here and no `mostRestrictive` reduction to do. (K2 does gate per
+   * reserve, which is why that helper exists.)
+   *
+   * An unrecognised status is reported as unrecognised rather than guessed at.
+   * Values outside 0-6 cannot be produced by the deployed contract — both setter
+   * paths reject them — so reaching this branch means the pool is running code
+   * this mapping was not read from, and the honest output is to say so, name the
+   * number, and claim nothing about what it blocks. `blocked: []` here is not
+   * "nothing is restricted": the level is unknowable, and `detail` says exactly
+   * that rather than letting an empty list read as a clean bill of health.
+   */
+  operationalState(raw: BlendRawData): OperationalState {
+    const asOf = new Date(raw.fetchedAt * 1000);
+    const source = `PoolConfig.status = ${raw.status}`;
+    const meaning = BLEND_POOL_STATUS[raw.status];
+
+    if (!meaning) {
+      return toOperationalState({
+        blocked: [],
+        neverOpened: false,
+        source,
+        origin: 'indeterminate',
+        detail:
+          `pool reports status ${raw.status}, which is not one of Blend V2's seven ` +
+          'defined values (0-6) — what it restricts cannot be determined from the ' +
+          'contract this mapping was read from, so nothing is claimed about it',
+        asOf,
+      });
+    }
+
+    const backstop = meaning.backstopDriven ? BACKSTOP_DRIVEN : '';
+    return toOperationalState({
+      blocked: meaning.blocked,
+      neverOpened: meaning.neverOpened ?? false,
+      source,
+      origin: meaning.origin,
+      detail: `pool status ${raw.status} (${meaning.name}) — ${meaning.effect}.${backstop}`,
+      asOf,
+    });
   }
 
   // Concentration of supplied value across reserves, via a normalized HHI.

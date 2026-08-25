@@ -1,0 +1,46 @@
+-- Operational state: which user operations a market's own gating logic was
+-- refusing at the moment it was scored.
+--
+-- WHY THIS IS A COLUMN AND NOT A FACTOR. Both adapters have always read a
+-- pause/frozen signal (Blend's `PoolConfig.status`, K2's `router.is_paused()`)
+-- and neither ever fed it into a score. Issue #15 resolved that deliberately:
+-- the state is published beside the score and never graded, because nothing on
+-- chain distinguishes an admin freezing a pool in response to a threat from an
+-- admin abandoning it, and the two protocols' states are not even the same
+-- shape — Blend never blocks withdrawals at any status, K2's pause blocks all of
+-- them. Grading either into one number would assert an equivalence that isn't
+-- true. The full reasoning is in METHODOLOGY.md, "Operational state is published,
+-- never scored"; it must not be re-litigated into a factor without that section
+-- changing first.
+--
+-- WHY IT SITS ON risk_scores AND NOT protocols. This is a live reading, not
+-- identity: it changes between cycles the way a score does, and it is only
+-- meaningful next to the run whose inputs it was read alongside. Putting it on
+-- `protocols` (where deployment_host/logo/contract_id live) would give a market
+-- one current state overwritten every cycle, with no way to say what was true
+-- when a given score was computed. On risk_scores it is stamped per run, exactly
+-- like factors and methodology_version.
+--
+-- NULLABLE, and null means two different things that are both handled at read
+-- time rather than here:
+--   * a `failed` run — no state was read, because nothing was read;
+--   * an `ok` row written before this column existed, or by a deploy still
+--     running the previous indexer.
+-- The second is the live-writer hazard 0002/0003/0006 all document: this
+-- migration runs against the one shared Neon database while `main` may still be
+-- serving an indexer that inserts without this column. So it is deliberately NOT
+-- added to the risk_scores_shape CHECK — a constraint requiring it on ok rows
+-- would start rejecting writes from a deploy that has not happened yet, turning
+-- a schema change into an outage. History is never backfilled here any more than
+-- anywhere else: rows predating this column simply have no state, and the API
+-- publishes null rather than inventing `active`, which would be a fabricated
+-- reading of a market nobody looked at.
+--
+-- ONE jsonb, unlike 0006's two text columns, and for the reason 0006 gives for
+-- NOT using jsonb: that was a short fixed pair of display strings. This is a
+-- composite whose `blocked` member is a list and whose shape follows the
+-- OperationalState type in @stenion/core — closer to `factors` than to
+-- `deployment_label`, and stored the same way `factors` is, as a lossless mirror
+-- of what the adapter emitted.
+ALTER TABLE risk_scores
+  ADD COLUMN IF NOT EXISTS operational_state jsonb;

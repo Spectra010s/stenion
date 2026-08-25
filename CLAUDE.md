@@ -43,6 +43,17 @@ These override any default behavior and are enforced in code and review:
 - **Findings are not scores.** Verifiable observations we can't or won't grade go in the protocol
   page's Findings section (`dashboard/app/lib/protocol-notes.ts`), never into a factor. Nothing
   there is read by any scoring path.
+- **There are THREE ways to publish a fact, and only one of them is a number.** Scored factors;
+  static Findings (hand-written, reviewed in a PR); and **live ungraded state** — measured every
+  cycle, published as a typed field, never graded. The third exists because pause/frozen state is
+  real, changing, on-chain data that changes how a score should be read while nothing on chain
+  lets us grade it (`OperationalState`, `core/src/operational-state.ts`, decided in #15). Its rule:
+  a live ungraded field must be **published beside the score wherever the score appears**, or the
+  decision not to grade it becomes a decision to hide it. Nothing in that category may be reachable
+  from `scoreFactors` — the adapters' `computeRiskFactors` must produce a byte-identical factor map
+  whatever the state says, and both adapter test suites assert exactly that. When a new ungraded
+  observation turns up, put it in whichever of the three fits how it is obtained; don't invent a
+  fourth, and don't quietly promote one into a factor.
 - **An unscored listing is a coverage statement, never a score.** Protocols we assessed and don't
   score are published on the registry from `dashboard/app/lib/coverage.ts` — never in the
   `protocols` table, whose never-scored state (`safetyScore: null`, "never run") means _our pipeline
@@ -117,8 +128,10 @@ These override any default behavior and are enforced in code and review:
   a failed/stale run. Error handling lives in the indexer, not duplicated per adapter. The indexer
   runs adapters through the `toTarget<T>()` wrapper (see [`indexer/src/index.ts`](indexer/src/index.ts))
   so a heterogeneous adapter list shares one typed run loop. `core/src/adapter.ts` carries
-  `ADAPTER_INTERFACE_VERSION` — bump it for future breaking interface changes rather than rewriting
-  every adapter at once.
+  `ADAPTER_INTERFACE_VERSION` — bump it for breaking interface changes rather than rewriting
+  every adapter at once. It is at **2**: v2 added the required `operationalState(raw)` method
+  (#15). Required rather than optional, deliberately — an optional method is one every future
+  adapter can skip, which is the retrofit debt the constant exists to make visible.
 - **Nothing persisted or published may come from a runtime identifier.** No `constructor.name`,
   `fn.name`, or similar for a value that reaches the database or an API response — use a string
   literal. The workspace packages are bundled and minified into the dashboard's serverless
@@ -184,9 +197,14 @@ and it is part of methodology **v1**, the only version that exists (see
 an existing factor rather than adding a sixth, so the five-factor taxonomy in `core/src/types.ts`
 is unchanged.
 
-Still open, and tracked in [`ROADMAP.md`](ROADMAP.md): scoring pause/frozen-pool state, and
-market-depth-aware oracle scoring. Both are breaking taxonomy changes, so they're flagged, not
-resolved ad hoc.
+Pause/frozen-pool state is **resolved and shipped** — and resolved as a decision _not_ to score
+it. It is published as `operationalState`, a live ungraded field beside the score, on the reasoning
+in [`METHODOLOGY.md`](METHODOLOGY.md) "Operational state is published, never scored". The taxonomy
+in `core/src/types.ts` is unchanged and `METHODOLOGY_VERSION` stayed at 1, because nothing about
+what a number means changed.
+
+Still open, and tracked in [`ROADMAP.md`](ROADMAP.md): market-depth-aware oracle scoring. It is a
+breaking taxonomy change, so it's flagged, not resolved ad hoc.
 
 ## Working style
 

@@ -18,6 +18,7 @@ import { describe, it } from 'node:test';
 
 import { BlendAdapter } from './blend.ts';
 import type { BlendRawData, BlendReserveRaw } from './blend.ts';
+import { OperationalLevel, PoolOperation } from '@stenion/core';
 import type { RiskFactor } from '@stenion/core';
 
 // ---------------------------------------------------------------------------
@@ -98,6 +99,8 @@ interface RawOpts {
   resolution?: number;
   baseAssets?: string[];
   admin?: BlendRawData['admin'];
+  /** PoolConfig.status — 0 (Admin Active) unless a test is about the status itself */
+  status?: number;
   /**
    * The pool's `min_collateral` in USD — leg A of §4/§5's minimum-size filter.
    * Defaults to the live Fixed V2 pool's $5.00 so the synthetic pools here are
@@ -116,13 +119,14 @@ function makeRaw(o: RawOpts = {}): BlendRawData {
     // depend on Horizon, so adminKeySafety never perturbs an oracle assertion.
     admin = { address: 'CADMIN…', isContract: true, account: null },
     minCollateralUsd = 5,
+    status = 0,
   } = o;
 
   return {
     poolId: 'CPOOL…',
     oracleId: 'CORACLE…',
     oracleDecimals: ORACLE_DECIMALS,
-    status: 0,
+    status,
     // Stored in the oracle's base-asset decimals, as on chain — so the test's
     // ORACLE_DECIMALS of 14, not the live pool's 7. Reading it back through
     // oracleDecimals is part of what the adapter is being tested on.
@@ -751,5 +755,120 @@ describe('oracleSafety — per-feed price ages are disclosed (#47/#48)', () => {
     );
     const ages = f.oracleSafety!.components!.find((c) => c.id === 'priceAges')!;
     assert.match(ages.detail, /1 of 1 past the protocol's own 900s staleness limit/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Operational state (issue #15) — published, never scored
+// ---------------------------------------------------------------------------
+
+describe('operationalState — the seven Blend pool statuses', () => {
+  const state = (status: number) => adapter.operationalState(makeRaw({ status }));
+
+  it('maps every defined status to the level its own gate produces', () => {
+    // The gate is `require_action_allowed` in pool/src/pool/pool.rs:
+    //   status > 1 blocks Borrow (4) and DeleteLiquidationAuction (9)
+    //   status > 3 additionally blocks Supply (0) and SupplyCollateral (2)
+    // Nothing in it ever blocks Withdraw (1), WithdrawCollateral (3), Repay (5)
+    // or the auction fills (6-8) — which is why no row here is exitDisabled.
+    assert.deepEqual(
+      [0, 1, 2, 3, 4, 5, 6].map((s) => state(s).level),
+      [
+        OperationalLevel.Active, // 0 Admin Active
+        OperationalLevel.Active, // 1 Active
+        OperationalLevel.BorrowingDisabled, // 2 Admin On-Ice
+        OperationalLevel.BorrowingDisabled, // 3 On-Ice
+        OperationalLevel.EntryDisabled, // 4 Admin Frozen
+        OperationalLevel.EntryDisabled, // 5 Frozen
+        OperationalLevel.NotOperational, // 6 Setup
+      ],
+    );
+  });
+
+  it('never reports exitDisabled — Blend cannot block a withdrawal at any status', () => {
+    // This is a fact about Blend, not a gap in the mapping, and it is the
+    // asymmetry the shared representation exists to preserve: K2's pause DOES
+    // block withdrawals, so the two protocols' "paused" states are not the same
+    // state and must not classify the same.
+    for (const status of [0, 1, 2, 3, 4, 5, 6]) {
+      const s = state(status);
+      assert.notEqual(s.level, OperationalLevel.ExitDisabled, `status ${status}`);
+      assert.ok(!s.blocked.includes(PoolOperation.Withdraw), `status ${status} blocks withdraw`);
+      assert.ok(!s.blocked.includes(PoolOperation.Repay), `status ${status} blocks repay`);
+    }
+  });
+
+  it('reads origin off which setter path can produce the value, not off parity', () => {
+    // execute_set_pool_status accepts 0, 2, 3, 4 (admin); execute_update_pool_status
+    // produces 1, 3, 5 (permissionless). 3 is the overlap, so it is the one value
+    // where an even/odd reading would be wrong — and it is reported as unknown
+    // rather than guessed.
+    assert.equal(state(0).origin, 'admin');
+    assert.equal(state(2).origin, 'admin');
+    assert.equal(state(4).origin, 'admin');
+    assert.equal(state(1).origin, 'protocol');
+    assert.equal(state(5).origin, 'protocol');
+    assert.equal(state(3).origin, 'indeterminate');
+  });
+
+  it('publishes the raw status verbatim so a reader can check it on chain', () => {
+    assert.equal(state(4).source, 'PoolConfig.status = 4');
+    assert.match(state(4).detail, /Admin Frozen/);
+    assert.match(state(4).detail, /withdrawals and repayments still work/);
+  });
+
+  it('names the backstop mechanism only where the backstop could have set the state', () => {
+    // Statuses 3 and 5 are the ones the backstop's update path sets off its own
+    // thresholds. Saying so on an admin-only value would be a fabricated cause.
+    assert.match(state(5).detail, /backstop/);
+    assert.match(state(3).detail, /backstop/);
+    assert.doesNotMatch(state(4).detail, /backstop/);
+    assert.doesNotMatch(state(0).detail, /backstop/);
+    // Status 1 is permissionless AND healthy — it is what the backstop sets
+    // when nothing is wrong. Deriving this clause from `origin` put a
+    // backstop-stress explanation on the live Blend Fixed pool's ordinary
+    // Active reading, which is what this assertion exists to prevent.
+    assert.doesNotMatch(state(1).detail, /backstop/);
+  });
+
+  it('says so, and claims nothing, on a status outside 0-6', () => {
+    // Unreachable on the deployed contract — both setters reject it — so getting
+    // here means the pool runs code this mapping was not read from.
+    const s = state(9);
+    assert.match(s.detail, /not one of Blend V2's seven defined values/);
+    assert.deepEqual(s.blocked, []);
+    assert.equal(s.origin, 'indeterminate');
+  });
+
+  it('stamps asOf from the fetch clock, not from when the test ran', () => {
+    assert.equal(state(0).asOf, new Date(FETCHED_AT * 1000).toISOString());
+  });
+});
+
+describe('operationalState never reaches a score', () => {
+  it('produces a byte-identical factor map across all seven statuses', async () => {
+    // THE CORRECTNESS CHECK FOR THIS WHOLE DECISION. Issue #15 chose to publish
+    // pause state rather than grade it, and this is what makes that a property
+    // of the code rather than an intention: if any status ever moves any factor,
+    // the rulebook has silently acquired a sixth signal and METHODOLOGY_VERSION
+    // is wrong. A before/after score table could not prove this — every live
+    // market is status 0/1, so a table would compare a number against itself.
+    const baseline = await factors(makeRaw({ status: 0 }));
+    for (const status of [1, 2, 3, 4, 5, 6, 9]) {
+      assert.deepEqual(
+        await factors(makeRaw({ status })),
+        baseline,
+        `status ${status} moved a factor`,
+      );
+    }
+  });
+
+  it('scores the same whatever the status', async () => {
+    const scores = await Promise.all(
+      [0, 1, 2, 3, 4, 5, 6].map(
+        async (status) => adapter.score(await factors(makeRaw({ status }))).score,
+      ),
+    );
+    assert.equal(new Set(scores).size, 1, `statuses produced different scores: ${scores}`);
   });
 });

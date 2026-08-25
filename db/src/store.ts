@@ -3,7 +3,12 @@
 // not redesigned. This package now owns the persisted contract so both the
 // indexer (writing) and the API (reading, step 6) agree on one definition.
 
-import type { ProtocolDeployment, ProtocolMetadata, RiskFactorMap } from '@stenion/core';
+import type {
+  OperationalState,
+  ProtocolDeployment,
+  ProtocolMetadata,
+  RiskFactorMap,
+} from '@stenion/core';
 import type { Pool } from 'pg';
 
 /**
@@ -24,6 +29,16 @@ export type RunRecord =
        * comparable; see migration 0002.
        */
       methodologyVersion: number;
+      /**
+       * Which operations the market's own gating logic was refusing when this
+       * run's inputs were read — published beside the score and never graded
+       * (METHODOLOGY.md, "Operational state is published, never scored").
+       *
+       * On the `ok` arm only, and required there: an adapter that produced a
+       * score also produced a state, because both come from the same raw read.
+       * The `failed` arm has none, for the same reason it has no factors.
+       */
+      operationalState: OperationalState;
       computedAt: string;
       runAt: string;
     }
@@ -71,6 +86,23 @@ export interface LeaderboardEntry {
   deployedOn: ProtocolDeployment | null;
   safetyScore: number | null;
   computedAt: string | null;
+  /**
+   * The market's live operational state as of its latest **ok** run — which user
+   * operations its own contracts were refusing, and nothing about how bad that
+   * is. Null when the protocol has never scored, or when its latest ok run
+   * predates the column (migration 0007); null is therefore "not read", never
+   * "nothing restricted".
+   *
+   * ON THE BOARD, like `deployedOn` and unlike `contractId`/`site`/`docs`. It is
+   * not verification detail a reader looks up after deciding to care — it is
+   * part of what the row IS. A market whose withdrawals are halted and a market
+   * that is fully open can publish the same number, and a reader who scans the
+   * registry and leaves must not have been shown only the number. That is the
+   * entire reason issue #15 chose publishing over scoring: the flag has to
+   * travel with every row of every leaderboard fetch, or the decision not to
+   * score becomes a decision to hide.
+   */
+  operationalState: OperationalState | null;
   lastRunAt: string | null;
   lastRunStatus: 'ok' | 'failed' | null;
 }
@@ -129,6 +161,24 @@ export interface ProtocolDetail {
   safetyScore: number | null;
   computedAt: string | null;
   factors: RiskFactorMap | null;
+  /**
+   * The market's live operational state as of its latest **ok** run — which user
+   * operations its own contracts were refusing, and nothing about how bad that
+   * is. Null when the protocol has never scored, or when its latest ok run
+   * predates the column (migration 0007); null is therefore "not read", never
+   * "nothing restricted".
+   *
+   * ON THE BOARD, like `deployedOn` and unlike `contractId`/`site`/`docs`. It is
+   * not verification detail a reader looks up after deciding to care — it is
+   * part of what the row IS. A market whose withdrawals are halted and a market
+   * that is fully open can publish the same number, and a reader who scans the
+   * registry and leaves must not have been shown only the number. That is the
+   * entire reason issue #15 chose publishing over scoring: the flag has to
+   * travel with every row of every leaderboard fetch, or the decision not to
+   * score becomes a decision to hide.
+   */
+  operationalState: OperationalState | null;
+
   /**
    * Methodology version behind the current score (null if never scored). History
    * points carry their own, so a client can see where the rules changed rather
@@ -305,6 +355,7 @@ export interface ProtocolDetailRow {
   safety_score: string | null;
   computed_at: Date | null;
   factors: RiskFactorMap | null;
+  operational_state: OperationalState | null;
   methodology_version: number | null;
   last_run_at: Date | null;
   last_run_status: 'ok' | 'failed' | null;
@@ -339,6 +390,9 @@ export function toProtocolDetail(
     safetyScore: toNumber(row.safety_score),
     computedAt: toIso(row.computed_at),
     factors: row.factors,
+    // Passes straight through, like `factors`: jsonb comes back parsed, and a
+    // row written before migration 0007 is null here — see LeaderboardEntry.
+    operationalState: row.operational_state,
     methodologyVersion: row.methodology_version,
     lastRunAt: toIso(row.last_run_at),
     lastRunStatus: row.last_run_status,
@@ -356,6 +410,7 @@ export interface LeaderboardRow {
   deployment_label: string | null;
   safety_score: string | null;
   computed_at: Date | null;
+  operational_state: OperationalState | null;
   last_run_at: Date | null;
   last_run_status: 'ok' | 'failed' | null;
 }
@@ -370,6 +425,7 @@ export function toLeaderboardEntry(row: LeaderboardRow): LeaderboardEntry {
     deployedOn: toDeployedOn(row.deployment_host, row.deployment_label),
     safetyScore: toNumber(row.safety_score),
     computedAt: toIso(row.computed_at),
+    operationalState: row.operational_state,
     lastRunAt: toIso(row.last_run_at),
     lastRunStatus: row.last_run_status,
   };
@@ -472,13 +528,29 @@ export function createStore(pool: Pool): Store {
               record.computedAt,
               record.runAt,
               record.methodologyVersion,
+              // Same treatment as `factors`: serialized here and cast to jsonb
+              // in the statement, so the parameter type is unambiguous.
+              JSON.stringify(record.operationalState),
             ]
-          : [record.protocolId, 'failed', null, null, record.error, null, record.runAt, null];
+          : [
+              record.protocolId,
+              'failed',
+              null,
+              null,
+              record.error,
+              null,
+              record.runAt,
+              null,
+              // A failed run read nothing, so it knows nothing about the
+              // market's state. NULL, never a fabricated `active`.
+              null,
+            ];
 
       await pool.query(
         `INSERT INTO risk_scores
-           (protocol_id, status, safety_score, factors, error, computed_at, run_at, methodology_version)
-         VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8)`,
+           (protocol_id, status, safety_score, factors, error, computed_at, run_at,
+            methodology_version, operational_state)
+         VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9::jsonb)`,
         values,
       );
     },
@@ -491,11 +563,11 @@ export function createStore(pool: Pool): Store {
       const { rows } = await pool.query<LeaderboardRow>(
         `SELECT p.id, p.name, p.chain, p.logo,
                 p.deployment_host, p.deployment_label,
-                ok.safety_score, ok.computed_at,
+                ok.safety_score, ok.computed_at, ok.operational_state,
                 latest.run_at AS last_run_at, latest.status AS last_run_status
            FROM protocols p
            LEFT JOIN LATERAL (
-             SELECT safety_score, computed_at
+             SELECT safety_score, computed_at, operational_state
                FROM risk_scores
               WHERE protocol_id = p.id AND status = 'ok'
               ORDER BY run_at DESC
@@ -521,11 +593,12 @@ export function createStore(pool: Pool): Store {
         `SELECT p.id, p.name, p.chain, p.adapter,
                 p.logo, p.contract_id, p.site_url, p.docs_url,
                 p.deployment_host, p.deployment_label,
-                ok.safety_score, ok.computed_at, ok.factors, ok.methodology_version,
+                ok.safety_score, ok.computed_at, ok.factors, ok.operational_state,
+                ok.methodology_version,
                 latest.run_at AS last_run_at, latest.status AS last_run_status
            FROM protocols p
            LEFT JOIN LATERAL (
-             SELECT safety_score, computed_at, factors, methodology_version
+             SELECT safety_score, computed_at, factors, operational_state, methodology_version
                FROM risk_scores
               WHERE protocol_id = p.id AND status = 'ok'
               ORDER BY run_at DESC

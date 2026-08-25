@@ -22,6 +22,7 @@ import { after, before, describe, it } from 'node:test';
 import pg from 'pg';
 
 import { createStore, type Store } from './store.ts';
+import { OperationalLevel } from '@stenion/core';
 
 const TEST_URL = process.env.STENION_TEST_DATABASE_URL?.trim();
 const PREFIX = `zz-test-${process.pid}-`;
@@ -358,6 +359,14 @@ describe('Store SQL (integration)', { skip }, () => {
       safetyScore: 53,
       factors: {} as never,
       methodologyVersion: 1,
+      operationalState: {
+        level: OperationalLevel.Active,
+        source: 'PoolConfig.status = 1',
+        blocked: [],
+        origin: 'protocol',
+        detail: 'pool status 1 (Active)',
+        asOf: '2026-08-16T10:00:00.000Z',
+      },
       computedAt: '2026-08-16T10:00:00.000Z',
       runAt: '2026-08-16T10:00:00.000Z',
     });

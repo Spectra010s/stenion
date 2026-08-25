@@ -13,6 +13,13 @@ example was captured with `curl` from the built route on **2026-08-21T22:15Z**, 
 local database, before that new endpoint had a production URL to call. Recapture it against
 production after promotion.
 
+> **`operationalState` is documented below but is not yet in the captured bodies.** It ships in
+> the same change as this documentation, and the snapshots above predate it — an example body here
+> is a verbatim live capture, never a shape written from the types, so it is not edited by hand to
+> add a field. **Recapture the `/v1/protocols` and `/v1/protocol/:id` examples after this deploys**
+> and delete this note. Until then, read the field table for the contract and expect the live
+> responses to carry one more key than the JSON here shows.
+
 The `/v1/health` examples are mixed, and marked individually at the endpoint. The `healthy` body was
 captured from the route's code path against the live production database on **2026-08-22T18:29Z**,
 before that endpoint had a public URL to `curl` — recapture it over HTTP after promotion. The
@@ -147,23 +154,24 @@ curl https://stenion.vercel.app/api/v1/protocols
 }
 ```
 
-| Field           | Type                     | Notes                                                                                                                                                                        |
-| --------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`            | string                   | Stable identifier, **case-sensitive**, used as the path segment on the detail endpoint.                                                                                      |
-| `name`          | string                   | Display name.                                                                                                                                                                |
-| `chain`         | string                   | Currently always `"stellar"`.                                                                                                                                                |
-| `logo`          | string or null           | Root-relative path to a mark **Stenion hosts** — prefix with the base host. `null` is a normal state, not a broken image.                                                    |
-| `deployedOn`    | object or null           | **Present when this entry is not an independent protocol** — see [Not every entry is a protocol](#not-every-entry-is-a-protocol). `null` means it runs on its own contracts. |
-| `safetyScore`   | number or null           | 0–100, higher = safer. From the latest **`ok`** run. `null` means never successfully scored — not "zero", not "unsafe".                                                      |
-| `computedAt`    | string or null           | ISO 8601 UTC. When that score was computed. `null` if and only if `safetyScore` is `null`.                                                                                   |
-| `lastRunAt`     | string or null           | ISO 8601 UTC. The most recent run of **any** status. See [Staleness](#staleness-is-your-problem-too).                                                                        |
-| `lastRunStatus` | `"ok"`, `"failed"`, null | Status of that most recent run. `null` means the protocol has never been run at all.                                                                                         |
+| Field              | Type                     | Notes                                                                                                                                                                                                             |
+| ------------------ | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`               | string                   | Stable identifier, **case-sensitive**, used as the path segment on the detail endpoint.                                                                                                                           |
+| `name`             | string                   | Display name.                                                                                                                                                                                                     |
+| `chain`            | string                   | Currently always `"stellar"`.                                                                                                                                                                                     |
+| `logo`             | string or null           | Root-relative path to a mark **Stenion hosts** — prefix with the base host. `null` is a normal state, not a broken image.                                                                                         |
+| `deployedOn`       | object or null           | **Present when this entry is not an independent protocol** — see [Not every entry is a protocol](#not-every-entry-is-a-protocol). `null` means it runs on its own contracts.                                      |
+| `safetyScore`      | number or null           | 0–100, higher = safer. From the latest **`ok`** run. `null` means never successfully scored — not "zero", not "unsafe".                                                                                           |
+| `computedAt`       | string or null           | ISO 8601 UTC. When that score was computed. `null` if and only if `safetyScore` is `null`.                                                                                                                        |
+| `operationalState` | object or null           | **What the market's own contracts are currently refusing** — see [Operational state](#operational-state-is-published-never-scored). Never folded into `safetyScore`. `null` means not read, never "unrestricted". |
+| `lastRunAt`        | string or null           | ISO 8601 UTC. The most recent run of **any** status. See [Staleness](#staleness-is-your-problem-too).                                                                                                             |
+| `lastRunStatus`    | `"ok"`, `"failed"`, null | Status of that most recent run. `null` means the protocol has never been run at all.                                                                                                                              |
 
 The board deliberately carries no `contractId`, `site`, or `docs` — those are verification detail
 nobody acts on from a list, and repeating them on every row of every fetch is waste. They live on
-the detail response. `deployedOn` is the exception, and for the opposite reason: it is not detail
-you look up after deciding to care, it is part of what the row _is_, and a reader who scans the
-board and leaves has to have seen it.
+the detail response. `deployedOn` and `operationalState` are the exceptions, and for the opposite
+reason: neither is detail you look up after deciding to care, both are part of what the row _is_,
+and a reader who scans the board and leaves has to have seen them.
 
 ---
 
@@ -391,6 +399,7 @@ curl https://stenion.vercel.app/api/v1/protocol/blend
 | `contractId`                  | string or null | The Soroban contract the score was derived from. A raw `C…` address, deliberately **not** an explorer URL — pick your own. |
 | `site`, `docs`                | string or null | The protocol's own links. Listed as its properties, not as a recommendation.                                               |
 | `deployedOn`                  | object or null | Same as the leaderboard. See [Not every entry is a protocol](#not-every-entry-is-a-protocol).                              |
+| `operationalState`            | object or null | Same as the leaderboard. See [Operational state](#operational-state-is-published-never-scored).                            |
 | `safetyScore`, `computedAt`   |                | Latest **`ok`** run. Both `null` if never successfully scored.                                                             |
 | `factors`                     | object or null | The five-factor breakdown, or `null` if never scored. See below.                                                           |
 | `methodologyVersion`          | number or null | Which rulebook version the current score was computed under.                                                               |
@@ -420,6 +429,61 @@ carries the figure. Treat `components` as additive: it may gain entries on `v1`.
 
 Every factor name ends in `*Safety`, and every one is 0–100 higher-is-safer. There is no factor
 anywhere in this API where a bigger number is worse.
+
+---
+
+## Operational state is published, never scored
+
+`operationalState` reports **which user operations a market's own contracts were refusing** when it
+was last scored. It appears on both `/v1/protocols` and `/v1/protocol/:id`, and it is **not an input
+to `safetyScore`** — a halted market and a fully open one can publish the same number.
+
+That is deliberate, not an oversight. A pause can mean an admin containing a threat or a market
+being abandoned, and no on-chain data separates the two; the protocols' restricted states are not
+even the same shape (Blend never blocks a withdrawal at any of its seven pool statuses, while a
+paused Kinetic router blocks withdrawals, repayments and liquidations alike). Grading either into
+one number would assert an equivalence that is not true. The full reasoning, including the scored
+designs that were rejected, is in
+[`METHODOLOGY.md`](https://stenion.vercel.app/methodology#operational-state-is-published-never-scored).
+
+```json
+"operationalState": {
+  "level": "entryDisabled",
+  "source": "PoolConfig.status = 4",
+  "blocked": ["supply", "borrow"],
+  "origin": "admin",
+  "detail": "pool status 4 (Admin Frozen) — borrowing and supplying are disabled; withdrawals and repayments still work.",
+  "asOf": "2026-08-25T07:40:53.654Z"
+}
+```
+
+| Field     | Type            | Notes                                                                                                                    |
+| --------- | --------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `level`   | string enum     | One of `active`, `borrowingDisabled`, `entryDisabled`, `exitDisabled`, `notOperational`. See the table below.            |
+| `source`  | string          | The protocol's **own** reading, verbatim, so you can check it on chain yourself. Never a Stenion label.                  |
+| `blocked` | array of string | Which of `supply`, `withdraw`, `borrow`, `repay`, `liquidate` are refused, in that canonical order. Empty when `active`. |
+| `origin`  | string enum     | `admin` \| `protocol` \| `indeterminate` — who **could** have set this state, never why. See below.                      |
+| `detail`  | string          | One sentence: what was read and what it means for a user.                                                                |
+| `asOf`    | string          | ISO 8601 UTC. A live state is only true as of an instant.                                                                |
+
+| `level`             | What it means for someone with funds in the market                      |
+| ------------------- | ----------------------------------------------------------------------- |
+| `active`            | Nothing restricted.                                                     |
+| `borrowingDisabled` | Cannot borrow. Depositing and withdrawing both work.                    |
+| `entryDisabled`     | Cannot borrow or supply — no new exposure — but **you can still exit**. |
+| `exitDisabled`      | **Cannot withdraw.** Capital cannot leave the market while this holds.  |
+| `notOperational`    | The market was never opened for use.                                    |
+
+`origin` is the closest the chain comes to the question the score cannot answer, and it is not that
+answer. `admin` means only an admin could have set this state — not that they were right or wrong to.
+`protocol` means the protocol's own mechanism produced it without anyone acting. `indeterminate` is a
+real reading rather than a gap: Blend's status 3 is settable by an admin _and_ by its backstop update
+path, and Kinetic's pause flag carries no origin at all.
+
+**If you render `safetyScore`, render this beside it.** It is on the leaderboard rather than only on
+the detail response for exactly that reason — a reader who scans a list and leaves must not have
+been shown only the number. `null` means the state was not read (never scored, or a run predating
+the field); it never means "nothing is restricted".
 
 ---
 
@@ -665,6 +729,12 @@ cannot change more often than that.
 
 `safetyScore` is **0 to 100, higher is safer**. It is a weighted mean of the five factors, each of
 which is also 0–100 higher-is-safer.
+
+**Five factors, and nothing else.** `operationalState` is published alongside the score and is
+never an input to it — see
+[Operational state is published, never scored](#operational-state-is-published-never-scored). If you
+sum the `factors` yourself, you get `safetyScore` back; that property is deliberate and is why no
+pause multiplier was applied to it.
 
 How each factor is computed — every formula, threshold, and weight — is in the
 [Methodology](METHODOLOGY.md), which is the public, challengeable rulebook and the source of truth.

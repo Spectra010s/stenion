@@ -14,8 +14,9 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { KineticAdapter, decodeDecimals } from './kinetic.ts';
-import type { KineticRawData, KineticReserveRaw } from './kinetic.ts';
+import { KineticAdapter, decodeDecimals, decodeReserveFlags } from './kinetic.ts';
+import type { KineticRawData, KineticReserveFlags, KineticReserveRaw } from './kinetic.ts';
+import { OperationalLevel } from '@stenion/core';
 import type { RiskFactor } from '@stenion/core';
 
 // ---------------------------------------------------------------------------
@@ -39,6 +40,12 @@ interface ReserveOpts {
   /** null = the asset isn't whitelisted on the oracle at all */
   whitelisted?: boolean;
   manualOverrideActive?: boolean;
+  /**
+   * Per-reserve gating flags. Defaults to fully open, so every existing case
+   * keeps meaning exactly what it meant — a reserve is unrestricted unless a
+   * test says otherwise, which is also true of the live protocol.
+   */
+  flags?: Partial<KineticReserveFlags>;
 }
 
 function reserve(o: ReserveOpts = {}): KineticReserveRaw {
@@ -53,12 +60,14 @@ function reserve(o: ReserveOpts = {}): KineticReserveRaw {
     breakerBaseline = 1_000_000n,
     whitelisted = true,
     manualOverrideActive = false,
+    flags = {},
   } = o;
 
   const unit = BigInt(10) ** BigInt(decimals);
   return {
     asset,
     decimals,
+    flags: { active: true, frozen: false, borrowingEnabled: true, paused: false, ...flags },
     suppliedRaw: BigInt(Math.round(supplied)) * unit,
     borrowedRaw: BigInt(Math.round(borrowed)) * unit,
     price:
@@ -597,5 +606,190 @@ describe('oracleSafety — per-feed price ages are disclosed (#47/#48)', () => {
     const f = await factors(makeRaw({ reserves: [reserve({ ageSeconds: 41_777 })] }));
     const scored = f.oracleSafety!.components!.filter((c) => c.value !== null).map((c) => c.id);
     assert.deepEqual(scored, ['priceFreshness', 'deviationBound']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Operational state (issue #15) — published, never scored
+// ---------------------------------------------------------------------------
+
+describe('decodeReserveFlags — the gating bits of the same bitmap', () => {
+  // Bits 50-53 of data_low, from ReserveConfiguration in contracts/shared/src/utils.rs.
+  // Pinned individually because they sit next to the decimals field: a shift
+  // that is off by one reads a plausible boolean out of the wrong bit and
+  // publishes a restriction the market does not have, or hides one it does.
+  const at = (bit: bigint) => decodeReserveFlags({ data_low: 1n << bit, data_high: 0n });
+
+  it('reads each flag from its own bit', () => {
+    assert.equal(at(50n).active, true);
+    assert.equal(at(51n).frozen, true);
+    assert.equal(at(52n).borrowingEnabled, true);
+    assert.equal(at(53n).paused, true);
+  });
+
+  it('does not confuse a flag with a neighbouring one', () => {
+    assert.deepEqual(at(50n), {
+      active: true,
+      frozen: false,
+      borrowingEnabled: false,
+      paused: false,
+    });
+    assert.deepEqual(at(53n), {
+      active: false,
+      frozen: false,
+      borrowingEnabled: false,
+      paused: true,
+    });
+  });
+
+  it('is not disturbed by the decimals sitting immediately below it', () => {
+    // decimals occupies 42-49; a full byte there must not bleed into bit 50.
+    const cfg = { data_low: (255n << 42n) | (1n << 51n), data_high: 0n };
+    assert.equal(decodeDecimals(cfg), 255);
+    assert.deepEqual(decodeReserveFlags(cfg), {
+      active: false,
+      frozen: true,
+      borrowingEnabled: false,
+      paused: false,
+    });
+  });
+});
+
+describe('operationalState — router pause and per-reserve flags', () => {
+  const open = { active: true, frozen: false, borrowingEnabled: true, paused: false };
+
+  it('reports active when the router is open and every reserve is unrestricted', () => {
+    const s = adapter.operationalState(makeRaw());
+    assert.equal(s.level, OperationalLevel.Active);
+    assert.equal(s.source, 'router.is_paused() = false');
+    assert.deepEqual(s.blocked, []);
+  });
+
+  it('reports exitDisabled on a global pause — funds cannot leave', () => {
+    // The sharpest difference from Blend, and the reason the shared type is
+    // built on blocked operations rather than on either protocol's vocabulary:
+    // storage::is_paused is checked at the top of validate_withdraw and
+    // validate_repay as well as validate_supply/borrow/liquidation, so a paused
+    // K2 traps deposits in a way no Blend status can.
+    const s = adapter.operationalState(makeRaw({ paused: true }));
+    assert.equal(s.level, OperationalLevel.ExitDisabled);
+    assert.deepEqual(s.blocked, ['supply', 'withdraw', 'borrow', 'repay', 'liquidate']);
+    assert.equal(s.origin, 'admin');
+    assert.match(s.detail, /withdrawals/);
+  });
+
+  it('reports a frozen reserve as entryDisabled — exit stays open, as on Blend', () => {
+    const s = adapter.operationalState(
+      makeRaw({ reserves: [reserve({ flags: { frozen: true } })] }),
+    );
+    assert.equal(s.level, OperationalLevel.EntryDisabled);
+    assert.deepEqual(s.blocked, ['supply', 'borrow']);
+  });
+
+  it('reports borrowing-disabled on a reserve as borrowingDisabled', () => {
+    const s = adapter.operationalState(
+      makeRaw({ reserves: [reserve({ flags: { borrowingEnabled: false } })] }),
+    );
+    assert.equal(s.level, OperationalLevel.BorrowingDisabled);
+    assert.deepEqual(s.blocked, ['borrow']);
+  });
+
+  it('treats an inactive reserve exactly like a paused one', () => {
+    // validate_withdraw rejects both `!is_active()` and `is_paused()`, so a
+    // depositor is equally stuck either way and the two must not classify apart.
+    const inactive = adapter.operationalState(
+      makeRaw({ reserves: [reserve({ flags: { active: false } })] }),
+    );
+    const paused = adapter.operationalState(
+      makeRaw({ reserves: [reserve({ flags: { paused: true } })] }),
+    );
+    assert.equal(inactive.level, OperationalLevel.ExitDisabled);
+    assert.equal(paused.level, OperationalLevel.ExitDisabled);
+  });
+
+  it('takes the worst reserve, not the first or the majority', () => {
+    // The real K2 shape: an open router and a mixed reserve set. Publishing
+    // "active" here would say a market is fine while an asset in it is halted.
+    const s = adapter.operationalState(
+      makeRaw({
+        reserves: [
+          reserve({ asset: 'CUSDCAAAAA', flags: open }),
+          reserve({ asset: 'CXLMAAAAAA', flags: open }),
+          reserve({ asset: 'CPYUSDAAAA', flags: { paused: true } }),
+        ],
+      }),
+    );
+    assert.equal(s.level, OperationalLevel.ExitDisabled);
+    assert.match(s.source, /CPYUSD/, 'names the reserve that bound');
+  });
+
+  it('names the router, not a reserve, when a global pause makes both true', () => {
+    const s = adapter.operationalState(
+      makeRaw({ paused: true, reserves: [reserve({ flags: { paused: true } })] }),
+    );
+    assert.equal(s.source, 'router.is_paused() = true');
+  });
+
+  it('publishes the raw flags verbatim so a reader can check them on chain', () => {
+    const s = adapter.operationalState(
+      makeRaw({ reserves: [reserve({ asset: 'CFROZENAAA', flags: { frozen: true } })] }),
+    );
+    assert.match(s.source, /active=true frozen=true borrowing_enabled=true paused=false/);
+  });
+
+  it('never reports notOperational — K2 publishes no unopened state', () => {
+    for (const flags of [open, { frozen: true }, { paused: true }, { active: false }]) {
+      const s = adapter.operationalState(
+        makeRaw({ paused: false, reserves: [reserve({ flags })] }),
+      );
+      assert.notEqual(s.level, OperationalLevel.NotOperational);
+    }
+  });
+
+  it('ignores the oracle own pause — that is an oracle fact, not a gating one', () => {
+    // oracleConfig.paused stays captured and unscored. Folding it in here would
+    // report the same condition twice, in a field defined as "which operations
+    // the market refuses" — which a paused oracle does not by itself change.
+    const raw = makeRaw();
+    const withPausedOracle = { ...raw, oracleConfig: { ...raw.oracleConfig, paused: true } };
+    assert.deepEqual(adapter.operationalState(withPausedOracle), adapter.operationalState(raw));
+  });
+
+  it('stamps asOf from the fetch clock', () => {
+    assert.equal(
+      adapter.operationalState(makeRaw()).asOf,
+      new Date(FETCHED_AT * 1000).toISOString(),
+    );
+  });
+});
+
+describe('operationalState never reaches a score', () => {
+  it('produces a byte-identical factor map however restricted the market is', async () => {
+    // The K2 half of the check in blend.test.ts. Live K2 has never been paused
+    // and every reserve has always been open, so nothing but a synthetic case
+    // can prove pause state is inert — and inert is the entire decision.
+    const baseline = await factors(makeRaw());
+    const restricted = [
+      makeRaw({ paused: true }),
+      makeRaw({ reserves: [reserve({ flags: { paused: true } })] }),
+      makeRaw({ reserves: [reserve({ flags: { frozen: true } })] }),
+      makeRaw({ reserves: [reserve({ flags: { active: false } })] }),
+      makeRaw({ reserves: [reserve({ flags: { borrowingEnabled: false } })] }),
+    ];
+    for (const [i, raw] of restricted.entries()) {
+      assert.deepEqual(await factors(raw), baseline, `restricted case ${i} moved a factor`);
+    }
+  });
+
+  it('scores the same however restricted the market is', async () => {
+    const raws = [
+      makeRaw(),
+      makeRaw({ paused: true }),
+      makeRaw({ reserves: [reserve({ flags: { paused: true } })] }),
+    ];
+    const scores = await Promise.all(
+      raws.map(async (raw) => adapter.score(await factors(raw)).score),
+    );
+    assert.equal(new Set(scores).size, 1, `restrictions produced different scores: ${scores}`);
   });
 });

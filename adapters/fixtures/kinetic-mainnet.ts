@@ -4,6 +4,23 @@
 // the expected values in adapters/snapshot.test.ts. If a factor moved, find out
 // why before committing — that is the entire point of this file.
 //
+// ONE HAND-EDITED FIELD, and this is the record of it. `KineticReserveRaw` gained
+// a required `flags` block on 2026-08-25 (issue #15, per-reserve gating state).
+// This fixture was NOT regenerated to absorb it — snapshot.test.ts explains why
+// at length: it is the only captured state in which the pre-minimum-size-filter
+// defect is visible, and a re-capture would have destroyed that evidence for an
+// unrelated shape change. So the four `flags` blocks below were added by hand,
+// and they are the ONLY values in this file that are not part of the
+// 2026-08-16 capture: they were read from the same four reserves on
+// 2026-08-25 (all four active, unfrozen, borrowable, unpaused) and are labelled
+// here rather than passed off as part of the snapshot. Nothing asserts on them —
+// the pause tests run against synthetic fixtures, which is where a flag
+// combination should be chosen deliberately rather than inherited from whatever
+// the chain happened to say.
+//
+// Everything else here IS the frozen 2026-08-16 capture. Regenerate the rest only
+// by reading snapshot.test.ts first.
+//
 // Captured: 2026-08-16T12:24:41.773Z
 // At capture time this scored: safetyScore 24 (collateralSafety 15, oracleSafety 0, adminKeySafety 60, liquiditySafety 34, utilizationSafety 18)
 //
@@ -32,6 +49,7 @@ export const kineticMainnet = {
     {
       asset: 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
       decimals: 7,
+      flags: { active: true, frozen: false, borrowingEnabled: true, paused: false },
       suppliedRaw: 539974427n,
       borrowedRaw: 50016738n,
       price: { value: 99981899000000n, timestamp: 1786880550 },
@@ -47,6 +65,7 @@ export const kineticMainnet = {
     {
       asset: 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA',
       decimals: 7,
+      flags: { active: true, frozen: false, borrowingEnabled: true, paused: false },
       suppliedRaw: 94187156666n,
       borrowedRaw: 394246737n,
       price: { value: 15697547000000n, timestamp: 1786878850 },
@@ -62,6 +81,7 @@ export const kineticMainnet = {
     {
       asset: 'CCCRWH6Q3FNP3I2I57BDLM5AFAT7O6OF6GKQOC6SSJNDAVRZ57SPHGU2',
       decimals: 7,
+      flags: { active: true, frozen: false, borrowingEnabled: true, paused: false },
       suppliedRaw: 30025859n,
       borrowedRaw: 19751205n,
       price: { value: 99949950000000n, timestamp: 1786880590 },
@@ -77,6 +97,7 @@ export const kineticMainnet = {
     {
       asset: 'CBIJBDNZNF4X35BJ4FFZWCDBSCKOP5NB4PLG4SNENRMLAPYG4P5FM6VN',
       decimals: 8,
+      flags: { active: true, frozen: false, borrowingEnabled: true, paused: false },
       suppliedRaw: 56681n,
       borrowedRaw: 31663n,
       price: { value: 6313844882710000000n, timestamp: 1786882510 },

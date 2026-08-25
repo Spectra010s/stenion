@@ -14,18 +14,22 @@ import { rpc } from '@stellar/stellar-sdk';
 // type stripping is syntactic, so type-only names left in a value import
 // survive into the running module and fail against core's CommonJS output.
 import {
+  PoolOperation,
   RiskFactorType,
   describePriceAges,
   describeWorst,
   excludedComponent,
   freshnessWindow,
+  mostRestrictive,
   scoreFactors,
   sizeReserves,
+  toOperationalState,
   worstReserves,
 } from '@stenion/core';
 import type {
   Adapter,
   ExcludedReserve,
+  OperationalState,
   ProtocolMetadata,
   WorstReserves,
   RiskFactor,
@@ -98,18 +102,63 @@ const OPTIMAL_UTIL = 0.8;
 
 // ReserveConfiguration is a two-word bitmap (shared/src/types.rs). data_low
 // packs: LTV(0-13), liquidation_threshold(14-27), liquidation_bonus(28-41),
-// decimals(42-49), flags(50-56), reserve_factor(57-70). We only need decimals.
+// decimals(42-49), flags(50-56), reserve_factor(57-70).
 const DECIMALS_SHIFT = 42n;
 const DECIMALS_MASK = 0xffn; // 8 bits (42-49)
+
+// The per-reserve gating flags, from the same `data_low` word `decimals` comes
+// out of — so reading them costs no extra RPC call. Bit positions and their
+// meanings are from `ReserveConfiguration` in contracts/shared/src/utils.rs of
+// the audited source (Code4rena `code-423n4/2026-04-k2`), which documents the
+// layout and implements one accessor per flag.
+//
+// Bit 54-55 are a documented reserved gap and bit 56 is `flashloan_enabled`,
+// which is deliberately not read: a market that has only stopped flash loans has
+// not restricted any operation a depositor or borrower performs.
+const ACTIVE_BIT = 50n;
+const FROZEN_BIT = 51n;
+const BORROWING_ENABLED_BIT = 52n;
+const PAUSED_BIT = 53n;
 
 // ---------------------------------------------------------------------------
 // Raw on-chain shape (adapter-specific, per the Adapter<TRawData> contract)
 // ---------------------------------------------------------------------------
 
+/**
+ * One reserve's gating flags, decoded from the same ReserveConfiguration word as
+ * its decimals.
+ *
+ * K2 gates PER RESERVE as well as globally, which Blend does not do at all — so
+ * a K2 market can be open in USDC and halted in PYUSD. That is why these are
+ * captured: without them, a market whose largest reserve is paused would publish
+ * "active" on the strength of `router.is_paused() == false`.
+ *
+ * What each one blocks, read from `validate_supply` / `validate_withdraw` /
+ * `validate_borrow` / `validate_repay` / `validate_liquidation` in
+ * contracts/kinetic-router/src/validation.rs:
+ *
+ *   !active  — every operation on this reserve, withdrawals included
+ *   paused   — every operation on this reserve, withdrawals included
+ *   frozen   — supply and borrow; withdraw, repay and liquidate still work
+ *   !borrowingEnabled — borrow only
+ */
+export interface KineticReserveFlags {
+  /** bit 50 — false means the reserve is switched off entirely */
+  active: boolean;
+  /** bit 51 — no new exposure, but positions can still be closed */
+  frozen: boolean;
+  /** bit 52 */
+  borrowingEnabled: boolean;
+  /** bit 53 — a full halt on this one reserve */
+  paused: boolean;
+}
+
 export interface KineticReserveRaw {
   asset: string;
   /** underlying asset decimals, decoded from the ReserveConfiguration bitmap */
   decimals: number;
+  /** this reserve's own gating flags — see KineticReserveFlags */
+  flags: KineticReserveFlags;
   /** aToken.total_supply() — total supplied, underlying base units (liquidity index applied) */
   suppliedRaw: bigint;
   /** debtToken.total_supply() — total variable debt, underlying base units (borrow index applied) */
@@ -533,6 +582,18 @@ export function decodeDecimals(cfg: ReserveConfigurationNative): number {
   return Number((BigInt(cfg.data_low) >> DECIMALS_SHIFT) & DECIMALS_MASK);
 }
 
+/** The four gating flags out of the same `data_low` word — see KineticReserveFlags. */
+export function decodeReserveFlags(cfg: ReserveConfigurationNative): KineticReserveFlags {
+  const low = BigInt(cfg.data_low);
+  const bit = (position: bigint) => ((low >> position) & 1n) === 1n;
+  return {
+    active: bit(ACTIVE_BIT),
+    frozen: bit(FROZEN_BIT),
+    borrowingEnabled: bit(BORROWING_ENABLED_BIT),
+    paused: bit(PAUSED_BIT),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Adapter
 // ---------------------------------------------------------------------------
@@ -618,6 +679,7 @@ export class KineticAdapter implements Adapter<KineticRawData> {
         new Address(asset).toScVal(),
       )) as ReserveDataNative;
       const decimals = decodeDecimals(rd.configuration);
+      const flags = decodeReserveFlags(rd.configuration);
       // total_supply() returns underlying units with the current index applied,
       // so no RAY/index math is needed on our side.
       const suppliedRaw = BigInt(
@@ -626,7 +688,7 @@ export class KineticAdapter implements Adapter<KineticRawData> {
       const borrowedRaw = BigInt(
         (await readContract(server, rd.debt_token_address, 'total_supply')) as number | bigint,
       );
-      balances.push({ asset, decimals, suppliedRaw, borrowedRaw });
+      balances.push({ asset, decimals, flags, suppliedRaw, borrowedRaw });
     }
 
     const fetchedAt = Math.floor(Date.now() / 1000);
@@ -664,6 +726,114 @@ export class KineticAdapter implements Adapter<KineticRawData> {
       [RiskFactorType.LiquiditySafety]: this.liquiditySafety(raw),
       [RiskFactorType.UtilizationSafety]: this.utilizationSafety(raw),
     };
+  }
+
+  /**
+   * `router.is_paused()` plus the per-reserve gating flags → the shared
+   * operational state. Not scored; see METHODOLOGY.md.
+   *
+   * TWO LEVELS, because K2 has two. The router's global pause halts the whole
+   * market, and each reserve additionally carries its own active/frozen/
+   * borrowingEnabled/paused bits. A market open in USDC and halted in PYUSD is a
+   * state K2 can actually be in, so both are read and `mostRestrictive` picks the
+   * binding one — the same worst-reserve convention every factor uses. The
+   * router's reading is placed FIRST so that when a global pause and a reserve
+   * pause classify the same, the published `source` names the router, which is
+   * the more informative of two true statements.
+   *
+   * WHAT THIS DELIBERATELY DOES NOT INCLUDE: the price oracle's own `is_paused()`
+   * (captured in `oracleConfig.paused`). A paused oracle is an oracle condition,
+   * and `oracleSafety` already grades the prices the pool actually runs on —
+   * folding it in here would report the same fact twice, in a field whose whole
+   * definition is "which operations the market refuses". It stays captured and
+   * unused, as it was.
+   *
+   * K2 publishes no "never opened" state — there is no analogue of Blend's Setup
+   * — so `neverOpened` is false on every path. That is a fact about K2, not an
+   * omission.
+   */
+  operationalState(raw: KineticRawData): OperationalState {
+    const asOf = new Date(raw.fetchedAt * 1000);
+
+    const global = toOperationalState({
+      // The global pause is checked at the top of validate_supply,
+      // validate_withdraw, validate_borrow, validate_repay and
+      // validate_liquidation, and again in prepare_liquidation /
+      // execute_liquidation / the flash-loan entry points. It stops everything,
+      // withdrawals included — which is the sharpest difference between K2's
+      // pause and any Blend status, and the reason this list is spelled out
+      // rather than abbreviated to "all".
+      blocked: raw.paused
+        ? [
+            PoolOperation.Supply,
+            PoolOperation.Withdraw,
+            PoolOperation.Borrow,
+            PoolOperation.Repay,
+            PoolOperation.Liquidate,
+          ]
+        : [],
+      neverOpened: false,
+      source: `router.is_paused() = ${raw.paused}`,
+      // Either the pool admin or the emergency admin can pause; only the pool
+      // admin can unpause (emergency.rs, audit fix M-04). Both are admins, so
+      // the origin is `admin` — but the flag carries no reason, and nothing here
+      // may imply one.
+      origin: raw.paused ? 'admin' : 'indeterminate',
+      detail: raw.paused
+        ? 'the router is globally paused — every operation is halted, including ' +
+          'withdrawals, repayments and liquidations, so deposited funds cannot ' +
+          'leave the market while it holds'
+        : 'the router is not paused',
+      asOf,
+    });
+
+    const perReserve = raw.reserves.map((r) => this.reserveOperationalState(r, asOf));
+    return mostRestrictive([global, ...perReserve]);
+  }
+
+  /** One reserve's flags → an operational reading. See KineticReserveFlags for the gating. */
+  private reserveOperationalState(r: KineticReserveRaw, asOf: Date): OperationalState {
+    const { active, frozen, borrowingEnabled, paused } = r.flags;
+    const label = shortAsset(r.asset);
+    const halted = paused || !active;
+
+    const blocked = halted
+      ? [
+          PoolOperation.Supply,
+          PoolOperation.Withdraw,
+          PoolOperation.Borrow,
+          PoolOperation.Repay,
+          PoolOperation.Liquidate,
+        ]
+      : frozen
+        ? [PoolOperation.Supply, PoolOperation.Borrow]
+        : borrowingEnabled
+          ? []
+          : [PoolOperation.Borrow];
+
+    const detail = halted
+      ? `reserve ${label} is ${paused ? 'paused' : 'inactive'} — every operation on ` +
+        'it is halted, withdrawals included'
+      : frozen
+        ? `reserve ${label} is frozen — supplying and borrowing it are disabled; ` +
+          'withdrawals and repayments still work'
+        : borrowingEnabled
+          ? `reserve ${label} is active with no restrictions`
+          : `reserve ${label} has borrowing disabled; supplying and withdrawing still work`;
+
+    return toOperationalState({
+      blocked,
+      neverOpened: false,
+      source:
+        `ReserveConfiguration(${label}) active=${active} frozen=${frozen} ` +
+        `borrowing_enabled=${borrowingEnabled} paused=${paused}`,
+      // Reserve flags are set through the router's admin surface and carry no
+      // origin of their own, so nothing stronger than `admin` is claimable —
+      // and only where a restriction is actually in force.
+      origin: blocked.length > 0 ? 'admin' : 'indeterminate',
+      detail,
+      asOf,
+    });
   }
 
   // Concentration of supplied value across reserves, via a normalized HHI.

@@ -6,8 +6,11 @@ import {
   formatUtcRange,
   freshness,
   freshnessPillClass,
+  operationalLabel,
+  operationalPillClass,
   type FreshnessTone,
 } from './format.ts';
+import type { OperationalLevel } from './contract.ts';
 
 describe('formatDuration', () => {
   it('rounds to the nearest minute rather than flooring', () => {
@@ -101,5 +104,71 @@ describe('formatUtcRange', () => {
       formatUtcRange('2026-08-11T11:23:00Z', '2026-08-14T11:25:00Z'),
       '11 Aug 11:23 → 14 Aug 11:25 UTC',
     );
+  });
+});
+
+describe('operationalPillClass', () => {
+  const LEVELS: OperationalLevel[] = [
+    'active',
+    'borrowingDisabled',
+    'entryDisabled',
+    'exitDisabled',
+    'notOperational',
+  ];
+
+  it('never dresses an operational state in a score-band colour', () => {
+    // The non-negotiable, and sharper here than for freshness. Operational state
+    // is the one thing Stenion publishes WITHOUT grading (METHODOLOGY.md,
+    // "Operational state is published, never scored"), because no on-chain data
+    // separates an admin containing a threat from an admin walking away. A
+    // "withdrawals halted" pill in `danger` would make the page reach the
+    // verdict the methodology explicitly declines to reach — and it would do it
+    // in the most visible place on the registry.
+    for (const level of LEVELS) {
+      assert.doesNotMatch(operationalPillClass(level), /\b(safe|warn|danger)/, level);
+    }
+  });
+
+  it('does not borrow the accent either — that vocabulary is freshness', () => {
+    // The dashboard already spends accent on "our data is old". Two
+    // accent-toned markers on one row would blur a distinction the freshness
+    // pill was deliberately built to draw.
+    for (const level of LEVELS) {
+      assert.doesNotMatch(operationalPillClass(level), /accent/, level);
+    }
+  });
+
+  it('gives the capital-constraining levels more weight than the others', () => {
+    // Prominence has to come from somewhere, and with hue ruled out it comes
+    // from weight. If this ever collapses to one class for every level, the
+    // "withdrawals halted" row stops being distinguishable at scan distance and
+    // the publish-don't-score decision quietly becomes publish-and-bury.
+    for (const level of ['entryDisabled', 'exitDisabled'] as OperationalLevel[]) {
+      assert.match(operationalPillClass(level), /text-ink/, level);
+    }
+    for (const level of ['borrowingDisabled', 'notOperational'] as OperationalLevel[]) {
+      assert.doesNotMatch(operationalPillClass(level), /text-ink/, level);
+    }
+  });
+});
+
+describe('operationalLabel', () => {
+  it('names the restriction, never the protocol’s own term', () => {
+    // Blend says "On-Ice" and "Frozen"; K2 says "paused". Those vocabularies do
+    // not map onto each other — which is the whole reason a shared level exists
+    // — so a label that leaked either would make two rows incomparable.
+    const labels = (
+      ['borrowingDisabled', 'entryDisabled', 'exitDisabled', 'notOperational'] as const
+    ).map(operationalLabel);
+    for (const label of labels) {
+      assert.doesNotMatch(label, /on-ice|frozen|paused|setup/i, label);
+    }
+  });
+
+  it('says plainly which state stops withdrawals', () => {
+    // The single most consequential distinction the flag carries: Blend's most
+    // restricted status still lets a depositor leave, K2's pause does not.
+    assert.match(operationalLabel('exitDisabled'), /withdrawal/i);
+    assert.doesNotMatch(operationalLabel('entryDisabled'), /withdrawal/i);
   });
 });
