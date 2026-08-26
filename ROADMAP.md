@@ -445,7 +445,7 @@ Roughly in priority order, but not committed to dates:
 ## Protocols investigated and skipped
 
 Confirming a protocol is _not_ in scope from its own contracts — before writing scoring logic — is
-part of the discipline, not a failure. Three notable cases:
+part of the discipline, not a failure. Four notable cases:
 
 > **These decisions are now published on the site**, in the registry's "Assessed, and not scored"
 > section, sourced from `dashboard/app/lib/coverage.ts`. This section keeps the _narrative_ — how the
@@ -468,6 +468,37 @@ part of the discipline, not a failure. Three notable cases:
   refactor this entry anticipated has since landed, and the pool is now a registered entry
   (`CCCCIQSD…`), scored by `BlendAdapter` and labelled a Blend V2 pool. The skip decision was never
   reversed — it is the reason the entry is a pool and not a protocol.
+- **Four Blend V2 markets — scorable on four factors, declined on the fifth.** Orbit
+  (`CAE7QVOM…`), Forex (`CBYOBT7Z…`), Spectra PTs (`CDZVHCO7…`) and Solv (`CC4HHXPK…`) all run the
+  same pool wasm (`a41fc53d…`) Stenion already scores twice, and would otherwise be `BLEND_POOLS`
+  config entries with no new scoring code. Their oracles are the problem: none publishes
+  `max_age()`, `oracles()` or `asset_configs()` — the three reads `oracleSafety` is anchored to
+  (METHODOLOGY.md §2e, "The oracle-legibility precondition"). Those are Blend's oracle-aggregator
+  interface, not SEP-40, which defines no staleness tolerance and no deviation bound at all.
+
+  **They are not one "non-aggregator shape", which is the finding that made this a rulebook
+  decision rather than a patch.** Read out of each oracle's own wasm on 2026-08-26, they are four
+  different contracts — a bridge (`a71a844e…`), a proxy onto a SEP-40 feed (`1d1c90d3…`), a
+  deterministic zero-coupon-bond pricer (`4a444181…`) and a SEP-40 feed registry (`5700be21…`) —
+  agreeing only on the column that decides it. So "support the other shape" was really "support
+  four more shapes", each a separate reading of a separate contract's semantics.
+
+  Both ways of scoring them anyway were rejected with numbers rather than on principle, and §2e
+  records the working: substituting SEP-40's `resolution()` for the missing anchor rates Solv's
+  6-hour-stale feeds as perfectly fresh, and dropping `oracleSafety` to a `null` factor would have
+  published **Orbit at 71 — the top of the registry, twenty points above Blend Fixed** — while
+  Admin-Frozen and 99.5% concentrated in a synthetic priced at a hardcoded 1.0. The second is the
+  sharper failure: it pays a market _more_ for having an oracle we cannot inspect than YieldBlox
+  gets for publishing a deviation bound and disabling it.
+
+  Published instead in `dashboard/app/lib/coverage.ts` as `oracle-not-gradable`, one entry each with
+  its own reading and date. **This is the one skip on this page a protocol can undo without any
+  change here:** an oracle that starts publishing the two parameters makes its pool scorable under
+  the existing rulebook, and the work is a `BLEND_POOLS` entry plus a deleted coverage entry in one
+  PR. Etherfuse (`CDMAVJPF…`) is the fifth unregistered market and is _not_ on this list — it runs
+  an aggregator, scores end-to-end today, and is [#65](https://github.com/stenion-lab/stenion/issues/65)'s
+  to register.
+
 - **Templar.** A NEAR-based, chain-abstraction ("Cypher Lending") protocol. Its lending market state
   — reserves, supply/borrow, utilization, collateral positions — lives on **NEAR**, read via NEAR
   RPC. Stellar is only a wallet/collateral entry point via NEAR MPC. The only native-Soroban contract

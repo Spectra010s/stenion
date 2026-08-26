@@ -290,8 +290,8 @@ The error model is deliberately simple and lives in the indexer, not duplicated 
 ## Is this protocol even in scope?
 
 Before writing scoring logic, confirm the protocol is an **independently-scoreable native-Soroban
-lending protocol**. Two real, significant protocols were investigated and _deliberately skipped_
-because they aren't (details in [`ROADMAP.md`](ROADMAP.md)):
+lending protocol**. Several real, significant protocols and markets were investigated and
+_deliberately skipped_ because they aren't (details in [`ROADMAP.md`](ROADMAP.md)):
 
 - **YieldBlox** — turned out to be a DAO-managed pool _on Blend V2_, not an independent protocol.
   An adapter would just be `BlendAdapter` pointed at a different pool. **It is now scored anyway —
@@ -302,11 +302,27 @@ because they aren't (details in [`ROADMAP.md`](ROADMAP.md)):
   to prevent.
 - **Templar** — its lending market state lives on **NEAR**, not Stellar; only its price oracle is
   native Soroban. Reading NEAR would break the trustless-Stellar rule.
+- **Four Blend V2 markets (Orbit, Forex, Spectra PTs, Solv)** — a different shape of "no", and the
+  one most likely to catch you out, because everything looks fine until it doesn't. They are
+  native-Soroban lending markets on their own contracts, and four of the five factors compute from
+  them without incident. Their oracles simply publish nothing `oracleSafety` can be anchored to: no
+  staleness tolerance and no deviation bound, neither of which SEP-40 defines. See
+  [`METHODOLOGY.md`](METHODOLOGY.md) §2e, "The oracle-legibility precondition".
 
 So: confirm reserves, utilization, liquidity, admin, and oracle are all readable via **Soroban RPC +
 Horizon** from the protocol's _own_ contracts (not another chain, not another protocol's pool)
 before you commit to an adapter. Confirming this from the contracts first — rather than assuming it
 mirrors Blend/K2 — is the whole point.
+
+**"The oracle answers `lastprice`" is not the test.** Every oracle behind every Blend V2 pool does.
+What §2 grades is the price feed's own _declared_ limits — how stale it will let a price get, and
+how far one update may move it — and a feed that publishes neither leaves that factor with nothing
+to measure. Check for those two parameters explicitly, and check them by reading the oracle's
+**exported interface out of its wasm** (Soroban RPC's `getContractMethods`, or the
+`contractspecv0` custom section) rather than by calling a list of method names you expect to exist.
+A guess-list cannot distinguish "this contract lacks the method" from "this is a different contract
+than you think" — which is precisely how those four markets were mistaken for one interface when
+they are four.
 
 ### If the answer is no, publish the finding
 
@@ -326,7 +342,8 @@ half of it:
   list of opinions.
 - **An `asOf` date on anything resting on a reading.** A balance is a measurement, not a property.
   Undated and indexed by a search engine, it becomes a claim we'd be making indefinitely. Required
-  for `below-size-floor`.
+  for `below-size-floor` and `oracle-not-gradable` — the second because a contract's interface is
+  not permanent either: oracles get upgraded, and the date says which deployment you read.
 - **Sourced from contracts you actually read.** A figure from an aggregator that was never checked
   on chain is not a source. Listing nothing is better than listing a number neither of us can point
   at.

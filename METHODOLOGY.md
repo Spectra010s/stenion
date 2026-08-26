@@ -304,6 +304,12 @@ the binding constraint is the single weakest reserve, and averaging would hide i
 are published in the factor's `components` array so the composite is never an opaque
 number.
 
+Both are also anchored to parameters the pool's own price path has to **publish**, which
+makes this the one factor with a precondition attached: a market whose oracle publishes
+neither a staleness tolerance nor a deviation bound is not scored at all, rather than scored
+with a guessed anchor or with this factor dropped. See
+[2e, the oracle-legibility precondition](#2e-the-oracle-legibility-precondition).
+
 **Every reserve at the binding value is named, not one of them.** When several reserves tie
 on a sub-signal the `detail` lists all of them; when _all_ of them tie it says so rather than
 singling one out. This is reporting only — the published value is the same minimum either way
@@ -422,6 +428,162 @@ baseline difference does not: "20% per arbitrary interval" and "60% per five min
 different quantities, so the intuitive reading that K2's bound is three times tighter than
 Blend's is unsound. Publishing the numbers side by side without a score is the honest
 treatment.
+
+#### 2e. The oracle-legibility precondition
+
+Both halves of this factor are anchored to parameters **the pool's own price path
+publishes**: §2a's window comes from `resolution` and `max_age`, §2b's bound from per-asset
+`max_dev`. That is the whole design — the numbers are the protocol's, not Stenion's. It has
+a precondition hiding inside it, which this section makes explicit:
+
+> **A market is scorable only if its price path publishes the parameters §2 grades against.
+> Where it does not, the market is not scored at all — it is not scored with a guessed
+> anchor, and it is not scored with `oracleSafety` omitted.**
+
+This is the [market-size floor](#the-market-size-floor) one factor down, and it has the same
+shape: a precondition on what gets scored at all, rather than a rule about how to score it.
+Markets excluded by it are published in
+[`dashboard/app/lib/coverage.ts`](dashboard/app/lib/coverage.ts) as `oracle-not-gradable`,
+with a per-market reason and a date — never as a `protocols` row, and never with a numeral.
+
+**Where the line falls today.** Blend's oracle-aggregator publishes all three reads
+(`max_age()`, `oracles()`, `asset_configs()`); those are Blend's interface, not SEP-40's.
+Every Blend V2 pool Stenion scores sits on one. Four live pools do not, and the interfaces
+below were read on **2026-08-26** out of each oracle's own wasm (`contractspecv0` via Soroban
+RPC `getContractMethods`) rather than probed by calling a list of guessed names — a guess-list
+cannot distinguish "this contract lacks the method" from "this is a different contract":
+
+| Pool            | Oracle wasm | What the contract actually is                                       | `max_age` | `oracles` | `asset_configs` |
+| --------------- | ----------- | ------------------------------------------------------------------- | --------- | --------- | --------------- |
+| Blend Fixed     | `41df0489…` | Blend oracle-aggregator                                             | ✅        | ✅        | ✅              |
+| YieldBlox       | `8cf43882…` | oracle-aggregator, different build                                  | ✅        | ✅        | ✅              |
+| Etherfuse       | `65300c00…` | oracle-aggregator                                                   | ✅        | ✅        | ✅              |
+| **Orbit**       | `a71a844e…` | **bridge** oracle — ctor `(admin, stellar_oracle, other_oracle)`    | ~         | ~         | ~               |
+| **Forex**       | `1d1c90d3…` | **proxy** — `CONFIG.base_oracle` points one hop up at a SEP-40 feed | ~         | ~         | ~               |
+| **Spectra PTs** | `4a444181…` | **deterministic zero-coupon-bond pricer** — not a feed at all       | ~         | ~         | ~               |
+| **Solv**        | `5700be21…` | **SEP-40 feed registry** — the only SEP-40 implementer of the four  | ~         | ~         | ~               |
+
+**Those four are not one shape.** They are four different contracts with four different wasm
+hashes doing four different things, and the only thing they agree on is the column that
+decides this: none answers any of the three. Worth stating because the obvious fix — "handle
+the other oracle shape too" — is really "handle four more shapes", and each would be a
+separate reading of a separate contract's semantics. All four answer `decimals()` and
+`lastprice()`, so §1, §3, §4 and §5 compute normally for them; what is missing is only the
+metadata §2 grades against.
+
+##### Why there is no fallback anchor: SEP-40 does not define one
+
+Stated plainly rather than worked around. [SEP-40](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0040.md)
+defines `base, assets, decimals, resolution, price, prices, lastprice` — **no maximum
+acceptable price age and no deviation bound anywhere in the interface**. The spec puts
+staleness checking on the _consumer_ ("Always check retrieved price data for staleness by
+comparing the quoted timestamp with current date"), which is precisely the judgment §2 exists
+to make and precisely what it refuses to make from an invented number.
+
+So the only candidate is `resolution()` — a publish interval, not a staleness tolerance —
+and **using it fabricates a 100 on a demonstrably stale price**:
+
+> Solv publishes `resolution() = 43200` (12 hours, and mutable after deployment via its own
+> `set_resolution`, which its source documents as a deliberate deviation from SEP-40). Fed to
+> `freshnessWindow` with no `max_age` to pair it with, that yields `{fresh: 43200, dead:
+86400}` — because `STALE_CEILING_SECONDS` clamps `dead` and not `fresh`, so a feed that
+> declares a slow tick gets a slow dead line rather than a capped one. Solv's genuinely stale
+> feeds, read at **10,285s and 21,739s old on 2026-08-26**, would both publish
+> `priceFreshness` **100**.
+
+And `resolution()` is only present on one of the four at all. Orbit and Forex expose it one
+hop upstream through their bridge/proxy, which would make the anchor a property of a contract
+the pool does not itself publish; Spectra has no upstream feed to chase.
+
+##### Two of the four price off the ledger clock, so freshness is 100 by construction
+
+The sharper problem, and the reason this is a precondition rather than a "weak signal":
+
+- **Spectra PTs** runs "Spectra Deterministic Oracle — Zero Coupon Bond Model". Its price is a
+  function of `start_t`, `maturity` and `initial_implied_apy` evaluated at the current ledger
+  time, its `lastprice` **ignores the asset argument entirely** (its own doc comment says so),
+  and its owner can move the target with `set_future_pt_value`. There is no publish event, so
+  there is no such thing as a stale price: `age` is always ~0 and any freshness formula
+  returns 100 permanently, whatever happens to the asset.
+- **Orbit's** dominant reserve — **99.5% of that pool's $190,863** on 2026-08-26 — returns
+  exactly `1.0` at current ledger time while touching no upstream contract. §2b already
+  handles that case on an aggregator: base assets are excluded rather than scored, because
+  there is no oracle-derived price to grade. Orbit's bridge **publishes no `base()`**, so
+  there is nothing to detect them with, and the reserve would be graded as a fresh feed.
+
+A fabricated **100** is worse than a fabricated 0, because 0 at least renders in the danger
+band where a reader discounts it. Ground rule 4 forbids both.
+
+##### What was rejected, and why it must not be re-proposed
+
+- **Make the three calls optional and score `oracleSafety` on what remains.** Rejected: there
+  is nothing to score on. Both anchors are gone, `deviationBound` collapses to a constant 0
+  for all four pools — a constant is not a measurement — and `priceFreshness` collapses to a
+  constant 100 for two of them. It also reads as a diagnosis it did not make: a `max_dev` of 0
+  means a protocol **disabled** its bound, which is the YieldBlox finding; publishing the same
+  0 for a protocol whose oracle never had the mechanism asserts a choice nobody made.
+
+- **A `null` `oracleSafety`, scored on the remaining four factors.** Rejected, and this is the
+  one that looks reasonable until it is measured. `scoreFactors` renormalizes over non-null
+  weights, so dropping `oracleSafety` divides by 0.75 instead of 1.00. Run against live chain
+  data on 2026-08-26, that is not neutral — it is a **large upward** revision, because
+  `oracleSafety` is the heaviest factor (0.25) and the one a badly-configured pool scores
+  worst on:
+
+  | Pool        | Score with `oracleSafety: null` | For comparison, live registry |
+  | ----------- | ------------------------------- | ----------------------------- |
+  | **Orbit**   | **71**                          | Blend `51`                    |
+  | Spectra PTs | 49                              | Kinetic `27`                  |
+  | Solv        | 15                              | YieldBlox `25`                |
+  | Forex       | 11                              |                               |
+
+  Orbit would publish **71 — the highest number in the registry, twenty points above Blend
+  Fixed** — while Admin-Frozen, 99.5% concentrated in a synthetic priced at a hardcoded 1.0,
+  through an oracle publishing neither a staleness tolerance nor a deviation bound. That is an
+  incentive inversion: YieldBlox scores `oracleSafety` **0** for having a deviation bound and
+  disabling it, so _not publishing the mechanism at all_ would pay better than publishing it
+  switched off. Ship an opaque oracle, get a better number — which is ground rule 2's concern
+  arriving through the back door.
+
+  It is **not** the same failure as the rejected sixth factor under
+  [Factor weights](#factor-weights): that one moved _every_ protocol's score by changing the
+  denominator for everyone. This moves only the affected pool's. The failure here is
+  different and, in a ranked list, worse — two entries in the same ranked column would be
+  graded on **different rulebooks**, four factors against five, which ground rule 1 does not
+  permit. A `null` factor is defined as "genuinely doesn't apply to this protocol" (the
+  dashboard renders it "Not applicable to this protocol"). A pool that runs on prices, whose
+  price configuration we could not read, is not a pool to which price trustworthiness does not
+  apply.
+
+- **Reading the anchor from the upstream oracle** a bridge or proxy forwards to. Rejected:
+  it answers for a contract the pool does not publish and does not itself constrain, it exists
+  for only two of the four, and following it is a bespoke traversal per oracle implementation —
+  a per-market rulebook in all but name. It also would not have helped: the upstream feeds
+  behind Orbit and Forex publish `resolution()` and no `max_age`, so the traversal lands back
+  on the fabricated anchor above.
+
+**This does not bump `METHODOLOGY_VERSION`.** It moves no published number and changes no
+formula. Every market Stenion scores runs on an aggregator, so `oracleSafety` is computed
+byte-identically before and after; what changed is that a precondition already implicit in §2
+is now written down and enforced in code
+([`ORACLE_GRADING_READS`](adapters/blend.ts) and `oracleNotGradable`), instead of surfacing as
+an unexplained `HostError` from whichever read happened to run first. Same reasoning, and the
+same conclusion, as the market-size floor.
+
+> **⚠️ What this costs, stated rather than glossed.** Four live markets stay unranked, one of
+> them holding real money — Orbit's $190,863 on 2026-08-26. The market-size floor's warning
+> applies here in full: an excluded market has no entry at all, which is a stronger action
+> than excluding a reserve. `coverage.ts` is the answer to that and not a formality — each of
+> the four gets a page, a per-market reason, the contract addresses, and a `verify` sentence,
+> so a reader can disagree with the decision from the same data it was made on. What they do
+> not get is a number, because there is no number to give them.
+>
+> **The precondition is a property of the oracle, not a verdict on the protocol.** Nothing
+> here says these markets are unsafe, or that their oracles are bad ones. A deterministic bond
+> pricer is a perfectly coherent way to price a principal token; it is simply not a thing this
+> factor knows how to grade. If such an oracle later publishes a staleness tolerance and a
+> deviation bound, the pool becomes scorable with **no rule change** — it is a `BLEND_POOLS`
+> entry and a deleted coverage entry, in one PR.
 
 #### What was considered and deliberately rejected
 
