@@ -136,7 +136,7 @@ const OPERATIONAL_STATE: OperationalState = {
 /** A target that succeeds with a fixed score. */
 function okTarget(id: string, safetyScore = 53): IndexTarget {
   return {
-    metadata: { id, name: id, chain: 'stellar', adapterRef: 'FakeAdapter' },
+    metadata: { id, name: id, chain: 'stellar', category: 'lending', adapterRef: 'FakeAdapter' },
     run: async () => ({
       safetyScore,
       factors: FACTORS,
@@ -149,7 +149,13 @@ function okTarget(id: string, safetyScore = 53): IndexTarget {
 /** A target whose adapter throws, the way a real one does on RPC failure. */
 function throwingTarget(id: string, thrown: unknown = new Error('Soroban RPC unreachable')) {
   return {
-    metadata: { id, name: id, chain: 'stellar' as const, adapterRef: 'FakeAdapter' },
+    metadata: {
+      id,
+      name: id,
+      chain: 'stellar' as const,
+      category: 'lending' as const,
+      adapterRef: 'FakeAdapter',
+    },
     run: async () => {
       throw thrown;
     },
@@ -317,16 +323,46 @@ describe('runCycle — a database failure does not abort the cycle', () => {
 
 describe('runCycle — the ok record', () => {
   it('stamps the methodology version from core, not from the adapter', async () => {
-    // One rulebook applies to every protocol, so the version is a property of
-    // the run. An adapter has no say in it — that is what keeps stored history
-    // interpretable.
-    const { METHODOLOGY_VERSION } = await import('@stenion/core');
+    // One rulebook applies to every protocol IN A CATEGORY, so the version is a
+    // property of the run. An adapter has no say in it — that is what keeps
+    // stored history interpretable. What the adapter DOES say is which category
+    // it belongs to, which is what selects the counter.
+    const { METHODOLOGY_VERSIONS } = await import('@stenion/core');
     const { store, written } = fakeStore();
     await runCycle([okTarget('blend')], store);
 
     const record = written[0];
     assert.equal(record.status, 'ok');
-    assert.equal(record.methodologyVersion, METHODOLOGY_VERSION);
+    assert.equal(record.methodologyVersion, METHODOLOGY_VERSIONS.lending);
+  });
+
+  it("stamps the target's own category, so the version stays interpretable", async () => {
+    // The pair is the identifier of a rulebook, not the integer: every
+    // category's counter starts at 1, so a stored `methodologyVersion: 1` says
+    // nothing on its own once a second category exists. Migration 0008.
+    //
+    // Resolved from target.metadata.category rather than from a global
+    // constant — that is the whole difference between this and the scalar it
+    // replaced, and it is what makes a second category a config change here
+    // rather than a code change.
+    const { store, written } = fakeStore();
+    await runCycle([okTarget('blend')], store);
+
+    const record = written[0];
+    assert.equal(record.status, 'ok');
+    assert.equal(record.category, 'lending');
+  });
+
+  it('records no category on a failed run, because nothing was scored', async () => {
+    // Same discriminated union methodologyVersion follows: a failed run
+    // produced no score, so there is no rulebook to attribute it to. Writing
+    // `lending` here would claim a lending score was computed when none was.
+    const { store, written } = fakeStore();
+    await runCycle([throwingTarget('blend')], store);
+
+    const record = written[0];
+    assert.equal(record.status, 'failed');
+    assert.ok(!('category' in record), 'a failed record must not carry a category');
   });
 
   it('persists the score, factors and both timestamps as ISO strings', async () => {
@@ -346,7 +382,13 @@ describe('toTarget — the adapter pipeline wrapper', () => {
   /** A minimal adapter with its own raw shape, to prove TRawData stays internal. */
   function fakeAdapter(id: string, calls: string[]): Adapter<{ n: number }> {
     return {
-      metadata: { id, name: id, chain: 'stellar', adapterRef: 'FakeAdapter' } as ProtocolMetadata,
+      metadata: {
+        id,
+        name: id,
+        chain: 'stellar',
+        category: 'lending',
+        adapterRef: 'FakeAdapter',
+      } as ProtocolMetadata,
       async fetchRawData() {
         calls.push('fetchRawData');
         return { n: 1 };
@@ -399,6 +441,7 @@ describe('toTarget — the adapter pipeline wrapper', () => {
         id: 'blend',
         name: 'Blend',
         chain: 'stellar',
+        category: 'lending',
         adapterRef: 'BlendAdapter',
       } as ProtocolMetadata;
       async fetchRawData() {
@@ -453,7 +496,7 @@ describe('toTarget — the adapter pipeline wrapper', () => {
 function flakyTarget(id: string, failures: number, safetyScore = 53) {
   let calls = 0;
   const target: IndexTarget = {
-    metadata: { id, name: id, chain: 'stellar', adapterRef: 'FakeAdapter' },
+    metadata: { id, name: id, chain: 'stellar', category: 'lending', adapterRef: 'FakeAdapter' },
     run: async () => {
       calls++;
       if (calls <= failures) throw new Error('Soroban RPC unreachable');
@@ -725,7 +768,13 @@ describe('runCycle — the cycle budget is a hard ceiling', () => {
     const { store, written } = fakeStore();
 
     const blend: IndexTarget = {
-      metadata: { id: 'blend', name: 'blend', chain: 'stellar', adapterRef: 'FakeAdapter' },
+      metadata: {
+        id: 'blend',
+        name: 'blend',
+        chain: 'stellar',
+        category: 'lending',
+        adapterRef: 'FakeAdapter',
+      },
       run: async () => {
         // Each attempt runs to its cap, as the SOFT timeout permits — it
         // abandons the attempt rather than cancelling it, so an attempt can and
@@ -765,14 +814,26 @@ describe('runCycle — the cycle budget is a hard ceiling', () => {
     let kineticStarted = 0;
 
     const runaway: IndexTarget = {
-      metadata: { id: 'blend', name: 'blend', chain: 'stellar', adapterRef: 'FakeAdapter' },
+      metadata: {
+        id: 'blend',
+        name: 'blend',
+        chain: 'stellar',
+        category: 'lending',
+        adapterRef: 'FakeAdapter',
+      },
       run: async () => {
         t += 100_000;
         throw new Error('hung rpc');
       },
     };
     const kinetic: IndexTarget = {
-      metadata: { id: 'kinetic', name: 'kinetic', chain: 'stellar', adapterRef: 'FakeAdapter' },
+      metadata: {
+        id: 'kinetic',
+        name: 'kinetic',
+        chain: 'stellar',
+        category: 'lending',
+        adapterRef: 'FakeAdapter',
+      },
       run: async () => {
         kineticStarted++;
         return {
@@ -813,7 +874,13 @@ describe('runCycle — the cycle budget is a hard ceiling', () => {
     const { store } = fakeStore();
     let calls = 0;
     const slow: IndexTarget = {
-      metadata: { id: 'blend', name: 'blend', chain: 'stellar', adapterRef: 'FakeAdapter' },
+      metadata: {
+        id: 'blend',
+        name: 'blend',
+        chain: 'stellar',
+        category: 'lending',
+        adapterRef: 'FakeAdapter',
+      },
       run: async () => {
         calls++;
         t += 15_000; // the attempt cap
@@ -866,7 +933,13 @@ describe('runCycle — the cycle budget is a hard ceiling', () => {
       const deps = { now: () => t, sleep: async (ms: number) => void (t += ms) };
       const { store } = fakeStore();
       const slow: IndexTarget = {
-        metadata: { id: 'slow', name: 'slow', chain: 'stellar', adapterRef: 'FakeAdapter' },
+        metadata: {
+          id: 'slow',
+          name: 'slow',
+          chain: 'stellar',
+          category: 'lending',
+          adapterRef: 'FakeAdapter',
+        },
         run: async () => {
           t += 9_000;
           return {
@@ -910,7 +983,7 @@ function deferredTarget(id: string, safetyScore = 50) {
   });
   let started = false;
   const target: IndexTarget = {
-    metadata: { id, name: id, chain: 'stellar', adapterRef: 'FakeAdapter' },
+    metadata: { id, name: id, chain: 'stellar', category: 'lending', adapterRef: 'FakeAdapter' },
     run: async () => {
       started = true;
       await gate;
@@ -988,7 +1061,13 @@ describe('runCycle — bounded concurrency', () => {
     let peak = 0;
     const { store } = fakeStore();
     const targets: IndexTarget[] = Array.from({ length: 4 }, (_, i) => ({
-      metadata: { id: `p${i}`, name: `p${i}`, chain: 'stellar', adapterRef: 'FakeAdapter' },
+      metadata: {
+        id: `p${i}`,
+        name: `p${i}`,
+        chain: 'stellar',
+        category: 'lending',
+        adapterRef: 'FakeAdapter',
+      },
       run: async () => {
         inFlight++;
         peak = Math.max(peak, inFlight);
@@ -1015,7 +1094,13 @@ describe('runCycle — bounded concurrency', () => {
     let peak = 0;
     const { store } = fakeStore();
     const targets: IndexTarget[] = Array.from({ length: 6 }, (_, i) => ({
-      metadata: { id: `p${i}`, name: `p${i}`, chain: 'stellar', adapterRef: 'FakeAdapter' },
+      metadata: {
+        id: `p${i}`,
+        name: `p${i}`,
+        chain: 'stellar',
+        category: 'lending',
+        adapterRef: 'FakeAdapter',
+      },
       run: async () => {
         inFlight++;
         peak = Math.max(peak, inFlight);

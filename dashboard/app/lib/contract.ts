@@ -10,6 +10,22 @@
 export type RunStatus = 'ok' | 'failed';
 
 /**
+ * Which rulebook scores a protocol.
+ *
+ * Mirrors ProtocolCategory in @stenion/core, declared here for the same reason
+ * every other type in this file is — so a client component can import it without
+ * pulling in `pg`.
+ *
+ * A COMPARABILITY CLAIM, not a label. Two protocols' `safetyScore`s mean the
+ * same thing only when this agrees: each category is scored on its own factors
+ * under its own weights, so a number from one says nothing about a number from
+ * another. Anything that RANKS these entries must scope the ranking to one
+ * category, and a position numeral must never span two — the registry enforces
+ * that in #78. One member today; the union is what makes a second expressible.
+ */
+export type ProtocolCategory = 'lending';
+
+/**
  * Present when an entry is a market running on ANOTHER protocol's contracts
  * rather than on its own — the YieldBlox pool, which runs Blend's V2 pool
  * contract byte-for-byte, is the case this exists for.
@@ -46,7 +62,13 @@ export interface ProtocolDeployment {
 export type OperationalLevel =
   'active' | 'borrowingDisabled' | 'entryDisabled' | 'exitDisabled' | 'notOperational';
 
-/** One user-facing operation a market can refuse. */
+/**
+ * One user-facing operation a LENDING market can refuse.
+ *
+ * Per category, like the factor set: these five are lending's vocabulary, and a
+ * future category publishes its own rather than describing its restrictions in
+ * these words. `OperationalLevel` above is shared across all of them.
+ */
 export type PoolOperation = 'supply' | 'withdraw' | 'borrow' | 'repay' | 'liquidate';
 
 /**
@@ -83,6 +105,8 @@ export interface LeaderboardEntry {
   id: string;
   name: string;
   chain: string;
+  /** which rulebook produced `safetyScore` — see ProtocolCategory */
+  category: ProtocolCategory;
   /**
    * Root-relative path to a logo this app hosts under `public/`, or null when
    * the protocol publishes no usable mark. Null is a rendered state, not an
@@ -143,6 +167,8 @@ export interface ProtocolDetail {
   id: string;
   name: string;
   chain: string;
+  /** which rulebook scores this protocol — see ProtocolCategory */
+  category: ProtocolCategory;
   adapter: string;
   /** see LeaderboardEntry.logo */
   logo: string | null;

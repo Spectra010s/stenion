@@ -26,7 +26,14 @@
  * adapters cannot classify the same restriction two different ways. Reading
  * which operations a protocol has blocked is per-protocol input reading and
  * stays in the adapter, like every other raw read.
+ *
+ * WHAT IS PER CATEGORY. The *vocabulary* of operations (`CATEGORY_OPERATIONS`)
+ * and the ordering and ladder that read it. `OperationalLevel` is shared across
+ * every category — see `CATEGORY_OPERATIONS` for why that split falls where it
+ * does.
  */
+
+import type { ProtocolCategory } from './category';
 
 /**
  * The operations a lending market can restrict, named by what a user is trying
@@ -37,6 +44,10 @@
  * protocol exposes — flash loans, auction bookkeeping and admin calls are all
  * omitted, because a state that blocks only those is not a state a reader of a
  * risk score needs to weigh.
+ *
+ * THIS IS LENDING'S VOCABULARY, and only lending's — see `CATEGORY_OPERATIONS`.
+ * Its five members are unchanged: nothing was added, removed or renamed when the
+ * vocabulary became category-scoped.
  */
 export const PoolOperation = {
   /** deposit into the market */
@@ -49,6 +60,43 @@ export const PoolOperation = {
   Liquidate: 'liquidate',
 } as const;
 export type PoolOperation = (typeof PoolOperation)[keyof typeof PoolOperation];
+
+/**
+ * Each category's operation vocabulary, keyed by category.
+ *
+ * WHY THIS EXISTS. `operationalState` is a REQUIRED method on the adapter
+ * interface (`ADAPTER_INTERFACE_VERSION` 2), so every adapter of every future
+ * category has to satisfy it. But "which operations can be blocked" is not a
+ * question with one answer across categories — it is a per-category vocabulary,
+ * the way the factor set is. Leaving `PoolOperation` as the only vocabulary
+ * would force the next category to either describe its restrictions in lending's
+ * words or skip the method, and both are worse than saying which words belong to
+ * which rulebook.
+ *
+ * ONE ENTRY TODAY, and adding one is not this issue's job. What is scoped here
+ * is the vocabulary — the *set of names* — and nothing else. When a second
+ * category arrives it registers its own operation names here, and its own
+ * ordering and classification ladder alongside the lending ones below.
+ *
+ * WHAT IS DELIBERATELY **NOT** CATEGORY-SCOPED: `OperationalLevel`. It is
+ * already abstracted around "can a user still get out", which is the same
+ * question for any market a user can put value into, and it is the hard-won part
+ * of this module — the reason a shared representation is possible at all. It
+ * stays one shared ladder.
+ */
+export const CATEGORY_OPERATIONS = {
+  lending: PoolOperation,
+} as const satisfies Record<ProtocolCategory, Readonly<Record<string, string>>>;
+
+/**
+ * The operations one category can restrict.
+ *
+ * Defaulted to the whole union so a bare `OperationalState` still means "some
+ * category's state" — which is what a storage row or an API response holds, since
+ * neither is parameterized by the category of the protocol it describes.
+ */
+export type OperationFor<C extends ProtocolCategory = ProtocolCategory> =
+  (typeof CATEGORY_OPERATIONS)[C][keyof (typeof CATEGORY_OPERATIONS)[C]];
 
 /**
  * How restricted a market is, named by what is blocked rather than by any
@@ -98,7 +146,7 @@ export type OperationalOrigin = 'admin' | 'protocol' | 'indeterminate';
  * Every field is a reading or a direct restatement of one. Nothing here is
  * graded, weighted, or combined into anything — see the module comment.
  */
-export interface OperationalState {
+export interface OperationalState<C extends ProtocolCategory = ProtocolCategory> {
   /** the shared classification; the only derived field, and derived by `toOperationalState` */
   level: OperationalLevel;
   /**
@@ -112,8 +160,10 @@ export interface OperationalState {
    * gating logic. Carried explicitly rather than derived from `level` because
    * the two are not equivalent: Blend's Setup blocks supply and borrow while
    * still permitting withdrawals, which no point on the level ladder describes.
+   *
+   * Drawn from the vocabulary of the category `C` — see `CATEGORY_OPERATIONS`.
    */
-  blocked: PoolOperation[];
+  blocked: OperationFor<C>[];
   /** see OperationalOrigin — who could have set this, never why */
   origin: OperationalOrigin;
   /** what was read and what it means for a user, in one sentence */
@@ -144,12 +194,14 @@ const LEVEL_RANK: Record<OperationalLevel, number> = {
 };
 
 /** What an adapter reads; everything else on `OperationalState` is derived from it. */
-export interface OperationalReading {
+export interface OperationalReading<C extends ProtocolCategory = ProtocolCategory> {
   /**
    * Every operation the protocol's own gating logic currently refuses. Order and
    * duplicates don't matter — the output is deduplicated and canonically ordered.
+   *
+   * Drawn from the vocabulary of the category `C` — see `CATEGORY_OPERATIONS`.
    */
-  blocked: readonly PoolOperation[];
+  blocked: readonly OperationFor<C>[];
   /**
    * True only where the protocol publishes an explicit "not opened yet" state
    * (Blend's `status == 6`). Never inferred from emptiness, a zero balance, or
@@ -166,12 +218,17 @@ export interface OperationalReading {
 }
 
 /**
- * Canonical publication order for `blocked`, so two adapters reporting the same
- * restriction produce byte-identical output. Deliberately the order a user meets
- * them in — get in, get out, then the borrow-side operations — rather than
- * alphabetical, which would put `borrow` before `supply` for no reason.
+ * Canonical publication order for LENDING's `blocked`, so two lending adapters
+ * reporting the same restriction produce byte-identical output. Deliberately the
+ * order a user meets them in — get in, get out, then the borrow-side operations —
+ * rather than alphabetical, which would put `borrow` before `supply` for no
+ * reason.
+ *
+ * Per category, like the vocabulary it orders: a second category registers its
+ * own ordering beside this one, because "the order a user meets them in" is a
+ * statement about that category's operations.
  */
-const ORDERED_OPERATIONS: readonly PoolOperation[] = [
+const ORDERED_LENDING_OPERATIONS: readonly PoolOperation[] = [
   PoolOperation.Supply,
   PoolOperation.Withdraw,
   PoolOperation.Borrow,
@@ -180,7 +237,15 @@ const ORDERED_OPERATIONS: readonly PoolOperation[] = [
 ];
 
 /**
- * The shared classification rule, applied identically to every protocol.
+ * LENDING's classification rule, applied identically to every lending protocol.
+ *
+ * SCOPED TO ONE CATEGORY because the ladder names lending's operations —
+ * withdraw, supply, borrow. The `OperationalLevel` it produces is shared, but
+ * the mapping from blocked operations onto that ladder is a statement about a
+ * particular category's vocabulary, so it takes and returns
+ * `<'lending'>`-parameterized types. A second category adds its own function
+ * beside this one; it does not widen this one's signature and reinterpret these
+ * rungs.
  *
  * The ladder is checked from the most restrictive down, so a state that blocks
  * several things is named by the worst of them:
@@ -201,8 +266,10 @@ const ORDERED_OPERATIONS: readonly PoolOperation[] = [
  * the chain does not draw. They stay in `blocked` because they are true and a
  * reader weighing a halted market should see that liquidations have stopped too.
  */
-export function toOperationalState(reading: OperationalReading): OperationalState {
-  const blocked = ORDERED_OPERATIONS.filter((op) => reading.blocked.includes(op));
+export function toOperationalState(
+  reading: OperationalReading<'lending'>,
+): OperationalState<'lending'> {
+  const blocked = ORDERED_LENDING_OPERATIONS.filter((op) => reading.blocked.includes(op));
   const level = reading.neverOpened
     ? OperationalLevel.NotOperational
     : blocked.includes(PoolOperation.Withdraw)
@@ -243,7 +310,9 @@ export function toOperationalState(reading: OperationalReading): OperationalStat
  * at all" is not "nothing is restricted", and an adapter that produced none has
  * a bug that must not be published as a clean bill of health.
  */
-export function mostRestrictive(states: readonly OperationalState[]): OperationalState {
+export function mostRestrictive<C extends ProtocolCategory = ProtocolCategory>(
+  states: readonly OperationalState<C>[],
+): OperationalState<C> {
   if (states.length === 0) {
     throw new Error('mostRestrictive: no operational readings — cannot infer a state');
   }

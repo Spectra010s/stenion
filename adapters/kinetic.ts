@@ -604,9 +604,9 @@ export interface KineticAdapterOptions {
   routerId?: string;
 }
 
-export class KineticAdapter implements Adapter<KineticRawData> {
+export class KineticAdapter implements Adapter<KineticRawData, 'lending'> {
   /** Constructor-built so `contractId` is the router actually scored — see BlendAdapter. */
-  readonly metadata: ProtocolMetadata;
+  readonly metadata: ProtocolMetadata<'lending'>;
 
   private readonly rpcUrl: string;
   private readonly horizonUrl: string;
@@ -621,6 +621,9 @@ export class KineticAdapter implements Adapter<KineticRawData> {
       id: 'kinetic',
       name: 'Kinetic',
       chain: 'stellar',
+      // K2 is a lending protocol — see ProtocolCategory. Required as of
+      // ADAPTER_INTERFACE_VERSION 3; nothing infers it.
+      category: 'lending',
       // Literal, not this.constructor.name — see ProtocolMetadata.adapterRef.
       adapterRef: 'KineticAdapter',
       // Kinetic rebranded to "K2" (k2lend.com) and publishes no high-resolution
@@ -752,7 +755,7 @@ export class KineticAdapter implements Adapter<KineticRawData> {
    * — so `neverOpened` is false on every path. That is a fact about K2, not an
    * omission.
    */
-  operationalState(raw: KineticRawData): OperationalState {
+  operationalState(raw: KineticRawData): OperationalState<'lending'> {
     const asOf = new Date(raw.fetchedAt * 1000);
 
     const global = toOperationalState({
@@ -792,7 +795,7 @@ export class KineticAdapter implements Adapter<KineticRawData> {
   }
 
   /** One reserve's flags → an operational reading. See KineticReserveFlags for the gating. */
-  private reserveOperationalState(r: KineticReserveRaw, asOf: Date): OperationalState {
+  private reserveOperationalState(r: KineticReserveRaw, asOf: Date): OperationalState<'lending'> {
     const { active, frozen, borrowingEnabled, paused } = r.flags;
     const label = shortAsset(r.asset);
     const halted = paused || !active;

@@ -480,6 +480,17 @@ describe('all three Blend pools — one engine, three markets', () => {
     assert.equal(new Set([fixedScore, ybxScore, ethScore]).size, 3, 'three markets, three numbers');
   });
 
+  it('declare the lending category, on every pool', async () => {
+    // Required as of ADAPTER_INTERFACE_VERSION 3 (#76). Asserted per pool rather
+    // than once on the class, for the same reason `contractId` is: metadata is
+    // built per instance from the pool it was handed, so "the class sets it" and
+    // "every instance has it" are different claims.
+    for (const pool of BLEND_POOLS) {
+      assert.equal(new BlendAdapter({ pool }).metadata.category, 'lending');
+    }
+    assert.equal(new KineticAdapter().metadata.category, 'lending');
+  });
+
   it('are scored by the same adapter, and say so', async () => {
     // `adapterRef` is deliberately shared: both rows genuinely come from
     // BlendAdapter, and a reader following the provenance label lands in the

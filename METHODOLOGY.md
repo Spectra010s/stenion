@@ -75,8 +75,11 @@ No boundary survives in the stored data — the v2 rows above were discarded —
 that marks one is live and tested, because the first real bump must be legible on the day it
 happens rather than built in a hurry then:
 
-- The indexer stamps `risk_scores.methodology_version` from `METHODOLOGY_VERSION` in
-  [`core/src/types.ts`](core/src/types.ts) at write time. An adapter has no say in it.
+- The indexer stamps `risk_scores.methodology_version` from this category's entry in
+  `METHODOLOGY_VERSIONS` ([`core/src/category.ts`](core/src/category.ts)) at write time, resolved
+  from the target's own category. An adapter has no say in the version; it only declares which
+  category it belongs to. `risk_scores.category` is stamped beside it, because every category's
+  counter starts at 1 and the pair — not the integer — identifies a rulebook.
 - The score-history chart on each protocol page **breaks the line** at a version change rather
   than drawing through it, and the run list labels the break. Both paths are covered by fixture
   tests, since live data cannot exercise them.
@@ -139,9 +142,11 @@ why, and for why that is a decision rather than an omission.
 ### Methodology versions
 
 Every scored run is stamped with the rulebook version that produced it
-(`risk_scores.methodology_version`, from `METHODOLOGY_VERSION` in
-[`core/src/types.ts`](core/src/types.ts)), and it is surfaced on the API's protocol detail
-and on each history point. The changelog:
+(`risk_scores.methodology_version`, from the `lending` entry in `METHODOLOGY_VERSIONS` in
+[`core/src/category.ts`](core/src/category.ts)), and it is surfaced on the API's protocol detail
+and on each history point. Versions are per category and counters are independent, so the changelog
+below is **lending's**; another category's v1 is a different rulebook, not an earlier one. The
+changelog:
 
 | Version | Effective | Change                                                                                                                                                                                                                 |
 | ------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -562,7 +567,7 @@ band where a reader discounts it. Ground rule 4 forbids both.
   behind Orbit and Forex publish `resolution()` and no `max_age`, so the traversal lands back
   on the fabricated anchor above.
 
-**This does not bump `METHODOLOGY_VERSION`.** It moves no published number and changes no
+**This does not bump lending's methodology version.** It moves no published number and changes no
 formula. Every market Stenion scores runs on an aggregator, so `oracleSafety` is computed
 byte-identically before and after; what changed is that a precondition already implicit in §2
 is now written down and enforced in code
@@ -1012,7 +1017,7 @@ sounds like a meaningfulness test while being a scorability test is worse than n
 > Closing that needs a distinct not-scorable outcome through `Adapter` and `RunRecord`; it is
 > filed in [`ROADMAP.md`](ROADMAP.md) rather than implied to exist here.
 
-**This does not bump `METHODOLOGY_VERSION`.** It moves no published number: every market
+**This does not bump lending's methodology version.** It moves no published number: every market
 Stenion currently scores — both Blend pools and K2's primary market — clears the floor, so no
 stored score is computed differently and none becomes non-comparable. It documents a
 precondition on what gets scored at all, which is additive.
@@ -1197,7 +1202,7 @@ same treatment, for the same reason, as `deployedOn`. If it ever stops being ren
 decision not to score has quietly become a decision to hide.
 
 **No version bump.** Nothing here changes a formula, a threshold or a weight, and no stored score
-moves, so `METHODOLOGY_VERSION` stays at 1. That the state cannot reach a factor is enforced
+moves, so lending's methodology version stays at 1. That the state cannot reach a factor is enforced
 rather than intended: `adapters/blend.test.ts` and `adapters/kinetic.test.ts` each assert a
 byte-identical factor map across every restricted state their protocol can be in. If pause state
 ever moves a number, those tests fail before the change ships.

@@ -28,7 +28,7 @@
 // reach it), and ONE alert POST per cycle (the notifier fires after the pool
 // joins, outside any worker, so it cannot become one message per protocol).
 
-import { METHODOLOGY_VERSION } from '@stenion/core';
+import { METHODOLOGY_VERSIONS } from '@stenion/core';
 import type { Adapter, OperationalState, ProtocolMetadata, RiskFactorMap } from '@stenion/core';
 import type { RunRecord, Store } from '@stenion/db';
 
@@ -424,8 +424,14 @@ export async function runCycle(
         factors,
         operationalState,
         // Stamped here, not by the adapter: one rulebook applies to every
-        // protocol, so the version is a property of the run, not of the adapter.
-        methodologyVersion: METHODOLOGY_VERSION,
+        // protocol IN A CATEGORY, so the version is a property of the run, not
+        // of the adapter — but WHICH rulebook is a property of the target, so it
+        // is resolved from the target's own declared category rather than from a
+        // single global constant. Both are stored: every category's counter
+        // starts at 1, so the version alone stops identifying a rulebook the
+        // moment a second category exists (migration 0008).
+        category: target.metadata.category,
+        methodologyVersion: METHODOLOGY_VERSIONS[target.metadata.category],
         computedAt: computedAt.toISOString(),
         runAt,
       };

@@ -5,6 +5,7 @@
 
 import type {
   OperationalState,
+  ProtocolCategory,
   ProtocolDeployment,
   ProtocolMetadata,
   RiskFactorMap,
@@ -23,10 +24,22 @@ export type RunRecord =
       safetyScore: number;
       factors: RiskFactorMap;
       /**
-       * The METHODOLOGY_VERSION this score was computed under. Stamped by the
-       * indexer from @stenion/core, not chosen per adapter — one rulebook
-       * applies to every protocol. Scores with different versions are not
-       * comparable; see migration 0002.
+       * The rulebook this score was computed under, stamped with the version
+       * below and frozen with it. Together they are the identifier of a
+       * rulebook; the version alone is not, because every category's counter
+       * starts at 1. See migration 0008 for why this is stamped per run rather
+       * than joined from `protocols`.
+       *
+       * On the `ok` arm only, like `methodologyVersion` and for the same reason:
+       * a failed run scored nothing, so there is no rulebook to attribute it to.
+       */
+      category: ProtocolCategory;
+      /**
+       * The METHODOLOGY_VERSIONS entry this score was computed under. Stamped by
+       * the indexer from @stenion/core from the target's own category, not
+       * chosen per adapter — one rulebook applies to every protocol in a
+       * category. Scores with different versions are not comparable, and neither
+       * are scores from different categories; see migrations 0002 and 0008.
        */
       methodologyVersion: number;
       /**
@@ -59,6 +72,17 @@ export interface LeaderboardEntry {
   id: string;
   name: string;
   chain: string;
+  /**
+   * Which rulebook produced `safetyScore` — see ProtocolCategory.
+   *
+   * ON THE BOARD, for the same reason `deployedOn` and `operationalState` are:
+   * it is part of what the row IS, not verification detail a reader looks up
+   * afterwards. Two rows' scores mean the same thing only when this agrees, so a
+   * consumer ranking these entries must scope the ranking to one category. The
+   * array's order carries no cross-category claim — API.md says so in the terms
+   * clients read, and the registry enforces it in #78.
+   */
+  category: ProtocolCategory;
   /**
    * Root-relative path to a logo the dashboard hosts, or null when the protocol
    * publishes no usable mark. Null is a supported, rendered state (an initials
@@ -135,6 +159,8 @@ export interface ProtocolDetail {
   id: string;
   name: string;
   chain: string;
+  /** which rulebook scores this protocol — see LeaderboardEntry.category */
+  category: ProtocolCategory;
   adapter: string;
   /** see LeaderboardEntry.logo — same value, same null-is-fine contract */
   logo: string | null;
@@ -345,6 +371,8 @@ export interface ProtocolDetailRow {
   id: string;
   name: string;
   chain: string;
+  /** NOT NULL as of migration 0008, defaulted for the pre-category writer */
+  category: string;
   adapter: string;
   logo: string | null;
   contract_id: string | null;
@@ -378,6 +406,10 @@ export function toProtocolDetail(
     id: row.id,
     name: row.name,
     chain: row.chain,
+    // Cast, like last_run_status above it: the column is `text` and the union
+    // is enforced by what upsertProtocol writes, which is ProtocolMetadata's
+    // already-typed `category`. Nothing else writes this table.
+    category: row.category as ProtocolCategory,
     adapter: row.adapter,
     // Identity columns are nullable in the schema and pass straight through:
     // "this protocol has no published mark / no docs site" is a real answer the
@@ -405,6 +437,8 @@ export interface LeaderboardRow {
   id: string;
   name: string;
   chain: string;
+  /** NOT NULL as of migration 0008, defaulted for the pre-category writer */
+  category: string;
   logo: string | null;
   deployment_host: string | null;
   deployment_label: string | null;
@@ -421,6 +455,8 @@ export function toLeaderboardEntry(row: LeaderboardRow): LeaderboardEntry {
     id: row.id,
     name: row.name,
     chain: row.chain,
+    /* see toProtocolDetail on the cast */
+    category: row.category as ProtocolCategory,
     logo: row.logo,
     deployedOn: toDeployedOn(row.deployment_host, row.deployment_label),
     safetyScore: toNumber(row.safety_score),
@@ -476,12 +512,13 @@ export function createStore(pool: Pool): Store {
       // See ProtocolMetadata.logo and CONTRIBUTING.md.
       await pool.query(
         `INSERT INTO protocols
-           (id, name, chain, adapter, logo, contract_id, site_url, docs_url,
+           (id, name, chain, category, adapter, logo, contract_id, site_url, docs_url,
             deployment_host, deployment_label)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          ON CONFLICT (id) DO UPDATE
            SET name = EXCLUDED.name,
                chain = EXCLUDED.chain,
+               category = EXCLUDED.category,
                adapter = EXCLUDED.adapter,
                logo = EXCLUDED.logo,
                contract_id = EXCLUDED.contract_id,
@@ -494,6 +531,10 @@ export function createStore(pool: Pool): Store {
           metadata.id,
           metadata.name,
           metadata.chain,
+          // Overwritten every cycle like every other identity column. A category
+          // corrected in the adapter propagates within one cycle; a value edited
+          // directly in the database is reverted by the next one.
+          metadata.category,
           metadata.adapterRef,
           // `?? null` because these are optional on ProtocolMetadata: pg would
           // send `undefined` as NULL anyway, but being explicit keeps "the
@@ -528,6 +569,7 @@ export function createStore(pool: Pool): Store {
               record.computedAt,
               record.runAt,
               record.methodologyVersion,
+              record.category,
               // Same treatment as `factors`: serialized here and cast to jsonb
               // in the statement, so the parameter type is unambiguous.
               JSON.stringify(record.operationalState),
@@ -544,13 +586,19 @@ export function createStore(pool: Pool): Store {
               // A failed run read nothing, so it knows nothing about the
               // market's state. NULL, never a fabricated `active`.
               null,
+              // Explicit NULL, not an omission: a failed run scored nothing, so
+              // no rulebook produced it. Writing this rather than letting
+              // migration 0008's DEFAULT fill it in is the precondition for
+              // tightening risk_scores_category_shape to the full union later —
+              // the same sequence 0002 -> 0004 followed for methodology_version.
+              null,
             ];
 
       await pool.query(
         `INSERT INTO risk_scores
            (protocol_id, status, safety_score, factors, error, computed_at, run_at,
-            methodology_version, operational_state)
-         VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9::jsonb)`,
+            methodology_version, operational_state, category)
+         VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9::jsonb, $10)`,
         values,
       );
     },
@@ -561,7 +609,7 @@ export function createStore(pool: Pool): Store {
       // the board, `latest` is the newest run of any status for the staleness
       // flag. Rank by score desc, never-scored protocols (null score) last.
       const { rows } = await pool.query<LeaderboardRow>(
-        `SELECT p.id, p.name, p.chain, p.logo,
+        `SELECT p.id, p.name, p.chain, p.category, p.logo,
                 p.deployment_host, p.deployment_label,
                 ok.safety_score, ok.computed_at, ok.operational_state,
                 latest.run_at AS last_run_at, latest.status AS last_run_status
@@ -590,7 +638,7 @@ export function createStore(pool: Pool): Store {
       // Protocol row + latest-ok score/factors + newest-run staleness fields, in
       // one query. No row → unknown id → null (the API turns this into a 404).
       const { rows } = await pool.query<ProtocolDetailRow>(
-        `SELECT p.id, p.name, p.chain, p.adapter,
+        `SELECT p.id, p.name, p.chain, p.category, p.adapter,
                 p.logo, p.contract_id, p.site_url, p.docs_url,
                 p.deployment_host, p.deployment_label,
                 ok.safety_score, ok.computed_at, ok.factors, ok.operational_state,

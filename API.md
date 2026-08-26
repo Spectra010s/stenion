@@ -10,6 +10,13 @@ The scored examples below were captured from the live production API, not writte
 definitions. Their responses are verbatim bodies from a snapshot taken at
 **2026-08-25T18:05Z**; the numbers move every ~5 minutes, the shapes do not.
 
+> **One field is documented below but not yet in these captures: `category`.** It ships with the
+> per-category rulebook change (#76) and was added to the field tables when the code was, while the
+> example bodies still predate the deploy that publishes it. They are re-`curl`ed from production
+> rather than hand-edited, because a body written from the types reproduces the type instead of the
+> truth — which is the entire reason these are captures. Until that recapture, read the tables as
+> current and the bodies as one deploy behind on this one field.
+
 The coverage example was `curl`ed from production on **2026-08-25T18:20Z**.
 
 One consequence of "verbatim" worth knowing before you diff these against the field tables: the keys
@@ -99,6 +106,16 @@ curl -i https://stenion.vercel.app/api/v1/health
 
 The leaderboard: every protocol Stenion tracks, with its latest score. Ranked by `safetyScore`
 descending, with never-scored protocols last.
+
+> **The array's order never implies a rank across categories, and two scores are comparable only
+> when their `category` matches.** Each category is scored on its own factors under its own weights
+> — a `safetyScore` of 70 in one says nothing at all about a 65 in another, and the gap between them
+> is not a quantity. This response is a flat data feed sorted by a single column; it is not a
+> leaderboard across categories, and building one from it by reading positions off the array would
+> assert a comparison the number cannot support. Rank within one `category` and present the
+> categories separately. Today every entry is `"lending"`, so the flat order happens to be a valid
+> ranking — that is a fact about the current data, not a guarantee of this endpoint, and it stops
+> being true the first time a second category ships.
 
 **Request**
 
@@ -202,6 +219,7 @@ curl https://stenion.vercel.app/api/v1/protocols
 | `id`               | string                   | Stable identifier, **case-sensitive**, used as the path segment on the detail endpoint.                                                                                                                           |
 | `name`             | string                   | Display name.                                                                                                                                                                                                     |
 | `chain`            | string                   | Currently always `"stellar"`.                                                                                                                                                                                     |
+| `category`         | string                   | Which rulebook produced `safetyScore` — currently always `"lending"`. **Scores are comparable only within one category.** Tolerate an unrecognised value: new categories are additive and stay on `v1`.           |
 | `logo`             | string or null           | Root-relative path to a mark **Stenion hosts** — prefix with the base host. `null` is a normal state, not a broken image.                                                                                         |
 | `deployedOn`       | object or null           | **Present when this entry is not an independent protocol** — see [Not every entry is a protocol](#not-every-entry-is-a-protocol). `null` means it runs on its own contracts.                                      |
 | `safetyScore`      | number or null           | 0–100, higher = safer. From the latest **`ok`** run. `null` means never successfully scored — not "zero", not "unsafe".                                                                                           |
@@ -443,19 +461,20 @@ curl https://stenion.vercel.app/api/v1/protocol/blend
 }
 ```
 
-| Field                         | Type           | Notes                                                                                                                      |
-| ----------------------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `id`, `name`, `chain`, `logo` |                | Same as the leaderboard.                                                                                                   |
-| `adapter`                     | string         | Which Stenion adapter produced the score. Informational.                                                                   |
-| `contractId`                  | string or null | The Soroban contract the score was derived from. A raw `C…` address, deliberately **not** an explorer URL — pick your own. |
-| `site`, `docs`                | string or null | The protocol's own links. Listed as its properties, not as a recommendation.                                               |
-| `deployedOn`                  | object or null | Same as the leaderboard. See [Not every entry is a protocol](#not-every-entry-is-a-protocol).                              |
-| `operationalState`            | object or null | Same as the leaderboard. See [Operational state](#operational-state-is-published-never-scored).                            |
-| `safetyScore`, `computedAt`   |                | Latest **`ok`** run. Both `null` if never successfully scored.                                                             |
-| `factors`                     | object or null | The five-factor breakdown, or `null` if never scored. See below.                                                           |
-| `methodologyVersion`          | number or null | Which rulebook version the current score was computed under.                                                               |
-| `lastRunAt`, `lastRunStatus`  |                | Newest run of any status. See [Staleness](#staleness-is-your-problem-too).                                                 |
-| `history`                     | array          | Up to 50 recent runs, newest first. **A discriminated union — see below.**                                                 |
+| Field                         | Type           | Notes                                                                                                                                                                                                                    |
+| ----------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`, `name`, `chain`, `logo` |                | Same as the leaderboard.                                                                                                                                                                                                 |
+| `category`                    | string         | Same as the leaderboard. Pairs with `methodologyVersion` — see that row.                                                                                                                                                 |
+| `adapter`                     | string         | Which Stenion adapter produced the score. Informational.                                                                                                                                                                 |
+| `contractId`                  | string or null | The Soroban contract the score was derived from. A raw `C…` address, deliberately **not** an explorer URL — pick your own.                                                                                               |
+| `site`, `docs`                | string or null | The protocol's own links. Listed as its properties, not as a recommendation.                                                                                                                                             |
+| `deployedOn`                  | object or null | Same as the leaderboard. See [Not every entry is a protocol](#not-every-entry-is-a-protocol).                                                                                                                            |
+| `operationalState`            | object or null | Same as the leaderboard. See [Operational state](#operational-state-is-published-never-scored).                                                                                                                          |
+| `safetyScore`, `computedAt`   |                | Latest **`ok`** run. Both `null` if never successfully scored.                                                                                                                                                           |
+| `factors`                     | object or null | The five-factor breakdown, or `null` if never scored. See below.                                                                                                                                                         |
+| `methodologyVersion`          | number or null | Which rulebook version the current score was computed under. **Read it with `category`, not alone** — every category's version counter starts at 1, so the pair identifies a rulebook and the number by itself does not. |
+| `lastRunAt`, `lastRunStatus`  |                | Newest run of any status. See [Staleness](#staleness-is-your-problem-too).                                                                                                                                               |
+| `history`                     | array          | Up to 50 recent runs, newest first. **A discriminated union — see below.**                                                                                                                                               |
 
 ### The `factors` object
 

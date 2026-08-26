@@ -1018,7 +1018,7 @@ export interface BlendAdapterOptions {
   pool?: BlendPool;
 }
 
-export class BlendAdapter implements Adapter<BlendRawData> {
+export class BlendAdapter implements Adapter<BlendRawData, 'lending'> {
   /**
    * Built in the constructor rather than as a field initialiser because every
    * identity field has to describe the pool THIS INSTANCE scores, not a module
@@ -1032,7 +1032,7 @@ export class BlendAdapter implements Adapter<BlendRawData> {
    * point a reader at this file. It stays a string literal — never
    * `this.constructor.name`; see ProtocolMetadata.adapterRef.
    */
-  readonly metadata: ProtocolMetadata;
+  readonly metadata: ProtocolMetadata<'lending'>;
 
   private readonly rpcUrl: string;
   private readonly horizonUrl: string;
@@ -1048,6 +1048,11 @@ export class BlendAdapter implements Adapter<BlendRawData> {
       id: pool.id,
       name: pool.name,
       chain: 'stellar',
+      // Every Blend market is a lending market — see ProtocolCategory. Declared
+      // per instance like the rest of the identity, not inherited from a
+      // default, because there is no default: ADAPTER_INTERFACE_VERSION 3 makes
+      // this required precisely so no adapter is silently filed under lending.
+      category: 'lending',
       // Literal, not this.constructor.name — see ProtocolMetadata.adapterRef.
       adapterRef: 'BlendAdapter',
       contractId: this.poolId,
@@ -1166,7 +1171,7 @@ export class BlendAdapter implements Adapter<BlendRawData> {
    * "nothing is restricted": the level is unknowable, and `detail` says exactly
    * that rather than letting an empty list read as a clean bill of health.
    */
-  operationalState(raw: BlendRawData): OperationalState {
+  operationalState(raw: BlendRawData): OperationalState<'lending'> {
     const asOf = new Date(raw.fetchedAt * 1000);
     const source = `PoolConfig.status = ${raw.status}`;
     const meaning = BLEND_POOL_STATUS[raw.status];
