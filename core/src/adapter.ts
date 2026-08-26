@@ -1,5 +1,5 @@
 import type { OperationalState } from './operational-state';
-import { ProtocolMetadata, RiskFactorMap, RiskScoreResult } from './types';
+import { ProtocolCategory, ProtocolMetadata, RiskFactorMap, RiskScoreResult } from './types';
 
 /**
  * Version of the Adapter contract itself (not of any protocol). Bumped only
@@ -13,8 +13,14 @@ import { ProtocolMetadata, RiskFactorMap, RiskScoreResult } from './types';
  *     made to stop accumulating. This constant exists so that forcing every
  *     implementor to update is a labelled event rather than a silent break, and
  *     this is the first time it has been used for one.
+ * 3 — adds the required `metadata.category` field and a `TCategory` parameter
+ *     that scopes `operationalState`'s vocabulary to it (issue #76). Required
+ *     for the same reason `operationalState` was: a protocol with no category is
+ *     not a protocol we know how to score, and an optional field would default
+ *     the first adapter of every future category into lending's rulebook. Every
+ *     implementor must name its category; nothing infers one.
  */
-export const ADAPTER_INTERFACE_VERSION = 2 as const;
+export const ADAPTER_INTERFACE_VERSION = 3 as const;
 
 /**
  * The contract every protocol adapter implements.
@@ -36,9 +42,19 @@ export const ADAPTER_INTERFACE_VERSION = 2 as const;
  *
  * TRawData is intentionally adapter-specific: Blend's raw shape has
  * nothing in common with, say, YieldBlox's.
+ *
+ * TCategory is the rulebook this adapter is scored under. It is threaded through
+ * `metadata` and `operationalState` so those two cannot disagree: an adapter
+ * declaring `category: 'lending'` is checked against lending's operation
+ * vocabulary, not against the union of every category's. Defaulted to the whole
+ * union so a heterogeneous list (`Adapter<unknown>[]`, the indexer's run loop)
+ * still types, exactly as it did before this parameter existed.
  */
-export interface Adapter<TRawData = unknown> {
-  readonly metadata: ProtocolMetadata;
+export interface Adapter<
+  TRawData = unknown,
+  TCategory extends ProtocolCategory = ProtocolCategory,
+> {
+  readonly metadata: ProtocolMetadata<TCategory>;
 
   fetchRawData(): Promise<TRawData>;
 
@@ -61,6 +77,10 @@ export interface Adapter<TRawData = unknown> {
    * gates per reserve) rather than constructing the object by hand — that
    * function is the shared rule, and hand-rolling it is how two adapters come to
    * disagree about what "frozen" means.
+   *
+   * The operations this may report are `TCategory`'s, not a global set — see
+   * `CATEGORY_OPERATIONS`. `OperationalLevel` is shared across categories and is
+   * the same ladder for all of them.
    */
-  operationalState(rawData: TRawData): OperationalState;
+  operationalState(rawData: TRawData): OperationalState<TCategory>;
 }

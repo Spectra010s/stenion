@@ -36,8 +36,10 @@ These override any default behavior and are enforced in code and review:
   changes both together, at the same review bar. Shared rulebook logic that two adapters would
   otherwise duplicate lives in [`core/src/scoring.ts`](core/src/scoring.ts), so it can't drift
   between them.
-- **A scoring change that makes old scores non-comparable bumps `METHODOLOGY_VERSION`**
-  (`core/src/types.ts`), stamped onto every run by the indexer. History is never backfilled —
+- **A scoring change that makes old scores non-comparable bumps that category's
+  `METHODOLOGY_VERSIONS` entry** (`core/src/category.ts`), stamped onto every run by the indexer
+  alongside `risk_scores.category` — counters are per category and each starts at 1, so the pair
+  identifies a rulebook and the integer alone does not. History is never backfilled —
   `risk_scores` stores only outputs, not the raw inputs — so the discontinuity is labeled, not
   hidden.
 - **Findings are not scores.** Verifiable observations we can't or won't grade go in the protocol
@@ -216,7 +218,7 @@ is unchanged.
 Pause/frozen-pool state is **resolved and shipped** — and resolved as a decision _not_ to score
 it. It is published as `operationalState`, a live ungraded field beside the score, on the reasoning
 in [`METHODOLOGY.md`](METHODOLOGY.md) "Operational state is published, never scored". The taxonomy
-in `core/src/types.ts` is unchanged and `METHODOLOGY_VERSION` stayed at 1, because nothing about
+in `core/src/types.ts` is unchanged and lending's methodology version stayed at 1, because nothing about
 what a number means changed.
 
 Still open, and tracked in [`ROADMAP.md`](ROADMAP.md): market-depth-aware oracle scoring. It is a

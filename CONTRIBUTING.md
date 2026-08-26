@@ -270,7 +270,8 @@ protocol at once, deliberately and visibly.
 
 That also means **a change to the weighted mean is a methodology change, not an adapter change** —
 it moves every published score, so it needs the `METHODOLOGY.md` edit and probably a
-`METHODOLOGY_VERSION` bump (see [Changing a formula or threshold](#changing-a-formula-or-threshold)).
+bump of your category's `METHODOLOGY_VERSIONS` entry
+(see [Changing a formula or threshold](#changing-a-formula-or-threshold)).
 If you find yourself wanting different scoring arithmetic for your protocol, that's the conversation
 to open — not something to work around locally.
 

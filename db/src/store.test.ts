@@ -74,6 +74,7 @@ const detailRow = (over: Partial<ProtocolDetailRow> = {}): ProtocolDetailRow => 
   id: 'blend',
   name: 'Blend',
   chain: 'stellar',
+  category: 'lending',
   adapter: 'BlendAdapter',
   logo: '/assets/protocols/blend.svg',
   contract_id: 'CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD',
@@ -301,6 +302,7 @@ describe('toLeaderboardEntry', () => {
     id: 'blend',
     name: 'Blend',
     chain: 'stellar',
+    category: 'lending',
     logo: '/assets/protocols/blend.svg',
     deployment_host: null,
     deployment_label: null,
@@ -317,6 +319,10 @@ describe('toLeaderboardEntry', () => {
       id: 'blend',
       name: 'Blend',
       chain: 'stellar',
+      // On the BOARD for the same reason operationalState is: two rows' scores
+      // mean the same thing only when this agrees, so a consumer that ranks
+      // these entries needs it on every row to scope the ranking. See #78.
+      category: 'lending',
       logo: '/assets/protocols/blend.svg',
       deployedOn: null,
       safetyScore: 53,
@@ -439,6 +445,7 @@ describe('an empty risk_scores table', () => {
       id: 'blend',
       name: 'Blend',
       chain: 'stellar',
+      category: 'lending',
       logo: '/assets/protocols/blend.svg',
       deployment_host: null,
       deployment_label: null,
@@ -527,6 +534,7 @@ describe('the deployment label on both public responses', () => {
       id: 'yieldblox',
       name: 'YieldBlox',
       chain: 'stellar',
+      category: 'lending',
       logo: null,
       deployment_host: 'Blend',
       deployment_label: 'Blend V2 pool',

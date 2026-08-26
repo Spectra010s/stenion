@@ -1,32 +1,14 @@
 export type Chain = 'stellar';
 
 /**
- * Version of the scoring rulebook in METHODOLOGY.md that produced a score.
- *
- * Bumped whenever a change makes scores non-comparable with earlier stored
- * rows — a new/changed formula, threshold, or weight. It is *not* an adapter
- * version and not an API version: every adapter implements one shared rulebook
- * (METHODOLOGY.md ground rule 1), so this is a single shared constant that the
- * indexer stamps onto each run, not something an adapter chooses.
- *
- * Stored rows can't be recomputed — `risk_scores` keeps only outputs, never the
- * raw on-chain inputs — so history is not backfilled across a bump. The point of
- * this field is to make the discontinuity legible rather than silent.
- *
- * 1 — the current five-factor rulebook, including `oracleSafety` scoring price
- *     age *and* manipulation resistance. This is the first version anyone can
- *     be downstream of: the development-era history that ran under earlier,
- *     unpublished iterations was discarded rather than migrated, and so is the
- *     history stamped 2 while a briefly-live v2 was in this constant before the
- *     rulebook was flattened back. See METHODOLOGY.md, "Current version".
- *
- * The next change that alters what a number means makes version 2 — properly
- * this time, as a published boundary rather than a value that came and went.
- * The machinery below (the stamp, the DB column, the chart's break rendering)
- * exists and is tested precisely so that bump is legible on the day it happens,
- * not built in a hurry then.
+ * The category registry — which rulebooks exist, and each one's version — lives
+ * in its own leaf module so a `node --test` file can VALUE-import it. It cannot
+ * live in this file: `RiskFactorType` below is an `enum`, which Node's
+ * type-stripping loader refuses to load at all. See ./category.ts.
  */
-export const METHODOLOGY_VERSION = 1 as const;
+import type { ProtocolCategory } from './category';
+
+export type { ProtocolCategory };
 
 /**
  * Off-chain places a reader can go to check a protocol for themselves.
@@ -79,11 +61,39 @@ export interface ProtocolDeployment {
   label: string;
 }
 
-export interface ProtocolMetadata {
+export interface ProtocolMetadata<C extends ProtocolCategory = ProtocolCategory> {
   /** unique slug used as the primary key across storage and the API, e.g. "blend" */
   id: string;
   name: string;
   chain: Chain;
+  /**
+   * Which rulebook scores this protocol — see `ProtocolCategory`.
+   *
+   * REQUIRED, not optional, and deliberately so. The precedent is
+   * `ADAPTER_INTERFACE_VERSION` 2's `operationalState`: an optional member is
+   * one every future adapter can quietly skip, which is exactly the retrofit
+   * debt that constant exists to make visible. A protocol with no category is
+   * not a protocol we know how to score, so there is no honest default to fall
+   * back to — and defaulting to `'lending'` would silently mis-file the first
+   * adapter of every category that follows.
+   *
+   * Sits here with id/name/chain because it is the same kind of value: a fixed
+   * string literal the adapter declares about itself, written to `protocols`
+   * every cycle by `upsertProtocol` like the rest of its identity.
+   *
+   * IT IS ALSO A COMPARABILITY CLAIM, which is what makes it more than a label.
+   * Two protocols' `safetyScore`s mean the same thing only when this field
+   * agrees; scores across categories are computed from different factors under
+   * different weights and are not comparable at all. Every consumer that ranks
+   * protocols must scope the ranking to one category (see #78), and API.md says
+   * so in the terms clients read.
+   *
+   * The generic parameter lets an adapter pin itself to one category
+   * (`ProtocolMetadata<'lending'>`) so its `operationalState` vocabulary is
+   * checked against the same category its metadata declares. Defaulted, so
+   * every existing bare `ProtocolMetadata` keeps meaning "some category".
+   */
+  category: C;
   /**
    * Root-relative path to the protocol's logo as stored in the dashboard's
    * `public/` tree, e.g. "/assets/protocols/blend.svg".

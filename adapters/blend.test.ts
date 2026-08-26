@@ -855,7 +855,7 @@ describe('operationalState never reaches a score', () => {
     // THE CORRECTNESS CHECK FOR THIS WHOLE DECISION. Issue #15 chose to publish
     // pause state rather than grade it, and this is what makes that a property
     // of the code rather than an intention: if any status ever moves any factor,
-    // the rulebook has silently acquired a sixth signal and METHODOLOGY_VERSION
+    // the rulebook has silently acquired a sixth signal and the category version
     // is wrong. A before/after score table could not prove this — every live
     // market is status 0/1, so a table would compare a number against itself.
     const baseline = await factors(makeRaw({ status: 0 }));

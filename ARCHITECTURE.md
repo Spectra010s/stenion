@@ -88,7 +88,7 @@ dashboard/API (reads) so there's no duplicated connection logic. Exposes a lazy 
 loading, and the persisted `RunRecord` type. Three tables — two that hold the product, and one that
 holds no product data at all:
 
-- `protocols` — one row per **scored market** (slug PK, name, chain, adapter class name) plus its
+- `protocols` — one row per **scored market** (slug PK, name, chain, `category`, adapter class name) plus its
   identity: `logo` (a root-relative path into the dashboard's own `public/` tree — we host every
   mark, never hotlink), `contract_id` (the raw Soroban address the score is derived from, so a
   reader can check it in an explorer; the explorer itself is chosen in
@@ -107,11 +107,31 @@ holds no product data at all:
   Blend market, so a reference to it would claim the pool runs on that _entry_ rather than on the
   host protocol's contract. A half-populated pair maps to `null` rather than to a partial object.
 
+  `category` (migration 0008) is which rulebook scores the market — currently `lending` for every
+  row, and `NOT NULL` unlike the identity columns above it, because "we do not know how to score
+  this" is not a publishable state the way "publishes no mark" is. It is written from
+  `ProtocolMetadata.category`, required on every adapter as of `ADAPTER_INTERFACE_VERSION` 3, and
+  overwritten each cycle like the rest of the identity block. It rides both API responses, because
+  it is a **comparability claim** rather than a label: two `safetyScore`s mean the same thing only
+  when their categories match, so anything that ranks protocols has to scope the ranking to one.
+
 - `risk_scores` — append-only history. `safety_score` is promoted to its own `numeric` column
   (it's what the registry ranks on); the five factors live in one `jsonb` column (displayed, not
-  ranked, and growing the taxonomy then needs no migration). `methodology_version` records which
-  rulebook produced the score — see below. A DB-level CHECK enforces the `ok`/`failed`
-  discriminated union.
+  ranked, and growing the taxonomy then needs no migration). `methodology_version` and `category`
+  together record which rulebook produced the score — see below. A DB-level CHECK enforces the
+  `ok`/`failed` discriminated union, and `risk_scores_category_shape` puts the new column on the
+  same union.
+
+  `category` is stamped here **as well as** on `protocols`, which looks redundant and is not.
+  `protocols.category` is current identity, overwritten every cycle; this is a stamp frozen with the
+  run. Since every category's version counter starts at 1, the integer alone stops identifying a
+  rulebook once a second category exists — `(category, methodology_version)` is the identifier.
+  Resolving the category by joining to `protocols` would answer with what the market is _now_, so a
+  recategorized entry would silently reinterpret its whole history under a rulebook that never
+  produced it. Same reasoning as `operational_state` below: a per-run fact belongs on the run.
+  Written from the first cycle under this schema, and **not yet read by any query** — the read
+  arrives with the first category that makes a version ambiguous, but the stamp has to start
+  immediately or the history it disambiguates has a hole in it.
 
   `operational_state` (migration 0007) is one more `jsonb` column, stamped per run like the factors
   and for the same reason: it is a live reading, not identity, and it is only meaningful next to the
@@ -138,13 +158,18 @@ holds no product data at all:
   an hour are pruned. Nothing here is read by any scoring or serving path. See "Caching and rate
   limits".
 
-**Methodology versioning.** The rulebook is at **v1**, and versioning starts there: every stored
-row carries `methodology_version = 1`, and no second version exists yet. Development-era history
-under earlier iterations of the rules was discarded rather than migrated — the reasoning, and what
-does and doesn't warrant a bump, are in
-[`METHODOLOGY.md`](METHODOLOGY.md#current-version). Mechanically: a scoring change that
-makes old scores non-comparable bumps
-`METHODOLOGY_VERSION` in `@stenion/core`; the indexer stamps it onto every run. History is
+**Methodology versioning.** Versions are **per category**, with independent counters that each
+start at 1 (`METHODOLOGY_VERSIONS` in `@stenion/core`, keyed by `ProtocolCategory`). Lending's
+rulebook is at **v1**, and versioning starts there: every stored row carries
+`methodology_version = 1` under `category = 'lending'`, and no second version and no second
+category exists yet. Development-era history under earlier iterations of the rules was discarded
+rather than migrated — the reasoning, and what does and doesn't warrant a bump, are in
+[`METHODOLOGY.md`](METHODOLOGY.md#current-version). Mechanically: a scoring change that makes old
+scores non-comparable bumps that category's entry in `METHODOLOGY_VERSIONS`; the indexer stamps it
+onto every run, resolved from `target.metadata.category` rather than from a single global constant,
+so registering an adapter in a new category needs no change in the indexer at all. Splitting the
+former scalar `METHODOLOGY_VERSION` into that map bumped nothing: no formula, threshold or weight
+moved, so lending's history stays comparable straight across the change. History is
 **never backfilled** — `risk_scores` keeps only outputs (score + factor map), never the raw
 on-chain inputs, so an old row genuinely cannot be recomputed under new rules. The version is
 surfaced on the protocol detail and on each history point so the dashboard marks the break
@@ -154,7 +179,8 @@ promoted, and both share one Neon database. That is why 0002 shipped the column 
 `DEFAULT 1` and enforced only the `ok` half of its CHECK; 0004 drops the default and tightens the
 CHECK to the full union, now that the deployed indexer names the column explicitly on both arms.
 The column is therefore required rather than defaulted: a future writer that bumps
-`METHODOLOGY_VERSION` and forgets it fails loudly instead of being silently stamped with the old
+a category's `METHODOLOGY_VERSIONS` entry and forgets it fails loudly instead of being silently
+stamped with the old
 version — a mis-stamp that could never be repaired, since the raw inputs are not stored.
 
 `Store` also exposes `listRecentRuns(protocolId, limit)` — status/error/`runAt` for the newest N

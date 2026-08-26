@@ -93,6 +93,7 @@ describe('Store SQL (integration)', { skip }, () => {
       id: p,
       name: 'Stale',
       chain: 'stellar',
+      category: 'lending',
       adapterRef: 'FakeAdapter',
     });
     await insertRun(p, { status: 'ok', score: 53, runAt: '2026-08-16T10:00:00Z' });
@@ -116,6 +117,7 @@ describe('Store SQL (integration)', { skip }, () => {
       id: p,
       name: 'Failing',
       chain: 'stellar',
+      category: 'lending',
       adapterRef: 'FakeAdapter',
     });
     await insertRun(p, { status: 'ok', score: 53, runAt: '2026-08-16T10:00:00Z' });
@@ -140,6 +142,7 @@ describe('Store SQL (integration)', { skip }, () => {
       id: p,
       name: 'Never',
       chain: 'stellar',
+      category: 'lending',
       adapterRef: 'FakeAdapter',
     });
 
@@ -159,6 +162,7 @@ describe('Store SQL (integration)', { skip }, () => {
       id: p,
       name: 'Many',
       chain: 'stellar',
+      category: 'lending',
       adapterRef: 'FakeAdapter',
     });
     for (const minute of ['00', '05', '10', '15']) {
@@ -184,6 +188,7 @@ describe('Store SQL (integration)', { skip }, () => {
       id: p,
       name: 'Unscored',
       chain: 'stellar',
+      category: 'lending',
       adapterRef: 'FakeAdapter',
     });
 
@@ -200,6 +205,7 @@ describe('Store SQL (integration)', { skip }, () => {
       id: p,
       name: 'History',
       chain: 'stellar',
+      category: 'lending',
       adapterRef: 'FakeAdapter',
     });
     await insertRun(p, { status: 'ok', score: 40, runAt: '2026-08-16T10:00:00Z' });
@@ -225,7 +231,13 @@ describe('Store SQL (integration)', { skip }, () => {
       [high, 'High'],
       [none, 'None'],
     ]) {
-      await store.upsertProtocol({ id: p, name, chain: 'stellar', adapterRef: 'FakeAdapter' });
+      await store.upsertProtocol({
+        id: p,
+        name,
+        chain: 'stellar',
+        category: 'lending',
+        adapterRef: 'FakeAdapter',
+      });
     }
     await insertRun(low, { status: 'ok', score: 10, runAt: '2026-08-16T10:00:00Z' });
     await insertRun(high, { status: 'ok', score: 90, runAt: '2026-08-16T10:00:00Z' });
@@ -251,6 +263,7 @@ describe('Store SQL (integration)', { skip }, () => {
       id: p,
       name: 'Check',
       chain: 'stellar',
+      category: 'lending',
       adapterRef: 'FakeAdapter',
     });
     await assert.rejects(
@@ -278,6 +291,7 @@ describe('Store SQL (integration)', { skip }, () => {
       id: p,
       name: 'VersionShape',
       chain: 'stellar',
+      category: 'lending',
       adapterRef: 'FakeAdapter',
     });
 
@@ -329,6 +343,7 @@ describe('Store SQL (integration)', { skip }, () => {
       id: p,
       name: 'Break',
       chain: 'stellar',
+      category: 'lending',
       adapterRef: 'FakeAdapter',
     });
     await insertRun(p, { status: 'ok', score: 21, runAt: '2026-08-16T09:00:00Z', version: 1 });
@@ -351,6 +366,7 @@ describe('Store SQL (integration)', { skip }, () => {
       id: p,
       name: 'Round',
       chain: 'stellar',
+      category: 'lending',
       adapterRef: 'FakeAdapter',
     });
     await store.insertRunRecord({
@@ -358,6 +374,7 @@ describe('Store SQL (integration)', { skip }, () => {
       status: 'ok',
       safetyScore: 53,
       factors: {} as never,
+      category: 'lending',
       methodologyVersion: 1,
       operationalState: {
         level: OperationalLevel.Active,
@@ -388,8 +405,20 @@ describe('Store SQL (integration)', { skip }, () => {
 
   it('upsertProtocol is idempotent and refreshes metadata', async () => {
     const p = id('upsert');
-    await store.upsertProtocol({ id: p, name: 'First', chain: 'stellar', adapterRef: 'AdapterA' });
-    await store.upsertProtocol({ id: p, name: 'Second', chain: 'stellar', adapterRef: 'AdapterB' });
+    await store.upsertProtocol({
+      id: p,
+      name: 'First',
+      chain: 'stellar',
+      category: 'lending',
+      adapterRef: 'AdapterA',
+    });
+    await store.upsertProtocol({
+      id: p,
+      name: 'Second',
+      chain: 'stellar',
+      category: 'lending',
+      adapterRef: 'AdapterB',
+    });
 
     const detail = await store.getProtocolDetail(p);
     assert.equal(detail!.name, 'Second');

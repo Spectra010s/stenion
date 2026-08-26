@@ -24,6 +24,10 @@ const scored = (id: string, name: string, safetyScore: number | null): Leaderboa
   id,
   name,
   chain: 'stellar',
+  // Every entry here is lending, which is the whole point of the assertions in
+  // this file today: with one category the ranked list is exactly what it was
+  // before categories existed. Scoping the ranking per category is #78.
+  category: 'lending',
   logo: null,
   deployedOn: null,
   safetyScore,

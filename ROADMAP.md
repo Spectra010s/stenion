@@ -35,7 +35,7 @@ commitment — priorities shift as protocols launch and as the project finds fun
   each market publishes a typed `operationalState` (what is blocked, the protocol's own reading
   verbatim, whether only an admin could have set it, when it was read), on the leaderboard and the
   detail response both, rendered beside the name and score everywhere either appears.
-  `METHODOLOGY_VERSION` stayed at **1** — no formula, threshold or weight moved, and both adapter
+  lending's methodology version stayed at **1** — no formula, threshold or weight moved, and both adapter
   suites assert a byte-identical factor map across every restricted state. K2's per-reserve gating
   flags are now read too, out of the bitmap the adapter already fetched for decimals, so a market
   open in USDC and halted in PYUSD reports the halt. Full reasoning, including the two scored

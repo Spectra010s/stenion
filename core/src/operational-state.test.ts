@@ -14,11 +14,13 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  CATEGORY_OPERATIONS,
   OperationalLevel,
   PoolOperation,
   mostRestrictive,
   toOperationalState,
 } from './operational-state.ts';
+import { PROTOCOL_CATEGORIES } from './category.ts';
 import type { OperationalReading } from './operational-state.ts';
 
 const AS_OF = new Date('2026-08-25T10:00:00.000Z');
@@ -168,5 +170,80 @@ describe('mostRestrictive — reducing several readings to one', () => {
     // produced no reading has a bug, and publishing a clean bill of health from
     // it is the one failure mode this module must not have.
     assert.throws(() => mostRestrictive([]), /no operational readings/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The category-scoped operation vocabulary (#76)
+// ---------------------------------------------------------------------------
+
+describe('CATEGORY_OPERATIONS — vocabulary per category, ladder shared', () => {
+  it('gives every category an operation vocabulary', () => {
+    // `operationalState` is a REQUIRED adapter method, so a category with no
+    // vocabulary is a category whose adapters cannot describe their own
+    // restrictions. `satisfies` catches this at compile time; this catches the
+    // runtime shape the adapters actually index into.
+    for (const category of PROTOCOL_CATEGORIES) {
+      const vocabulary = CATEGORY_OPERATIONS[category];
+      assert.equal(typeof vocabulary, 'object', `${category} has no operation vocabulary`);
+      assert.ok(Object.keys(vocabulary).length > 0, `${category}'s vocabulary is empty`);
+    }
+  });
+
+  it("leaves lending's five operations exactly as they were", () => {
+    // The whole of what #76 changed here is the TYPE — which category's names
+    // these are. Not one member was added, removed or renamed, because renaming
+    // one would change `blocked` in every stored operational_state jsonb and in
+    // every API response, for a refactor that was supposed to move no data.
+    assert.deepEqual(Object.values(CATEGORY_OPERATIONS.lending).sort(), [
+      'borrow',
+      'liquidate',
+      'repay',
+      'supply',
+      'withdraw',
+    ]);
+  });
+
+  it('registers lending against the same object PoolOperation exports', () => {
+    // Not a copy. Two lists of the same five strings would be two things to keep
+    // in sync, which is the shape this registry exists to avoid.
+    assert.equal(CATEGORY_OPERATIONS.lending, PoolOperation);
+  });
+
+  it('keeps OperationalLevel shared across categories, not scoped to one', () => {
+    // The deliberate half of the split: the ladder is abstracted around "can a
+    // user still get out", which is the same question for any market a user can
+    // put value into. If a future change moves these rungs into
+    // CATEGORY_OPERATIONS-style per-category tables, the shared representation
+    // this module exists for is gone — see its header.
+    assert.deepEqual(Object.values(OperationalLevel).sort(), [
+      'active',
+      'borrowingDisabled',
+      'entryDisabled',
+      'exitDisabled',
+      'notOperational',
+    ]);
+  });
+
+  it('classifies lending readings exactly as it did before categories existed', () => {
+    // The regression guard for this issue. Same inputs, same ladder, same
+    // outputs — the type changed and the behaviour did not.
+    assert.equal(toOperationalState(reading()).level, OperationalLevel.Active);
+    assert.equal(
+      toOperationalState(reading({ blocked: [PoolOperation.Withdraw] })).level,
+      OperationalLevel.ExitDisabled,
+    );
+    assert.equal(
+      toOperationalState(reading({ blocked: [PoolOperation.Supply] })).level,
+      OperationalLevel.EntryDisabled,
+    );
+    assert.equal(
+      toOperationalState(reading({ blocked: [PoolOperation.Borrow] })).level,
+      OperationalLevel.BorrowingDisabled,
+    );
+    assert.equal(
+      toOperationalState(reading({ neverOpened: true })).level,
+      OperationalLevel.NotOperational,
+    );
   });
 });
