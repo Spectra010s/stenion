@@ -632,19 +632,159 @@ async function readOraclePrice(
   };
 }
 
+// ---------------------------------------------------------------------------
+// The oracle-legibility precondition
+//
+// METHODOLOGY.md §2, "The oracle-legibility precondition". `oracleSafety` grades
+// two things, and BOTH anchors are parameters the pool's own price path has to
+// publish: the freshness window comes from `oracles()[i].resolution` and
+// `max_age()`, and the deviation bound from per-asset `max_dev` in
+// `asset_configs()`. Those three reads are Blend's oracle-aggregator interface —
+// they are not in SEP-40, which defines no staleness tolerance and no deviation
+// bound at all.
+//
+// Not every Blend V2 pool runs an aggregator. Four live ones do not (issue #69,
+// probed 2026-08-26 by reading each oracle's contract spec out of its wasm):
+// Orbit's bridge oracle, Forex's proxy, Spectra PTs' deterministic zero-coupon
+// pricer and Solv's SEP-40 feed registry. They are four DIFFERENT contracts with
+// four different wasm hashes — not one "non-aggregator shape" — and they agree
+// on exactly one thing: none of them answers any of the three reads below.
+//
+// WHY THIS IS A HARD PRECONDITION AND NOT A FALLBACK. There is no weaker anchor
+// to fall back to, only fabricated ones:
+//
+//   - The nearest candidate is SEP-40's `resolution()`, a publish interval
+//     rather than a staleness tolerance. Solv publishes `resolution() = 43200`
+//     (12 hours, and owner-mutable via `set_resolution`). Fed to
+//     `freshnessWindow` with no `max_age` it yields {fresh: 43200, dead: 86400},
+//     because STALE_CEILING_SECONDS clamps `dead` and not `fresh`. Solv's
+//     genuinely stale feeds — measured at 10,285s and 21,739s old on 2026-08-26
+//     — would both publish priceFreshness 100.
+//   - Two of the four price off the ledger clock, so freshness is 100 BY
+//     CONSTRUCTION and can never be anything else. Spectra's oracle computes a
+//     bond accretion (its `lastprice` ignores the asset argument outright), and
+//     Orbit's dominant reserve — 99.5% of that pool's value — returns exactly
+//     1.0 at current ledger time touching no upstream contract. On an aggregator
+//     §2b excludes such base assets; Orbit's bridge publishes no `base()`, so
+//     there is nothing to detect them with.
+//
+// A fabricated 100 is worse than a fabricated 0, and ground rule 4 forbids both.
+// So the pool is not scored at all — published instead through
+// dashboard/app/lib/coverage.ts as `oracle-not-gradable`, the same shape the
+// market-size floor uses one level up.
+// ---------------------------------------------------------------------------
+
+/**
+ * The three reads METHODOLOGY.md §2 grades `oracleSafety` against.
+ *
+ * Deliberately the grading reads only. `decimals()` and `lastprice()` are NOT
+ * here: the other four factors need exactly those two and nothing else
+ * (`suppliedUsd` prices reserves for §1 and for §4/§5's size filter), and every
+ * oracle behind a V2 pool answers both. This precondition is about the two
+ * anchors §2 needs, not about whether a pool can be read at all.
+ */
+export const ORACLE_GRADING_READS = ['max_age', 'oracles', 'asset_configs'] as const;
+
+export type OracleGradingRead = (typeof ORACLE_GRADING_READS)[number];
+
+/** Which of the §2 grading reads this oracle actually answered. */
+export type OracleGradingReads = Record<OracleGradingRead, boolean>;
+
+/**
+ * Does this failure mean the contract has no such function, as opposed to
+ * anything else that can go wrong on the way to it?
+ *
+ * The distinction is load-bearing and is the reason this is a named function
+ * rather than a bare catch. "This oracle publishes no `max_age`" is a permanent
+ * property of the deployed contract and a verdict on scorability. A timeout, a
+ * 429 from the shared public RPC, or a malformed response is a transient RUN
+ * failure. Treating the second as the first would let one bad five-minute cycle
+ * declare a pool ungradable; treating the first as the second would retry a
+ * call that can never succeed until the cycle budget ran out.
+ *
+ * Matched on both halves of what the host actually returns — the error code and
+ * the diagnostic phrase, plus the method name — so a message that merely
+ * contains the word "MissingValue" for some other reason does not qualify.
+ * Sample, captured from mainnet on 2026-08-26:
+ *
+ *   HostError: Error(WasmVm, MissingValue)
+ *   … topics:[error, Error(WasmVm, MissingValue)], data:["trying to invoke
+ *   non-existent contract function", max_age]
+ */
+export function isMissingContractFunction(error: unknown, method: string): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes('Error(WasmVm, MissingValue)') &&
+    message.includes('trying to invoke non-existent contract function') &&
+    message.includes(method)
+  );
+}
+
+/**
+ * The precondition itself: null when this oracle can be graded, and the run's
+ * failure message when it cannot.
+ *
+ * A MESSAGE RATHER THAN A SCORE, deliberately, and rather than an Error subclass
+ * — the indexer records `error.message` on a failed run, and a subclass's `name`
+ * is a runtime identifier the dashboard's bundler would rename in production
+ * (see ProtocolMetadata.adapterRef for the bug that rule comes from).
+ *
+ * It names every missing read rather than only the first, because "this oracle
+ * is not an aggregator" is one fact and reporting it one method per cycle would
+ * make it look like three separate problems.
+ */
+export function oracleNotGradable(oracleId: string, answered: OracleGradingReads): string | null {
+  const missing = ORACLE_GRADING_READS.filter((read) => !answered[read]);
+  if (missing.length === 0) return null;
+  return (
+    `Blend: oracle ${oracleId} publishes no ${missing.join('(), no ')}(), so this pool ` +
+    'fails the oracle-legibility precondition (METHODOLOGY.md §2) and is not scorable — ' +
+    'oracleSafety has no on-chain anchor for either price staleness or deviation, and ' +
+    'inventing one would publish a confident number from no data. Such a market belongs ' +
+    'in coverage.ts as `oracle-not-gradable`, not in BLEND_POOLS.'
+  );
+}
+
+/** Sentinel for a grading read the contract does not implement. */
+const ABSENT = Symbol('absent');
+
+/**
+ * Run one §2 grading read, turning "no such function" into ABSENT and letting
+ * every other failure escape as the run failure it is. See
+ * `isMissingContractFunction` for why those two must not be conflated.
+ */
+async function gradingRead<T>(
+  method: OracleGradingRead,
+  run: () => Promise<T>,
+): Promise<T | typeof ABSENT> {
+  try {
+    return await run();
+  } catch (error) {
+    if (isMissingContractFunction(error, method)) return ABSENT;
+    throw error;
+  }
+}
+
 /**
  * Read the oracle aggregator's own published config: the upstream feeds it
  * reads (`oracles()`) and the age beyond which it refuses a price (`max_age()`).
  *
  * These are the anchors `oracleSafety` grades freshness against — the
  * aggregator's numbers, not Stenion constants.
+ *
+ * `max_age()` and `oracles()` are passed in already-read rather than fetched
+ * here, because they are two of the three reads the oracle-legibility
+ * precondition probes: fetching them here as well would either double the RPC
+ * calls or make the precondition unable to say which read was missing.
  */
 async function readOracleConfig(
   server: rpc.Server,
   oracleId: string,
+  maxAgeNative: unknown,
+  oraclesNative: unknown,
 ): Promise<BlendOracleConfigRaw> {
-  const maxAge = Number((await readContract(server, oracleId, 'max_age')) as number | bigint);
-  const oracles = (await readContract(server, oracleId, 'oracles')) as OracleConfigNative[];
+  const maxAge = Number(maxAgeNative as number | bigint);
+  const oracles = oraclesNative as OracleConfigNative[];
   if (!Array.isArray(oracles) || oracles.length === 0) {
     throw new Error(`Blend: oracle ${oracleId} returned an empty oracles() list`);
   }
@@ -680,18 +820,20 @@ async function readOracleConfig(
 }
 
 /**
- * Read `asset_configs()` keyed by reserve address.
+ * Decode `asset_configs()` keyed by reserve address.
  *
  * Decoded from the raw ScVal map rather than via `scValToNative` on the whole
  * value: the map's keys are `Asset` enum vecs, and letting the SDK coerce those
  * into JS object keys would make us depend on its stringification of a
  * non-string key. Decoding each key on its own keeps the mapping explicit.
+ *
+ * Takes the already-read ScVal rather than fetching, for the same reason
+ * `readOracleConfig` does: `asset_configs` is one of the three reads the
+ * oracle-legibility precondition probes.
  */
-async function readAssetConfigs(
-  server: rpc.Server,
-  oracleId: string,
-): Promise<Map<string, NonNullable<BlendReserveRaw['priceConfig']>>> {
-  const scv = await readContractScv(server, oracleId, 'asset_configs');
+function decodeAssetConfigs(
+  scv: xdr.ScVal,
+): Map<string, NonNullable<BlendReserveRaw['priceConfig']>> {
   const out = new Map<string, NonNullable<BlendReserveRaw['priceConfig']>>();
   for (const entry of scv.map() ?? []) {
     const key = scValToNative(entry.key()) as unknown;
@@ -894,8 +1036,37 @@ export class BlendAdapter implements Adapter<BlendRawData> {
     }
 
     const oracleDecimals = Number(await readContract(server, oracleId, 'decimals'));
-    const oracleConfig = await readOracleConfig(server, oracleId);
-    const assetConfigs = await readAssetConfigs(server, oracleId);
+
+    // The oracle-legibility precondition (METHODOLOGY.md §2). Probed BEFORE
+    // anything is built from these reads, so a pool whose oracle cannot be
+    // graded fails as one clean, explanatory run failure naming every missing
+    // read — rather than as a raw `HostError: Error(WasmVm, MissingValue)` from
+    // whichever call happened to go first.
+    //
+    // No extra RPC in the happy path: an aggregator answers all three, and these
+    // are the same three calls the adapter always made.
+    const maxAgeNative = await gradingRead('max_age', () =>
+      readContract(server, oracleId, 'max_age'),
+    );
+    const oraclesNative = await gradingRead('oracles', () =>
+      readContract(server, oracleId, 'oracles'),
+    );
+    const assetConfigsScv = await gradingRead('asset_configs', () =>
+      readContractScv(server, oracleId, 'asset_configs'),
+    );
+    const notGradable = oracleNotGradable(oracleId, {
+      max_age: maxAgeNative !== ABSENT,
+      oracles: oraclesNative !== ABSENT,
+      asset_configs: assetConfigsScv !== ABSENT,
+    });
+    if (notGradable) throw new Error(notGradable);
+
+    // Past the precondition, none of the three can still be ABSENT — that is
+    // exactly what `oracleNotGradable` returning null means. The cast records
+    // the invariant the compiler cannot carry across the throw above; the other
+    // two are already `unknown` and are narrowed inside readOracleConfig.
+    const oracleConfig = await readOracleConfig(server, oracleId, maxAgeNative, oraclesNative);
+    const assetConfigs = decodeAssetConfigs(assetConfigsScv as xdr.ScVal);
 
     const reserves: BlendReserveRaw[] = [];
     for (const asset of reserveList) {

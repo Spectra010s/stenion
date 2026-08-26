@@ -44,8 +44,17 @@ describe('the coverage entries meet their own bar', () => {
     // "$3.62" is a reading, not a property of the market. Undated, and indexed
     // by a search engine, it becomes a factual assertion we would be making
     // indefinitely. Structural reasons (Templar's architecture) need no date.
+    //
+    // `oracle-not-gradable` is held to the same rule even though its CORE claim
+    // is structural — a deployed contract's exported interface, which no balance
+    // affects. Two things pull it back in. Those entries quote readings anyway
+    // (Orbit's 99.5% concentration, Solv's feed ages), and more importantly the
+    // interface itself is not permanent: an oracle can be upgraded, and one of
+    // these can start publishing the two parameters. The date says which
+    // deployment was read, which is exactly what a reader needs to re-check it.
+    const DATED: CoverageEntry['status'][] = ['below-size-floor', 'oracle-not-gradable'];
     for (const entry of COVERAGE) {
-      if (entry.status !== 'below-size-floor') continue;
+      if (!DATED.includes(entry.status)) continue;
       assert.match(
         entry.asOf ?? '',
         /^\d{4}-\d{2}-\d{2}$/,

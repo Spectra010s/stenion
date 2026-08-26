@@ -78,6 +78,25 @@ export type CoverageStatus =
   | 'off-chain-state'
   /** Scorable in principle, but holds too little for a number to carry information. */
   | 'below-size-floor'
+  /**
+   * The market's oracle publishes no staleness tolerance and no deviation
+   * bound, so `oracleSafety` has nothing to grade against.
+   *
+   * METHODOLOGY.md §2e, "The oracle-legibility precondition". This is NOT "we
+   * could not read the oracle" — every one of these answers `decimals()` and
+   * `lastprice()`, and the other four factors compute normally from them. What
+   * is absent is the metadata §2 anchors to: SEP-40 defines no such fields, and
+   * the nearest candidate (`resolution()`, a publish interval) demonstrably
+   * fabricates a `priceFreshness` of 100 on a price that is hours stale.
+   *
+   * Deliberately its own status rather than folded into `below-size-floor`.
+   * Orbit holds real money; the reason it is unscored has nothing to do with
+   * its size, and collapsing the two would tell a reader the wrong thing about
+   * both. It is also the one status here that can be **undone by the protocol**:
+   * an oracle that starts publishing the two parameters makes the pool scorable
+   * with no rule change at all.
+   */
+  | 'oracle-not-gradable'
   /** Not live on Stellar mainnet yet, so there is nothing to read. */
   | 'awaiting-mainnet'
   /**
@@ -197,6 +216,12 @@ export const COVERAGE_STATUS_META: Record<
     blurb:
       'These markets can be read; there is just almost nothing in them. Scored anyway, every factor would fall to its can’t-assess branch and publish 0 — a number in the danger band, meaning the opposite of what is true. The floor is a precondition on scoring, not a quality bar: it says only that a number was computed from something rather than from nothing.',
   },
+  'oracle-not-gradable': {
+    heading: 'Oracle publishes nothing to grade price trust against',
+    chip: 'oracle not gradable',
+    blurb:
+      'These markets can be read, and four of the five factors compute normally for them. What their price feeds do not publish is a staleness tolerance or a deviation bound — the two on-chain parameters oracleSafety is anchored to, neither of which SEP-40 defines. Scored anyway, the nearest substitute rates a price that is hours old as perfectly fresh, and dropping the factor instead would rank a market higher for having an oracle we cannot inspect. Not a judgment about these protocols or their oracles: it says only that this particular number has nothing to be computed from.',
+  },
   'awaiting-mainnet': {
     heading: 'Not live on Stellar mainnet yet',
     chip: 'nothing to read yet',
@@ -219,6 +244,7 @@ export const COVERAGE_STATUS_META: Record<
  */
 export const COVERAGE_STATUS_ORDER: readonly CoverageStatus[] = [
   'off-chain-state',
+  'oracle-not-gradable',
   'below-size-floor',
   'awaiting-mainnet',
   'out-of-category',
@@ -290,6 +316,99 @@ export const COVERAGE: readonly CoverageEntry[] = [
     verify:
       'Call get_reserves_list on the Earn router (CDWPVHKB…KTPF6TZE) and get_current_reserve_data for each asset, which resolves the aToken and debt ledger addresses; read total_supply on each for the balances, and compare the resolved aToken against the “TBA” row at docs.k2lend.com/third-party-markets/contract-addresses.',
     asOf: '2026-08-20',
+  },
+  // ---------------------------------------------------------------------------
+  // The four non-aggregator Blend V2 markets.
+  //
+  // All four run Blend's pool wasm (a41fc53d…) and would be ordinary BLEND_POOLS
+  // config entries but for their oracles. Each was read on 2026-08-26 by
+  // enumerating the V2 pool factory's `deploy` events, then reading each pool's
+  // Config, its reserves, and its oracle's exported interface out of that
+  // contract's own wasm. They carry `deployedOn`-style wording in `name` for the
+  // same reason a scored Blend market carries the field: presenting one of these
+  // as an independent protocol would misrepresent the ecosystem.
+  // ---------------------------------------------------------------------------
+  {
+    id: 'blend-orbit',
+    name: 'Orbit (Blend V2 pool)',
+    status: 'oracle-not-gradable',
+    // Blend's own mark would assert exactly what this entry denies — that this
+    // is Blend. Orbit publishes no mark this repo has verified and self-hosted,
+    // so the initials tile stands.
+    logo: null,
+    // No URL for this market verified in this repo. A guessed domain beside a
+    // protocol's name is worse than none.
+    links: { site: null, docs: null },
+    contractId: 'CAE7QVOMBLZ53CDRGK3UNRRHG5EZ5NQA7HHTFASEMYBWHG6MDFZTYHXC',
+    summary:
+      'A Blend V2 market whose oracle is a bridge contract publishing no staleness tolerance and no deviation bound — the two parameters oracleSafety is anchored to.',
+    reason: [
+      'Orbit is a market on Blend V2, running the same pool contract (wasm a41fc53d…) that Stenion already scores twice. Everything on the pool side reads normally: four reserves, a multisig admin, and prices for every one of them. It is the oracle that stops it.',
+      'The pool’s oracle (CAD2MCFU…) is a bridge contract, not Blend’s oracle-aggregator. Its entire exported interface is five functions — __constructor, add_asset, decimals, lastprice, set_admin — read out of its own wasm rather than probed by guessing names. It publishes no max_age(), no oracles() and no asset_configs(), which are the three reads METHODOLOGY.md §2 grades price trust against. None of them is part of SEP-40, which defines no staleness tolerance and no deviation bound at all.',
+      'There is a second problem specific to this market, and it is the reason a fallback would be worse than no score. Its largest reserve (CBZPEX…) held $189,999.50 of the pool’s $190,862.93 total — 99.5% — and returns a price of exactly 1.0 stamped at the current ledger time, without touching any upstream contract. On Blend’s aggregator such base assets are excluded from oracleSafety rather than graded, because there is no oracle-derived price to grade; that exclusion is driven by the aggregator’s base() and BaseAssets, and this bridge publishes neither. So the reserve holding almost the entire market would be graded as a permanently-fresh feed. A confident 100 derived from a hardcoded constant is worse than no number, which is why this market is unscored rather than scored around.',
+      'Nothing here says Orbit is unsafe, and nothing says its oracle is a bad one — a bridge that maps assets onto upstream feeds is an ordinary design. What is reported is that the specific parameters this factor is anchored to are not published, so the number cannot be computed from the market’s own data. Note separately that the pool read status 4 (Admin Frozen) when we looked: borrowing and supplying were disabled, withdrawals and repayments were not. That is a live operational state, not a score, and it is not the reason this entry is here.',
+      'If the oracle later publishes a staleness tolerance and a per-asset deviation bound, this market becomes scorable with no rule change — a BLEND_POOLS entry and the deletion of this entry, in one PR.',
+    ],
+    verify:
+      'Read the pool’s instance storage via Soroban RPC getLedgerEntries and take `oracle` from its Config — that resolves CAD2MCFU…. Fetch that contract’s wasm (getContractWasmByContractId) and list its exports from the contractspecv0 section, or call getContractMethods: five functions, none of them max_age, oracles or asset_configs. Then simulate lastprice(Asset::Stellar(CBZPEX…)) against it and compare the returned timestamp with the current ledger close time — they match, and the simulation footprint names no contract other than the oracle itself. Call get_reserve_list on the pool and total each reserve for the balances.',
+    asOf: '2026-08-26',
+  },
+  {
+    id: 'blend-forex',
+    name: 'Forex (Blend V2 pool)',
+    status: 'oracle-not-gradable',
+    logo: null,
+    links: { site: null, docs: null },
+    contractId: 'CBYOBT7ZCCLQCBUYYIABZLSEGDPEUWXCUXQTZYOG3YBDR7U357D5ZIRF',
+    summary:
+      'A Blend V2 market priced through a proxy oracle that forwards to a SEP-40 feed, and neither contract publishes a staleness tolerance or a deviation bound.',
+    reason: [
+      'A Blend V2 market on the same pool wasm (a41fc53d…) Stenion already scores. Its oracle (CDCFT5QD…) exports five functions — decimals, lastprice, set_config, set_proxy, upgrade — and is a proxy: its CONFIG names a base_oracle at CB5OTV4G…, which is a full SEP-40 feed publishing base, assets, decimals, resolution, price, prices and lastprice.',
+      'Neither contract publishes what METHODOLOGY.md §2 grades against. The proxy exposes no max_age(), oracles() or asset_configs(); the feed one hop upstream exposes resolution() = 300 and no max_age either. That is not an oversight in either contract — SEP-40 simply does not define a maximum acceptable price age or a deviation bound, and leaves staleness checking to the consumer. Anchoring to the upstream would also anchor to a contract this pool does not itself publish or constrain, which would be a rule about somebody else’s configuration.',
+      'Reading its state on the same day gave a further reason not to force a number: three of its four reserves could not be priced at all. lastprice returned Error(Contract, #2) for CDIKUR…, CBN3NC… and CBCO65…, leaving XLM as the only priced reserve at $504.17, against 5,628 units of the unpriced CDIKUR… carrying live borrows. A market where most reserves have no readable price is one where every priced factor is computed from a fraction of the market.',
+      'The pool also read status 5 (Frozen) — borrowing and supplying disabled, withdrawals and repayments still available. Reported for completeness; it is a live operational state rather than a score, and it is not why this entry exists.',
+    ],
+    verify:
+      'Take `oracle` from the pool’s Config in instance storage to resolve CDCFT5QD…, then read that contract’s own instance storage: its CONFIG record names base_oracle CB5OTV4G…. List the exports of both via getContractMethods — neither has max_age, oracles or asset_configs; the upstream answers resolution() with 300. Then simulate lastprice(Asset::Stellar(addr)) on the proxy for each address returned by the pool’s get_reserve_list and observe which return Error(Contract, #2).',
+    asOf: '2026-08-26',
+  },
+  {
+    id: 'blend-spectra-pts',
+    name: 'Spectra PTs (Blend V2 pool)',
+    status: 'oracle-not-gradable',
+    logo: null,
+    links: { site: null, docs: null },
+    contractId: 'CDZVHCO7LDUJZSME3PJPJXAKT7F6W5IXSOXTJ2QEK3Y2X2CDUREBUMUY',
+    summary:
+      'A Blend V2 market priced by a deterministic bond model rather than a feed, so its price can never be stale and a freshness score would be meaningless.',
+    reason: [
+      'A Blend V2 market on the familiar pool wasm (a41fc53d…), with a single reserve: a Spectra principal token. Its oracle (CC4VF5DW…) is not a price feed. Its own get_description returns “Spectra Deterministic Oracle - Zero Coupon Bond Model”, and its stored state is a start time, a maturity, an implied APY and a target value at maturity — from which it computes a price at whatever the current ledger time happens to be.',
+      'That makes freshness meaningless rather than merely unanchored, and this is the distinction that decided the entry. There is no publish event, so a price is never old: the timestamp it returns is the ledger clock, the measured age is always about zero, and any freshness formula would return the top of the scale permanently, whatever happened to the underlying token. A score that cannot move is not a measurement. The contract is also explicit that its lastprice ignores the asset it is asked about — its own documentation says the parameter “is ignored… It exists solely for interface compatibility” — so it is bound to one token by construction.',
+      'It publishes no max_age(), oracles() or asset_configs(), and no deviation bound of any kind. The one lever that can move its output is set_future_pt_value, callable by its owner. That is an admin control rather than an oracle deviation bound, and the taxonomy has no way to grade it as either.',
+      'None of this is a criticism of the design. Pricing a principal token by accretion toward maturity is a coherent and common approach, and it is arguably more predictable than a feed. It is simply not something a factor built to measure price staleness and single-step deviation can grade. Recorded separately: this market held $9.88 in total supplied value and read status 2 (Admin On-Ice) on the same day — either would be worth noting on its own, but the oracle is the reason it is here.',
+    ],
+    verify:
+      'Resolve the oracle from the pool’s Config (CC4VF5DW…) and call get_description, get_maturity, get_start_time, get_initial_implied_apy and get_future_pt_value on it — they return the bond parameters, and its instance storage holds the same values under apy, maturity, start_t and future_pt. List its exports with getContractMethods: nineteen functions, none of them max_age, oracles or asset_configs, and the doc comment on lastprice states that its asset argument is ignored. Simulate lastprice twice a few minutes apart and compare the returned timestamps against the ledger close time.',
+    asOf: '2026-08-26',
+  },
+  {
+    id: 'blend-solv',
+    name: 'Solv (Blend V2 pool)',
+    status: 'oracle-not-gradable',
+    logo: null,
+    links: { site: null, docs: null },
+    contractId: 'CC4HHXPKR3FIXUQEC53MAK2IVWD6APAEBBXP5XCIW5FISN6PQOAC6UXG',
+    summary:
+      'A Blend V2 market on a SEP-40 feed registry, whose only time parameter is a publish interval long enough to rate a price hours old as perfectly fresh.',
+    reason: [
+      'A Blend V2 market on the same pool wasm (a41fc53d…). Its oracle (CBMGLKUQ…) is the closest of the four to a standard feed — a SEP-40 registry exporting base, assets, decimals, resolution, price, prices and lastprice alongside owner-only add_feed, update_feed and remove_feed. It is the only one of the four that implements SEP-40 at all.',
+      'It still publishes neither of the parameters METHODOLOGY.md §2 needs: no max_age(), no oracles(), no asset_configs(), and no deviation bound anywhere in its interface. That is a property of SEP-40 rather than of this contract — the standard defines no maximum acceptable price age and no deviation bound, and explicitly leaves staleness checking to whoever reads the price.',
+      'The one field that looks like an anchor is resolution(), and using it would produce a worse outcome than declining to score. resolution() is a publish interval, not a staleness tolerance, and this oracle reports 43200 — twelve hours. Fed into Stenion’s freshness window with no max_age to pair it with, a twelve-hour tick yields a twenty-four-hour dead line, so every price younger than a day scores the top of the scale. Its own feeds demonstrate the problem: two were live to the second when read, while USDC was 10,285 seconds old and one further feed 21,739 seconds old. All four would have published a freshness of 100. That is the fabricated confidence the rule against invented numbers exists to prevent, so the anchor is refused rather than used.',
+      'The contract is unusually candid about this, which is worth recording rather than paraphrasing: its own documentation flags two deliberate departures from SEP-40 — that decimals is not immutable, and that resolution “should never change after deployment” but here can, through an owner-callable set_resolution. A value the owner can move is not an anchor even in principle. Separately, the market held $175.69 in total supplied value when read.',
+    ],
+    verify:
+      'Resolve the oracle from the pool’s Config (CBMGLKUQ…) and call resolution() — it returns 43200 — then base(), assets() and decimals(). List its exports with getContractMethods and confirm no max_age, oracles or asset_configs, and read the doc comments on decimals and set_resolution, which state the two SEP-40 deviations. Then simulate lastprice(Asset::Stellar(addr)) for each address from the pool’s get_reserve_list and compare each returned timestamp against the current ledger close time to reproduce the spread of feed ages.',
+    asOf: '2026-08-26',
   },
   {
     id: 'nectar-network',
