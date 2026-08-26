@@ -117,17 +117,39 @@ curl https://stenion.vercel.app/api/v1/protocols
       "chain": "stellar",
       "logo": "/assets/protocols/blend.svg",
       "deployedOn": null,
-      "safetyScore": 51,
-      "computedAt": "2026-08-25T18:05:07.129Z",
+      "safetyScore": 52,
+      "computedAt": "2026-08-26T10:01:30.847Z",
       "operationalState": {
-        "asOf": "2026-08-25T18:05:07.000Z",
+        "asOf": "2026-08-26T10:01:30.000Z",
         "level": "active",
         "detail": "pool status 1 (Active) — all operations available.",
         "origin": "protocol",
         "source": "PoolConfig.status = 1",
         "blocked": []
       },
-      "lastRunAt": "2026-08-25T18:05:04.178Z",
+      "lastRunAt": "2026-08-26T10:01:25.334Z",
+      "lastRunStatus": "ok"
+    },
+    {
+      "id": "etherfuse",
+      "name": "Etherfuse",
+      "chain": "stellar",
+      "logo": null,
+      "deployedOn": {
+        "host": "Blend",
+        "label": "Blend V2 pool"
+      },
+      "safetyScore": 50,
+      "computedAt": "2026-08-26T10:01:08.281Z",
+      "operationalState": {
+        "asOf": "2026-08-26T10:01:08.000Z",
+        "level": "active",
+        "detail": "pool status 1 (Active) — all operations available.",
+        "origin": "protocol",
+        "source": "PoolConfig.status = 1",
+        "blocked": []
+      },
+      "lastRunAt": "2026-08-26T10:00:59.824Z",
       "lastRunStatus": "ok"
     },
     {
@@ -136,17 +158,17 @@ curl https://stenion.vercel.app/api/v1/protocols
       "chain": "stellar",
       "logo": "/assets/protocols/kinetic.png",
       "deployedOn": null,
-      "safetyScore": 47,
-      "computedAt": "2026-08-25T18:05:18.995Z",
+      "safetyScore": 27,
+      "computedAt": "2026-08-26T10:01:17.379Z",
       "operationalState": {
-        "asOf": "2026-08-25T18:05:15.000Z",
+        "asOf": "2026-08-26T10:01:13.000Z",
         "level": "active",
         "detail": "the router is not paused",
         "origin": "indeterminate",
         "source": "router.is_paused() = false",
         "blocked": []
       },
-      "lastRunAt": "2026-08-25T18:05:12.401Z",
+      "lastRunAt": "2026-08-26T10:01:08.636Z",
       "lastRunStatus": "ok"
     },
     {
@@ -158,17 +180,17 @@ curl https://stenion.vercel.app/api/v1/protocols
         "host": "Blend",
         "label": "Blend V2 pool"
       },
-      "safetyScore": 26,
-      "computedAt": "2026-08-25T18:05:12.213Z",
+      "safetyScore": 25,
+      "computedAt": "2026-08-26T10:01:24.961Z",
       "operationalState": {
-        "asOf": "2026-08-25T18:05:12.000Z",
+        "asOf": "2026-08-26T10:01:24.000Z",
         "level": "active",
         "detail": "pool status 0 (Admin Active) — all operations available.",
         "origin": "admin",
         "source": "PoolConfig.status = 0",
         "blocked": []
       },
-      "lastRunAt": "2026-08-25T18:05:07.315Z",
+      "lastRunAt": "2026-08-26T10:01:17.757Z",
       "lastRunStatus": "ok"
     }
   ]
@@ -636,7 +658,7 @@ curl -i https://stenion.vercel.app/api/v1/health
 **Response** — `200 OK`
 
 This one is a real capture: `curl`ed over HTTP from the production endpoint on
-**2026-08-25T18:20Z**. The `Cache-Control: no-store` described under [Caching](#caching) was verified
+**2026-08-26T10:04Z**. The `Cache-Control: no-store` described under [Caching](#caching) was verified
 on the same request — staleness here advances with the wall clock, so any TTL could serve a
 `healthy` 200 after the true answer had become `degraded`.
 
@@ -647,24 +669,31 @@ on the same request — staleness here advances with the wall clock, so any TTL 
   "protocols": [
     {
       "id": "blend",
-      "lastSuccessfulRunAt": "2026-08-25T18:20:04.609Z",
-      "lastRunAt": "2026-08-25T18:20:04.609Z",
+      "lastSuccessfulRunAt": "2026-08-26T10:01:25.334Z",
+      "lastRunAt": "2026-08-26T10:01:25.334Z",
       "lastRunStatus": "ok",
-      "staleMinutes": 0
+      "staleMinutes": 3
+    },
+    {
+      "id": "etherfuse",
+      "lastSuccessfulRunAt": "2026-08-26T10:00:59.824Z",
+      "lastRunAt": "2026-08-26T10:00:59.824Z",
+      "lastRunStatus": "ok",
+      "staleMinutes": 3
     },
     {
       "id": "kinetic",
-      "lastSuccessfulRunAt": "2026-08-25T18:20:11.751Z",
-      "lastRunAt": "2026-08-25T18:20:11.751Z",
+      "lastSuccessfulRunAt": "2026-08-26T10:01:08.636Z",
+      "lastRunAt": "2026-08-26T10:01:08.636Z",
       "lastRunStatus": "ok",
-      "staleMinutes": 0
+      "staleMinutes": 3
     },
     {
       "id": "yieldblox",
-      "lastSuccessfulRunAt": "2026-08-25T18:20:07.446Z",
-      "lastRunAt": "2026-08-25T18:20:07.446Z",
+      "lastSuccessfulRunAt": "2026-08-26T10:01:17.757Z",
+      "lastRunAt": "2026-08-26T10:01:17.757Z",
       "lastRunStatus": "ok",
-      "staleMinutes": 0
+      "staleMinutes": 3
     }
   ]
 }

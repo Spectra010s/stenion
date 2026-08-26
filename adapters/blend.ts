@@ -162,13 +162,62 @@ export const BLEND_YIELDBLOX_V2: BlendPool = {
 };
 
 /**
+ * The Etherfuse pool on Blend V2 — a market run by Etherfuse, NOT an independent
+ * protocol and not Blend's own. Its on-chain pool `Name` is "Etherfuse" and it
+ * runs the same pool wasm (`a41fc53d…`) as the two entries above, so it is a
+ * config entry and no new scoring code.
+ *
+ * WHICH DEPLOYMENT THIS IS, because there are three. Blend's V2 factory deployed
+ * a pool named "Etherfuse" three times — `CALRF5I2…` (2025-11-21), `CADR6Q2U…`
+ * and this one (both 2025-11-24). The other two are abandoned: read on
+ * 2026-08-26 both hold **exactly 0 supplied and 0 borrowed across all five
+ * reserves** and sit at `PoolConfig.status` 6 (Setup — never opened), while this
+ * one held $133,523.47 supplied at status 1 (Active). The choice was made from
+ * those balances, not from reward-zone membership — though this is also the only
+ * one of the three in Blend's backstop reward zone.
+ *
+ * WHY THE NAME AND LINK ARE NOT A GUESS. Three of its five reserves are
+ * Etherfuse's own tokenized-bond assets — CETES, USTRY and TESOURO, all issued
+ * by `GCRYUGD5…` — and that issuer account's Horizon `home_domain` is
+ * `etherfuse.com`, whose SEP-1 `stellar.toml` names `ORG_URL =
+ * "https://etherfuse.com"` and lists the same issuer under `ACCOUNTS`. So the
+ * link is chain-attested rather than a domain that merely matches the pool name.
+ * `docs` is their published API documentation, verified by fetching it.
+ *
+ * NO `logo`, deliberately, and this is the documented designed state rather than
+ * a gap (CONTRIBUTING.md, "The logo asset"): Etherfuse publishes only a 708×130
+ * WORDMARK (`/logo-white.svg`, `/logo-black.svg`) and no square icon mark — no
+ * `icon.svg`, no `apple-touch-icon`, nothing but a 256×256 `.ico`. A 5.4:1
+ * wordmark in the 40px square tile renders as an illegible sliver, and cropping
+ * or redrawing it to fit is exactly what that section forbids. The initials tile
+ * stands.
+ */
+export const BLEND_ETHERFUSE_V2: BlendPool = {
+  id: 'etherfuse',
+  name: 'Etherfuse',
+  poolId: 'CDMAVJPFXPADND3YRL4BSM3AKZWCTFMX27GLLXCML3PD62HEQS5FPVAI',
+  links: {
+    site: 'https://etherfuse.com',
+    docs: 'https://docs.etherfuse.com',
+  },
+  deployedOn: {
+    host: 'Blend',
+    label: 'Blend V2 pool',
+  },
+};
+
+/**
  * Every Blend market Stenion scores, in registration order.
  *
  * The indexer iterates this rather than naming pools one by one, so adding a
  * market is one entry here and nothing else — there is no second target list to
  * keep in step, which is how such lists come apart.
  */
-export const BLEND_POOLS: readonly BlendPool[] = [BLEND_FIXED_V2, BLEND_YIELDBLOX_V2];
+export const BLEND_POOLS: readonly BlendPool[] = [
+  BLEND_FIXED_V2,
+  BLEND_YIELDBLOX_V2,
+  BLEND_ETHERFUSE_V2,
+];
 
 // Fixed-point scalars from blend-contracts-v2/pool/src/constants.rs.
 const SCALAR_7 = 10n ** 7n; // c_factor, l_factor, util, max_util

@@ -514,7 +514,7 @@ Capture one with:
 
 ```bash
 pnpm --filter @stenion/adapters build     # the script reads the built adapter
-pnpm capture:fixture blend                # or: kinetic | all
+pnpm capture:fixture blend                # or: kinetic | yieldblox | etherfuse | all
 pnpm format                               # the generated file is unformatted
 ```
 

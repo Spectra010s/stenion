@@ -938,9 +938,9 @@ describe('the oracle-legibility precondition', () => {
       ],
     },
     {
-      pool: 'Etherfuse',
+      pool: 'Etherfuse (scored)',
       wasm: '65300c006c7b0151043be891f1f99872a25b20529d929db38fdfed96af966ff2',
-      note: 'aggregator — unregistered, but scorable, and so #65 rather than #69',
+      note: 'a third aggregator build — registered by #65 on the strength of this row',
       methods: [
         '__constructor',
         'add_asset',
@@ -1026,7 +1026,7 @@ describe('the oracle-legibility precondition', () => {
       ORACLE_GRADING_READS.map((read) => [read, methods.includes(read)]),
     ) as OracleGradingReads;
 
-  const AGGREGATORS = ['Blend Fixed V2 (scored)', 'YieldBlox (scored)', 'Etherfuse'];
+  const AGGREGATORS = ['Blend Fixed V2 (scored)', 'YieldBlox (scored)', 'Etherfuse (scored)'];
 
   for (const { pool, wasm, note, methods } of INTERFACES) {
     const aggregator = AGGREGATORS.includes(pool);

@@ -13,10 +13,10 @@ lending protocols ([Blend](https://blend.capital) and [Kinetic/K2](https://k2len
 reading their state **directly from the chain** and turning it into a single, comparable
 `safetyScore` (0–100, higher = safer), broken down into five risk factors.
 
-Scoring is per **market**, not per brand: three entries across those two protocols today, the third
-being the YieldBlox pool on Blend V2. A market running another protocol's contracts is labelled as
-one everywhere it appears — the registry ranks what is actually deployed, and never lets a pool
-pass for a protocol.
+Scoring is per **market**, not per brand: four entries across those two protocols today — Blend's
+own Fixed pool, Kinetic, and the YieldBlox and Etherfuse pools on Blend V2. A market running another
+protocol's contracts is labelled as one everywhere it appears — the registry ranks what is actually
+deployed, and never lets a pool pass for a protocol.
 
 It is **not** a TVL tracker. [DefiLlama](https://defillama.com) already covers TVL for Stellar.
 The thing Stenion measures that a TVL dashboard and a one-time audit both miss is **risk that

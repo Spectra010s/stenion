@@ -7,7 +7,7 @@ commitment — priorities shift as protocols launch and as the project finds fun
 
 - **Continuous risk scoring for Stellar/Soroban lending protocols**, with a public, free, ranked
   registry sorted purely on `safetyScore` — payment-blind, no exceptions.
-- **Three markets scored end-to-end from live mainnet data — two protocols, three entries:**
+- **Four markets scored end-to-end from live mainnet data — two protocols, four entries:**
   - **[Blend](https://blend.capital)** — the flagship Fixed V2 pool (`CAJJZSGM…`). Reference
     implementation.
   - **[Kinetic / K2](https://k2lend.com)** — an Aave-V3-style single-pool-multi-asset protocol; the
@@ -16,6 +16,15 @@ commitment — priorities shift as protocols launch and as the project finds fun
   - **YieldBlox** (`CCCCIQSD…`) — a DAO-managed pool **on Blend V2**, not an independent protocol.
     Scored by `BlendAdapter` pointed at a second pool, and labelled as a Blend V2 pool everywhere it
     appears. See "Multi-pool Blend targeting" below.
+  - **[Etherfuse](https://etherfuse.com)** (`CDMAVJPF…`) — a market **on Blend V2** lending against
+    Etherfuse's own tokenized sovereign-bond assets (CETES, USTRY, TESOURO) alongside XLM and USDC.
+    Same label, same adapter, third pool; a config entry and no new scoring code.
+
+  **Four scored markets, not five.** The Blend V2 pool investigation (#65) found five unregistered
+  pools clearing the market-size floor and registered exactly one of them. The other four are
+  published as **assessed-and-not-scored** coverage entries because their oracles fail the
+  oracle-legibility precondition — see "Four Blend V2 markets" under _Protocols investigated and
+  skipped_. Those four are unranked and carry no numeral; only the four above are in the ranking.
 
 - **Operational state, published beside every score and deliberately not scored.** Both adapters
   had always read a pause/frozen signal (Blend's `PoolConfig.status`, K2's `router.is_paused()`)
@@ -36,14 +45,15 @@ commitment — priorities shift as protocols launch and as the project finds fun
 
 - **Multi-pool Blend targeting.** `BlendAdapter` takes a `BlendPool` config — slug, display name,
   pool contract, mark, links, deployment label — instead of hardcoding one pool, and the indexer
-  iterates `BLEND_POOLS`. Every Blend market runs the same pool wasm (both live pools report code
-  hash `a41fc53d…`, and the V2 factory's `is_pool` returns true for both), so a second market needs
-  **no new scoring code** — only a config entry. The same rule that moved `scoreFactors` into
-  `core`, applied to pool targeting.
+  iterates `BLEND_POOLS`. Every Blend market runs the same pool wasm (all three registered pools
+  report code hash `a41fc53d…`, and the V2 factory's `is_pool` returns true for each), so a further
+  market needs **no new scoring code** — only a config entry. Registering Etherfuse was exactly that:
+  one `BlendPool` literal, one captured fixture, and nothing touched in any factor. The same rule
+  that moved `scoreFactors` into `core`, applied to pool targeting.
 
   It is **targeting, not aggregation**: each pool is a separate ranked entry scored from its own
-  reserves, oracle and admin. The two live Blend pools sit 30 points apart on identical contract
-  code (54 and 24), which a single summed "Blend" number would have hidden.
+  reserves, oracle and admin. The three live Blend pools sit 30 points apart end to end on identical
+  contract code (54, 50 and 24), which a single summed "Blend" number would have hidden.
 
   **A registry entry is therefore no longer the same thing as a protocol**, and the API says so:
   `deployedOn` (`{ host, label }`, null for an independent entry) rides on both the leaderboard and
@@ -119,7 +129,9 @@ commitment — priorities shift as protocols launch and as the project finds fun
   that work was the footnote at the bottom of this file, which no visitor reads: absence told a
   reader nothing, so someone searching for a protocol learned only that it wasn't there. Four
   entries at launch — Templar, K2's two sub-floor markets, and Nectar — each backed by an
-  investigation actually recorded in this repo.
+  investigation actually recorded in this repo. **Eight today**: #69 added the four Blend V2 markets
+  whose oracles cannot be graded (Orbit, Forex, Spectra PTs, Solv), under a status of their own
+  rather than folded into the size floor, because their exclusion has nothing to do with their size.
 
   Three properties are load-bearing. **Nothing in the section renders a numeral**, so "not scored"
   cannot be misread as "scored badly" — the chip standing where a scored row has its number is a
@@ -173,7 +185,8 @@ commitment — priorities shift as protocols launch and as the project finds fun
     one option.
   - **`deployedOn`** (market vs independent protocol) — **when three or more entries carry it.** It
     is the strongest candidate, since the distinction is the whole reason `deployedOn` exists and it
-    grows with every pool, but at one entry the filter yields one row.
+    grows with every pool. Etherfuse took it from one entry to **two**; the trigger is unchanged and
+    is now one pool away.
   - **freshness / failed last run** — not planned. The failed-run accent rule on the row already _is_
     the scanning affordance, over a set small enough to scan.
 
@@ -495,9 +508,18 @@ part of the discipline, not a failure. Four notable cases:
   its own reading and date. **This is the one skip on this page a protocol can undo without any
   change here:** an oracle that starts publishing the two parameters makes its pool scorable under
   the existing rulebook, and the work is a `BLEND_POOLS` entry plus a deleted coverage entry in one
-  PR. Etherfuse (`CDMAVJPF…`) is the fifth unregistered market and is _not_ on this list — it runs
-  an aggregator, scores end-to-end today, and is [#65](https://github.com/stenion-lab/stenion/issues/65)'s
-  to register.
+  PR. Etherfuse (`CDMAVJPF…`) was the fifth of the five and is _not_ on this list — it runs an
+  aggregator, so it is scored, and [#65](https://github.com/stenion-lab/stenion/issues/65)
+  **registered it**: it is a ranked entry above, and the pool investigation is closed at one market
+  registered and four published here.
+
+  **The curation question that investigation raised is still open, and this pass did not close it.**
+  Three of the five are tiny — read on 2026-08-26, Solv held $175.69, Spectra PTs $9.88, and Forex
+  $504.17 in its one priceable reserve — and METHODOLOGY.md's market-size floor is explicit that it
+  is a scorability test rather than a quality bar. All three are excluded by the oracle precondition
+  regardless, so no curation judgment was needed to keep them out and the question was simply never
+  reached. Etherfuse, at **$133,523.47** supplied on the same date, is not borderline under any
+  plausible bar. Still flagged in METHODOLOGY.md, still resolved nowhere.
 
 - **Templar.** A NEAR-based, chain-abstraction ("Cypher Lending") protocol. Its lending market state
   — reserves, supply/borrow, utilization, collateral positions — lives on **NEAR**, read via NEAR

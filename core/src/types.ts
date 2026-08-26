@@ -55,8 +55,8 @@ export interface ProtocolLinks {
  *
  * This exists because such an entry is otherwise indistinguishable from an
  * independent protocol, and presenting it as one would misrepresent the
- * ecosystem: a reader scanning the registry would count two protocols where the
- * chain has one codebase and two markets. Every consumer that renders a
+ * ecosystem: a reader scanning the registry would count several protocols where
+ * the chain has one codebase and several markets. Every consumer that renders a
  * protocol's identity MUST render this alongside it when present — that is the
  * whole reason the field is in the metadata rather than in a frontend lookup.
  *
