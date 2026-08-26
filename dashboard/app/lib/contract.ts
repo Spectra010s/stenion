@@ -16,8 +16,8 @@ export type RunStatus = 'ok' | 'failed';
  *
  * Anything rendering a protocol's name MUST render this beside it when it is
  * non-null. That is not a style preference: without it the registry says the
- * ecosystem has three independent lending protocols when it has two protocols
- * and three markets, and a reader who scans the list and leaves has been
+ * ecosystem has four independent lending protocols when it has two protocols
+ * and four markets, and a reader who scans the list and leaves has been
  * misinformed. Null means the entry runs on its own contracts — never "unknown".
  *
  * `host` is a display name, not a protocol id, and links to nothing: Stenion's

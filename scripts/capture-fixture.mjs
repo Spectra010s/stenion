@@ -19,14 +19,16 @@
 //   pnpm capture:fixture blend
 //   pnpm capture:fixture kinetic
 //   pnpm capture:fixture yieldblox
+//   pnpm capture:fixture etherfuse
 //   pnpm capture:fixture all
 //
-// `blend` and `yieldblox` are two POOLS behind one adapter, not two adapters —
-// BlendAdapter pointed at BLEND_FIXED_V2 and at BLEND_YIELDBLOX_V2. They get
-// separate fixtures because they are separate on-chain state: different oracle
-// aggregator, different admin, different reserve set. The shared engine is
-// exactly what makes both fixtures worth having — a decode regression that the
-// three tidy Fixed reserves happen to survive shows up in YieldBlox's eight.
+// `blend`, `yieldblox` and `etherfuse` are three POOLS behind one adapter, not
+// three adapters — BlendAdapter pointed at BLEND_FIXED_V2, BLEND_YIELDBLOX_V2
+// and BLEND_ETHERFUSE_V2. They get separate fixtures because they are separate
+// on-chain state: different oracle aggregator, different admin, different
+// reserve set. The shared engine is exactly what makes all three worth having —
+// a decode regression that the three tidy Fixed reserves happen to survive shows
+// up in YieldBlox's eight.
 //
 // Requires the workspace to be built (`pnpm --filter @stenion/adapters build`)
 // and STENION_RPC_URL / STENION_HORIZON_URL in the repo-root .env or the shell.
@@ -89,8 +91,8 @@ function toLiteral(value) {
 
 async function main() {
   const which = (process.argv[2] ?? '').toLowerCase();
-  if (!['blend', 'kinetic', 'yieldblox', 'all'].includes(which)) {
-    console.error('Usage: pnpm capture:fixture <blend|kinetic|yieldblox|all>');
+  if (!['blend', 'kinetic', 'yieldblox', 'etherfuse', 'all'].includes(which)) {
+    console.error('Usage: pnpm capture:fixture <blend|kinetic|yieldblox|etherfuse|all>');
     process.exitCode = 2;
     return;
   }
@@ -130,8 +132,13 @@ async function main() {
       module: 'blend',
       make: () => new mod.BlendAdapter({ ...opts, pool: mod.BLEND_YIELDBLOX_V2 }),
     },
+    etherfuse: {
+      type: 'BlendRawData',
+      module: 'blend',
+      make: () => new mod.BlendAdapter({ ...opts, pool: mod.BLEND_ETHERFUSE_V2 }),
+    },
   };
-  const names = which === 'all' ? ['blend', 'kinetic', 'yieldblox'] : [which];
+  const names = which === 'all' ? ['blend', 'kinetic', 'yieldblox', 'etherfuse'] : [which];
 
   mkdirSync(FIXTURE_DIR, { recursive: true });
 

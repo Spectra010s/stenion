@@ -220,10 +220,17 @@ export function cycleWaves(queued: number, concurrency: number): number {
  * (2026-08-25, five cycles): Kinetic 4.8-6.1s, YieldBlox 3.8-4.3s, Blend Fixed
  * 2.3-2.6s. Kinetic and YieldBlox swapped places when the measurement moved off
  * a developer machine and onto Vercel, which is the whole argument for measuring
- * there. At three targets and concurrency 2 the swap changes nothing — those two
- * share wave 1 either way, and what matters is that the fastest target is last —
- * but a list whose comment cites numbers that no longer hold is a list nobody
- * can check, so it tracks the measurement.
+ * there. At the three targets and concurrency 2 of that measurement the swap
+ * changed nothing — those two shared wave 1 either way, and what matters is that
+ * the fastest target is last — but a list whose comment cites numbers that no
+ * longer hold is a list nobody can check, so it tracks the measurement.
+ *
+ * DELIBERATELY NOT UPDATED FOR ETHERFUSE (#65). It has no deployed measurement,
+ * so it is not on this list and `orderByLatency` therefore treats it as the
+ * slowest and runs it first — the conservative default this list is built to
+ * allow. Add it here only once the cron route's per-target `durationMs` says
+ * where it belongs; guessing its rank from a local timing is the exact mistake
+ * the concurrency incident was.
  *
  * It lives here rather than beside `buildTargets` for one blunt reason: index.ts
  * is a CommonJS CLI entry point and cannot be imported by a test, so an ordering

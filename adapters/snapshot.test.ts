@@ -19,21 +19,32 @@
 // (re-derive them deliberately) or something regressed. Do not update a number
 // here without knowing which.
 //
-// THREE FIXTURES, TWO ADAPTERS. `blend` and `yieldblox` are the same
-// BlendAdapter pointed at two different pools, so between them they answer a
-// question neither could alone: whether the multi-pool refactor left the engine
+// FOUR FIXTURES, TWO ADAPTERS. `blend`, `yieldblox` and `etherfuse` are the same
+// BlendAdapter pointed at three different pools, so between them they answer a
+// question none could alone: whether the multi-pool refactor left the engine
 // alone. Blend's numbers must not move (they are the before/after control), and
-// YieldBlox's must be produced by the identical code path with nothing
-// special-cased for it.
+// the other two must be produced by the identical code path with nothing
+// special-cased for either.
+//
+// Etherfuse is the one that exercises a scale the other two cannot reach: its
+// oracle reports 14 decimals where both others report 7, so every fixed-point
+// divide that reads `oracleDecimals` is only genuinely tested here.
 //
 // Run with: pnpm --filter @stenion/adapters test
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { BLEND_FIXED_V2, BLEND_POOLS, BLEND_YIELDBLOX_V2, BlendAdapter } from './blend.ts';
+import {
+  BLEND_ETHERFUSE_V2,
+  BLEND_FIXED_V2,
+  BLEND_POOLS,
+  BLEND_YIELDBLOX_V2,
+  BlendAdapter,
+} from './blend.ts';
 import { KineticAdapter } from './kinetic.ts';
 import { blendMainnet } from './fixtures/blend-mainnet.ts';
+import { etherfuseMainnet } from './fixtures/etherfuse-mainnet.ts';
 import { kineticMainnet } from './fixtures/kinetic-mainnet.ts';
 import { yieldbloxMainnet } from './fixtures/yieldblox-mainnet.ts';
 import type { RiskFactor, RiskFactorMap } from '@stenion/core';
@@ -336,7 +347,122 @@ describe('YieldBlox — frozen mainnet snapshot (same adapter, second pool)', ()
   });
 });
 
-describe('both Blend pools — one engine, two markets', () => {
+describe('Etherfuse — frozen mainnet snapshot (same adapter, third pool)', () => {
+  const adapter = () => new BlendAdapter({ pool: BLEND_ETHERFUSE_V2 });
+
+  it('produces exactly the factor map captured with it', async () => {
+    const factors = await adapter().computeRiskFactors(etherfuseMainnet);
+    assert.deepEqual(values(factors), {
+      collateralSafety: 94,
+      oracleSafety: 100,
+      adminKeySafety: 10,
+      liquiditySafety: 16,
+      utilizationSafety: 11,
+    });
+  });
+
+  it('scores 50 — the weighted mean of those five', async () => {
+    // 94×0.20 + 100×0.25 + 10×0.20 + 16×0.15 + 11×0.20 = 50.4.
+    const a = adapter();
+    const factors = await a.computeRiskFactors(etherfuseMainnet);
+    assert.equal(a.score(factors).score, 50);
+  });
+
+  it('publishes the pool it actually read, not the module default', async () => {
+    // Same guard as YieldBlox's, and it earns repeating per pool rather than
+    // being generalised into a loop: the failure it catches is an entry
+    // publishing ONE pool's address beside ANOTHER pool's number, and a loop
+    // over the registry cannot tell that from a correct pairing.
+    assert.equal(adapter().metadata.contractId, BLEND_ETHERFUSE_V2.poolId);
+    assert.equal(adapter().metadata.contractId, etherfuseMainnet.poolId);
+    assert.notEqual(adapter().metadata.contractId, BLEND_FIXED_V2.poolId);
+    assert.notEqual(adapter().metadata.contractId, BLEND_YIELDBLOX_V2.poolId);
+  });
+
+  it('is the deployment that holds the money, not one of the two abandoned ones', async () => {
+    // Blend's V2 factory deployed a pool named "Etherfuse" THREE times. The
+    // other two — CALRF5I2… and CADR6Q2U… — read exactly 0 supplied and 0
+    // borrowed across all five reserves at PoolConfig.status 6 (Setup, never
+    // opened) when re-checked on 2026-08-26, while this one was status 1
+    // (Active) holding $133,523.47. Pinning the address makes registering the
+    // wrong one of three same-named pools a test failure, rather than a
+    // published number attached to a dead contract.
+    assert.equal(
+      BLEND_ETHERFUSE_V2.poolId,
+      'CDMAVJPFXPADND3YRL4BSM3AKZWCTFMX27GLLXCML3PD62HEQS5FPVAI',
+    );
+    assert.equal(etherfuseMainnet.status, 1, 'the live deployment is Active, not Setup');
+  });
+
+  it('reads a 14-decimal oracle — the scale neither other fixture reaches', async () => {
+    // THE REASON THIS FIXTURE EARNS ITS PLACE beside the other two. Both other
+    // Blend pools sit on 7-decimal aggregators, so a divide that hardcoded
+    // 10**7 instead of reading `oracleDecimals` would pass every other
+    // assertion in this file. Here the same $5.00 min_collateral is
+    // 500000000000000 rather than 50000000 — seven orders of magnitude apart —
+    // so that bug reports a $50,000,000 floor and excludes the whole pool.
+    assert.equal(etherfuseMainnet.oracleDecimals, 14);
+    assert.equal(blendMainnet.oracleDecimals, 7);
+    assert.equal(yieldbloxMainnet.oracleDecimals, 7);
+    assert.equal(etherfuseMainnet.minCollateral, 500_000_000_000_000n);
+    assert.equal(Number(etherfuseMainnet.minCollateral) / 10 ** etherfuseMainnet.oracleDecimals, 5);
+
+    // And the filter that floor feeds stays a no-op — only true if the scale
+    // was read rather than assumed.
+    const factors = await adapter().computeRiskFactors(etherfuseMainnet);
+    assert.equal(sub(factors.liquiditySafety!, 'excludedReserves'), undefined);
+    assert.equal(sub(factors.utilizationSafety!, 'excludedReserves'), undefined);
+  });
+
+  it("reads its own oracle and its own admin, not the other two pools'", async () => {
+    // Three pools, three aggregators, three admins. If any of these matched,
+    // the fixture was captured from the wrong pool.
+    assert.notEqual(etherfuseMainnet.oracleId, blendMainnet.oracleId);
+    assert.notEqual(etherfuseMainnet.oracleId, yieldbloxMainnet.oracleId);
+    assert.notEqual(etherfuseMainnet.admin.address, blendMainnet.admin.address);
+    assert.notEqual(etherfuseMainnet.admin.address, yieldbloxMainnet.admin.address);
+  });
+
+  it('scores a single-key admin at the bottom of the range, and says why', async () => {
+    // The third distinct admin shape across the fixtures: Blend's multisig,
+    // YieldBlox's Governor CONTRACT, and here a plain keypair with one signer.
+    // adminKeySafety 10 is the lowest on any scored entry and the factor doing
+    // most of the work to hold this market's score down — pinned so a change to
+    // the admin rules shows up as a moved number here.
+    assert.equal(etherfuseMainnet.admin.isContract, false, 'a keypair, not a governor');
+    assert.equal(etherfuseMainnet.admin.account?.signerCount, 1);
+    const factors = await adapter().computeRiskFactors(etherfuseMainnet);
+    assert.equal(factors.adminKeySafety!.value, 10);
+    assert.match(factors.adminKeySafety!.detail, /single-key admin/);
+  });
+
+  it('grades every reserve — this aggregator declares no base assets', async () => {
+    // YieldBlox's aggregator declares three assets it prices 1:1 and excludes
+    // from oracleSafety; this one declares none, so all 5 reserves are graded
+    // and that exclusion branch is genuinely absent rather than coincidentally
+    // empty.
+    assert.deepEqual(etherfuseMainnet.oracleConfig.baseAssets, []);
+    const factors = await adapter().computeRiskFactors(etherfuseMainnet);
+    assert.doesNotMatch(
+      sub2(factors.oracleSafety!, 'deviationTightness'),
+      /base asset\(s\) excluded/,
+    );
+    assert.match(factors.oracleSafety!.detail, /all 5 reserves score the same/);
+  });
+
+  it('publishes operationalState active without touching the factor map', async () => {
+    // The #15 rule checked on the newest entry. Both adapter suites already
+    // assert the byte-identical-factor-map half; what this pins is that a market
+    // registered AFTER #15 shipped actually populates the field from its own
+    // PoolConfig.status rather than falling back to a default.
+    const state = adapter().operationalState(etherfuseMainnet);
+    assert.equal(state.level, 'active');
+    assert.equal(state.source, 'PoolConfig.status = 1');
+    assert.deepEqual(state.blocked, []);
+  });
+});
+
+describe('all three Blend pools — one engine, three markets', () => {
   it('produce different scores from identical code', async () => {
     // The whole argument for multi-pool targeting rather than aggregation. Same
     // class, same rulebook, same contract wasm on chain — and 30 points apart,
@@ -344,10 +470,14 @@ describe('both Blend pools — one engine, two markets', () => {
     // single summed "Blend" number would hide exactly this.
     const fixed = new BlendAdapter({ pool: BLEND_FIXED_V2 });
     const ybx = new BlendAdapter({ pool: BLEND_YIELDBLOX_V2 });
+    const eth = new BlendAdapter({ pool: BLEND_ETHERFUSE_V2 });
     const fixedScore = fixed.score(await fixed.computeRiskFactors(blendMainnet)).score;
     const ybxScore = ybx.score(await ybx.computeRiskFactors(yieldbloxMainnet)).score;
+    const ethScore = eth.score(await eth.computeRiskFactors(etherfuseMainnet)).score;
     assert.equal(fixedScore, 54);
     assert.equal(ybxScore, 24);
+    assert.equal(ethScore, 50);
+    assert.equal(new Set([fixedScore, ybxScore, ethScore]).size, 3, 'three markets, three numbers');
   });
 
   it('are scored by the same adapter, and say so', async () => {
@@ -355,7 +485,7 @@ describe('both Blend pools — one engine, two markets', () => {
     // BlendAdapter, and a reader following the provenance label lands in the
     // right file. It is the one identity field that does NOT vary per pool, and
     // it must stay a literal — see ProtocolMetadata.adapterRef.
-    for (const pool of [BLEND_FIXED_V2, BLEND_YIELDBLOX_V2]) {
+    for (const pool of BLEND_POOLS) {
       assert.equal(new BlendAdapter({ pool }).metadata.adapterRef, 'BlendAdapter');
     }
   });
@@ -366,10 +496,19 @@ describe('both Blend pools — one engine, two markets', () => {
     // market as an independent protocol — the exact misrepresentation Stenion
     // refused when it declined to build a standalone YieldBlox adapter.
     assert.equal(new BlendAdapter({ pool: BLEND_FIXED_V2 }).metadata.deployedOn, undefined);
-    assert.deepEqual(new BlendAdapter({ pool: BLEND_YIELDBLOX_V2 }).metadata.deployedOn, {
-      host: 'Blend',
-      label: 'Blend V2 pool',
-    });
+    for (const pool of [BLEND_YIELDBLOX_V2, BLEND_ETHERFUSE_V2]) {
+      assert.deepEqual(new BlendAdapter({ pool }).metadata.deployedOn, {
+        host: 'Blend',
+        label: 'Blend V2 pool',
+      });
+    }
+    // Stated as a rule over the whole registry as well as a list, so a pool
+    // added later without the label fails here instead of quietly presenting
+    // itself as an independent protocol.
+    for (const pool of BLEND_POOLS) {
+      if (pool.id === 'blend') continue;
+      assert.ok(pool.deployedOn, `${pool.id} must carry deployedOn`);
+    }
   });
 
   it('never share a slug or a contract', async () => {
@@ -382,12 +521,13 @@ describe('both Blend pools — one engine, two markets', () => {
   });
 });
 
-describe('both snapshots', () => {
+describe('every snapshot', () => {
   it('populate all five factors with real detail strings', async () => {
     for (const [factors] of [
       [await new BlendAdapter().computeRiskFactors(blendMainnet)],
       [await new KineticAdapter().computeRiskFactors(kineticMainnet)],
       [await new BlendAdapter({ pool: BLEND_YIELDBLOX_V2 }).computeRiskFactors(yieldbloxMainnet)],
+      [await new BlendAdapter({ pool: BLEND_ETHERFUSE_V2 }).computeRiskFactors(etherfuseMainnet)],
     ]) {
       for (const [key, factor] of Object.entries(factors)) {
         assert.ok(factor, `${key} should be populated on live data`);

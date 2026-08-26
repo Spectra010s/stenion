@@ -94,7 +94,7 @@ export const DEFAULT_STALE_MINUTES = 30;
  * and Horizon — are shared by every adapter, so a broad upstream outage takes
  * all of them out together while our own infrastructure is entirely fine;
  * calling that "the cron is dead" sends an operator to the wrong place. Second,
- * a registry this small (three targets today, and one adapter serving several of
+ * a registry this small (four targets today, and one adapter serving three of
  * them) makes "all of them" a much weaker signal than it sounds: with a single
  * protocol listed, "all stale" and "one adapter broken" are the same observation.
  *

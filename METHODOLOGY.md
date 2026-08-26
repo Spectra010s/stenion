@@ -8,7 +8,7 @@ directly from the shipped code (currently [`adapters/blend.ts`](adapters/blend.t
 the rulebook the adapters must implement.
 
 **One formula, per-protocol data sources.** Every factor's formula, scale, and thresholds
-are fixed here and identical across protocols — and across _markets_: the two Blend pools
+are fixed here and identical across protocols — and across _markets_: the three Blend pools
 Stenion scores run one adapter and one rulebook, differing only in the pool each reads. What legitimately differs per adapter is only
 _where the raw inputs are read on-chain_ — e.g. Blend reads a per-reserve `max_util` cap,
 while Kinetic (K2), being Aave-V3-style, has no such cap and instead anchors the same

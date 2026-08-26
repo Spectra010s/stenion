@@ -70,16 +70,16 @@ factors using the formulas in `METHODOLOGY.md`, and produces a weighted `safetyS
 
 **One adapter can serve several markets.** `BlendAdapter` takes a `BlendPool` — slug, display name,
 pool contract, mark, links, deployment label — and the module exports `BLEND_POOLS`, the list the
-indexer iterates. Every Blend market runs the same pool wasm (both live pools report code hash
-`a41fc53d…`, and the V2 pool factory's `is_pool` returns true for both), so a second market is a
-config entry and no new scoring code. Nothing on `BlendPool` is a threshold, a weight or a formula —
+indexer iterates. Every Blend market runs the same pool wasm (all three registered pools report
+code hash `a41fc53d…`, and the V2 pool factory's `is_pool` returns true for each), so a further
+market is a config entry and no new scoring code. Nothing on `BlendPool` is a threshold, a weight or a formula —
 a per-pool rulebook would break `METHODOLOGY.md` ground rule 1 — and the identity fields all come
 from the pool the instance was given, so an adapter cannot publish one pool's `contractId` beside
 another pool's numbers. **Targeting, not aggregation:** each pool is its own ranked entry, and the
-two live Blend pools sit 30 points apart (54 and 24) on identical contract code.
+three live Blend pools span 30 points (54, 50 and 24) on identical contract code.
 
-**A row in `protocols` is therefore not always a protocol.** Three targets, two protocols: Blend's
-Fixed pool, Kinetic, and the YieldBlox pool on Blend V2. That distinction is carried in the data,
+**A row in `protocols` is therefore not always a protocol.** Four targets, two protocols: Blend's
+Fixed pool, Kinetic, and the YieldBlox and Etherfuse pools on Blend V2. That distinction is carried in the data,
 not left to the reader — see `deployment_host` / `deployment_label` below.
 
 **`@stenion/db`** — the single, typed storage layer, shared by both the indexer (writes) and the
@@ -294,10 +294,17 @@ still recorded as `failed` — a protocol that is genuinely down still shows as 
     15s timeout makes `cycleFeasibility` infeasible at three targets (`3 × 15s = 45s > 42s`) and
     warn on every cycle. 10s is justified by the measurement rather than guessed — nothing healthy
     exceeds 6.1s deployed — and makes a sequential cycle feasible to **four** targets
-    (`4 × 10s = 40s ≤ 42s`), so #65's Etherfuse needs no further config change.
+    (`4 × 10s = 40s ≤ 42s`), so #65's Etherfuse needed no further config change.
 
   Verified against the real defaults: 3 targets `30,000ms` silent, 4 targets `40,000ms` silent,
   5 targets `50,000ms` warns. Alerting is asserted byte-identical at concurrency 1 and 2.
+
+  **Now standing at four.** #65 registered Etherfuse, so `cycleFeasibility` was re-run against the
+  loaded config and the real registry rather than against the arithmetic above: 4 targets,
+  concurrency 1, `attemptTimeoutMs` 10,000, `budgetMs` 42,000 → `requiredMs` 40,000, feasible, no
+  warning. **The next registration is the one that trips it** — a fifth target needs 50,000ms and
+  warns every cycle, so it arrives with a budget or concurrency decision attached, measured against
+  the deployed function rather than argued from arithmetic.
 
   **Local-dev caveat:** a developer machine has been seen taking 12.5s on YieldBlox, which now
   exceeds the 10s cap, so a local `pnpm indexer` may time out and retry where it used to succeed
@@ -338,11 +345,18 @@ still recorded as `failed` — a protocol that is genuinely down still shows as 
   consequences worth stating: the whole cycle uses under a fifth of its 42s budget, and the 15s
   attempt timeout is now roughly 2.5x the slowest healthy fetch rather than barely above it.
 
-  **The 3-target case is measured. The 4-target case is not, and remains arithmetic.** Nothing above
-  is evidence about four targets: a fourth target does not exist until #65 registers Etherfuse, its
-  duration is unknown, and — see the rate-limit note below — the cost of a cycle is not only its
-  duration. The feasibility ceiling of four targets is a statement about the attempt timeout fitting
-  in the budget, not a measured result, and must not be described as proven until it is run.
+  **The 3-target case is measured. The 4-target case still is not.** The fourth target now exists —
+  #65 registered Etherfuse — but nothing above is evidence about it: the numbers here were captured
+  at three targets, and, see the rate-limit note below, the cost of a cycle is not only its duration.
+  The feasibility ceiling of four targets is a statement about the attempt timeout fitting in the
+  budget, not a measured result, and must not be described as proven until a deployed cycle has run
+  it.
+
+  **One thing to watch on the first deployed cycles.** Etherfuse's `fetchRawData` was observed
+  locally at 8.0s and 12.2s in two consecutive runs against the shared public RPC — the second past
+  the 10s attempt timeout. Local timings are exactly what the #68 incident says never to reason from,
+  so this is written down as the thing to check in the cron route's per-target `durationMs`, not as a
+  claim about production or as grounds to move a knob.
 
 - **The attempt timeout is soft.** It races the attempt against a timer, abandoning the in-flight
   work rather than cancelling it. That bounds the observed attempt duration, which is what the
@@ -583,8 +597,8 @@ The worked examples:
 - **`adapters/blend.test.ts` / `adapters/kinetic.test.ts`** — `computeRiskFactors` against
   synthetic raw state. `computeRiskFactors` is a pure function of already-decoded on-chain data, so
   every methodology rule is reachable without RPC. This is where methodology v2's `oracleSafety` is
-  pinned: both live pools price fresh and bounded, so a live run exercises neither the disabled-bound
-  path nor K2's inert-breaker path — the two the rulebook exists to catch.
+  pinned: every live pool but YieldBlox prices fresh and bounded, so a live run exercises neither
+  the disabled-bound path nor K2's inert-breaker path — the two the rulebook exists to catch.
 - **`adapters/snapshot.test.ts`** — the same adapters against **frozen mainnet captures** in
   `adapters/fixtures/`. This asks a different question from the synthetic suites: not "does the code
   match the rulebook" but "did a refactor move a published number on real data". It is the only
@@ -856,7 +870,7 @@ cron-job.org misfire would read as an outage.
 The down window exists because "everything is stale at once" is weaker evidence than it sounds.
 Every adapter shares Soroban RPC and Horizon, so a broad upstream outage takes them all out together
 while our own infrastructure is fine — and calling that "the cron is dead" sends an operator to the
-wrong place. With three targets today (one adapter serving several of them), "all of them" is a
+wrong place. With four targets today (one adapter serving three of them), "all of them" is a
 small sample. Doubling the window costs nothing operationally, because `degraded` is already `503`
 and a monitor has already fired; all it buys is the confidence to name which thing broke. The window
 is measured from the **freshest** success across the registry — the most generous reading available,
