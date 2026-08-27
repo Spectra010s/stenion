@@ -569,10 +569,10 @@ export function createStore(pool: Pool): Store {
               record.computedAt,
               record.runAt,
               record.methodologyVersion,
-              record.category,
               // Same treatment as `factors`: serialized here and cast to jsonb
               // in the statement, so the parameter type is unambiguous.
               JSON.stringify(record.operationalState),
+              record.category,
             ]
           : [
               record.protocolId,
