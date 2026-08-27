@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { Github } from 'lucide-react';
 import { GITHUB_URL, NAV_LINKS } from '../app/lib/site';
+import { FooterStatusPill } from './footer-status-pill';
 
 export function Footer() {
   return (
@@ -30,7 +31,7 @@ export function Footer() {
                 href={GITHUB_URL}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1.5 text-muted hover:text-ink"
+                className="inline-flex w-fit items-center gap-1.5 text-muted hover:text-ink"
               >
                 <Github className="h-3.5 w-3.5" /> GitHub
               </a>
@@ -40,8 +41,16 @@ export function Footer() {
               <Link href="/docs/api" className="text-muted hover:text-ink">
                 API docs
               </Link>
-              <Link href="/status" className="text-muted hover:text-ink">
+              {/* The pill is live, not decorative — see FooterStatusPill on why
+                  a permanently-green pulse here would be a claim rather than an
+                  indicator. It sits after the label so the link text stays the
+                  first thing read. */}
+              <Link
+                href="/status"
+                className="inline-flex w-fit items-center gap-1.5 text-muted hover:text-ink"
+              >
                 Status
+                <FooterStatusPill />
               </Link>
             </nav>
           </div>
