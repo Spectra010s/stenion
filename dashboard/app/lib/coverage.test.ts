@@ -118,6 +118,27 @@ describe('the coverage entries meet their own bar', () => {
     }
   });
 
+  it('says out-of-category is a missing rulebook, not a permanent exclusion', () => {
+    // The copy used to read "lending only, for now" / "Stenion scores lending
+    // protocols", which describes the product rather than the entry: it tells a
+    // reader the category is out of scope, when the true statement is narrower —
+    // no taxonomy for it has been published YET. The member name is untouched on
+    // purpose (it is a v1 API value, see CoverageStatus), so only the display
+    // text carries the correction.
+    const meta = COVERAGE_STATUS_META['out-of-category'];
+    assert.match(meta.chip, /taxonomy/i);
+    assert.match(meta.blurb, /taxonomy/i);
+    assert.doesNotMatch(
+      meta.chip,
+      /lending/i,
+      'the chip names the missing rulebook, not the one category that has one',
+    );
+    // The status string itself is the API contract and must survive any copy
+    // edit — renaming it is a v2 change.
+    assert.ok('out-of-category' in COVERAGE_STATUS_META);
+    assert.ok(COVERAGE_STATUS_ORDER.includes('out-of-category'));
+  });
+
   it('keeps every entry free of a numeral that could read as a score', () => {
     // The requirement this feature exists for: "not scored" must never be
     // mistakable for "scored badly". The chip standing where a scored row has

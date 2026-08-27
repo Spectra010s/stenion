@@ -11,6 +11,7 @@ import {
   type CoverageEntry,
 } from '../lib/coverage';
 import {
+  CATEGORY_LABELS,
   buildRegistryView,
   parseRegistryParams,
   registryHref,
@@ -129,10 +130,16 @@ export default async function RegistryPage({
     published.some((entry) => entry.status === status),
   );
 
-  const params = parseRegistryParams(sp, availableStatuses);
+  // Same rule again, for categories: only the ones the board actually contains
+  // are offered, so the filter can never select an empty view. Derived from the
+  // data rather than from the ProtocolCategory union, because a category with a
+  // rulebook but no scored market yet is a filter that finds nothing.
+  const availableCategories = [...new Set((protocols ?? []).map((p) => p.category))].sort();
+
+  const params = parseRegistryParams(sp, availableStatuses, availableCategories);
   const view = buildRegistryView(protocols ?? [], published, params);
 
-  const filtering = params.q !== '' || params.status !== 'all';
+  const filtering = params.q !== '' || params.status !== 'all' || params.category !== 'all';
 
   // Both notes are conditional on their subject existing, so the second column
   // can be empty — and an empty column would leave the lead sentence in a 1.4fr
@@ -206,6 +213,10 @@ export default async function RegistryPage({
           coverageStatuses={availableStatuses.map((status) => ({
             value: status,
             label: COVERAGE_STATUS_META[status].heading,
+          }))}
+          categories={availableCategories.map((category) => ({
+            value: category,
+            label: CATEGORY_LABELS[category],
           }))}
         />
         <ResultSummary view={view} params={params} filtering={filtering} />
@@ -293,10 +304,31 @@ function ResultSummary({
 function RankedView({ view, filtering }: { view: RegistryView; filtering: boolean }) {
   const groups = groupCoverage(view.coverage);
 
+  // The heading is conditional on there being something to distinguish. With
+  // one category on the board the block IS the ranking, and a "Lending" label
+  // over it would answer a question nobody could have — the same rule that
+  // drops an empty coverage heading, applied to a redundant one.
+  const showCategoryHeadings = view.rankedGroups.length > 1;
+
   return (
     <>
-      {view.ranked.length > 0 && (
-        <Reveal delay={0.05} trigger="mount" className="mt-8">
+      {view.rankedGroups.map((group, groupIndex) => (
+        <Reveal
+          key={group.category}
+          delay={0.05}
+          trigger="mount"
+          className={cn(groupIndex === 0 ? 'mt-8' : 'mt-12')}
+        >
+          {/* Each category is its own ranked list, numbered from 1 inside
+              itself. Two categories' scores come from two rulebooks, so one
+              sequence spanning both — and a `#` counting across them — would
+              assert a comparison nothing computed. */}
+          {showCategoryHeadings && (
+            <h2 className="mb-4 font-display text-lg font-semibold tracking-tight text-ink">
+              {CATEGORY_LABELS[group.category]}
+            </h2>
+          )}
+
           {/* header row (desktop) */}
           <div
             className={cn(
@@ -317,14 +349,14 @@ function RankedView({ view, filtering }: { view: RegistryView; filtering: boolea
           </div>
 
           <RevealGroup className="divide-y divide-line-soft" stagger={0.05} trigger="mount">
-            {view.ranked.map((p, i) => (
+            {group.entries.map((p, i) => (
               <RevealItem key={p.id}>
                 <ProtocolRow entry={p} rank={view.showRank ? i + 1 : null} barIndex={i} />
               </RevealItem>
             ))}
           </RevealGroup>
         </Reveal>
-      )}
+      ))}
 
       {view.pending.length > 0 && <PendingBlock entries={view.pending} />}
 

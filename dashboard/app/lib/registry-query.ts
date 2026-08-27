@@ -8,6 +8,13 @@
 // page renders comes out of buildRegistryView, so "does an unscored entry ever
 // land inside the ranked list" is a question with an answer.
 //
+// THE SAME RULE, ONE LEVEL UP (#78): a position numeral is scoped to one
+// category, and no ordering may put two categories' scores in one ranked
+// sequence. Two scores are comparable only when the same rulebook produced
+// them. That one is structural rather than tested-for — the view carries
+// RankedCategoryGroups and no flat ranked array, so there is nowhere for a
+// cross-category ranking to live.
+//
 // STATE LIVES IN THE URL, never in a component. A filtered or searched view has
 // to be linkable and survive a reload, so these functions parse from and build
 // back to query params, and the page is a Server Component that re-renders from
@@ -21,7 +28,7 @@
 // import graph. Keep it that way — a value import from ./coverage would make
 // this file untestable under `node --test` without an extension dance.
 
-import type { LeaderboardEntry } from './contract';
+import type { LeaderboardEntry, ProtocolCategory } from './contract';
 import type { CoverageEntry, CoverageStatus } from './coverage';
 
 /**
@@ -30,7 +37,8 @@ import type { CoverageEntry, CoverageStatus } from './coverage';
  * `score-desc` is the registry's actual claim — protocols ranked by on-chain
  * safety, payment-blind. `score-asc` is the same claim read from the other end.
  * `name` is not a ranking at all, which is precisely why it is the one ordering
- * allowed to merge scored and unscored entries into a single list.
+ * allowed to merge scored and unscored entries — or two categories' scores —
+ * into a single list. See `merged` and `rankedGroups` on RegistryView.
  */
 export const REGISTRY_SORTS = ['score-desc', 'score-asc', 'name'] as const;
 export type RegistrySort = (typeof REGISTRY_SORTS)[number];
@@ -63,6 +71,36 @@ export type RegistryStatusFilter = 'all' | 'scored' | 'not-scored' | CoverageSta
 
 export const DEFAULT_STATUS: RegistryStatusFilter = 'all';
 
+/**
+ * `all`, or one protocol category.
+ *
+ * A SEPARATE PARAMETER FROM `status`, unlike everything else on this page,
+ * because it is not the same question. `status` asks what KIND of row you are
+ * looking at (scored, awaiting a score, assessed-and-not-scored); `category`
+ * asks which RULEBOOK produced the numbers you are looking at. The two compose
+ * — "scored lending protocols" is a coherent view — where two spellings of the
+ * status facet never could.
+ *
+ * It narrows the scored side only. A CoverageEntry carries no category at all,
+ * so a category filter cannot match one, and showing coverage entries under
+ * `?category=lending` would assert a categorisation we never made.
+ */
+export type RegistryCategoryFilter = 'all' | ProtocolCategory;
+
+export const DEFAULT_CATEGORY: RegistryCategoryFilter = 'all';
+
+/**
+ * How a category is written where a reader sees it — a section heading above a
+ * ranked block, or an option in the filter.
+ *
+ * Lives here rather than in the page because the control and the page must
+ * agree, and because `Record<ProtocolCategory, string>` is the compile error
+ * that finds this file when a category is added to the union.
+ */
+export const CATEGORY_LABELS: Record<ProtocolCategory, string> = {
+  lending: 'Lending',
+};
+
 /** Query strings longer than this are a paste accident or an attack, not a search. */
 const MAX_QUERY = 64;
 
@@ -72,6 +110,7 @@ export type RawParam = string | string[] | undefined;
 export interface RegistryParams {
   q: string;
   status: RegistryStatusFilter;
+  category: RegistryCategoryFilter;
   sort: RegistrySort;
 }
 
@@ -82,30 +121,38 @@ function firstOf(raw: RawParam): string {
 }
 
 /**
- * Read the three params, falling back to the defaults for anything absent or
+ * Read the four params, falling back to the defaults for anything absent or
  * unrecognised.
  *
  * Unrecognised values fall back SILENTLY rather than 404ing: these params are
  * typed by hand and pasted between people, and a stale `?sort=score` from an
  * older link should show the registry, not an error page. The canonical URL is
- * restored by registryHref, which omits defaults.
+ * restored by registryHref, which omits defaults. `?category=amm` gets the same
+ * treatment as `?sort=score` deliberately — a category that doesn't exist yet
+ * is exactly the stale link this rule was written for, and it needs no new
+ * error path of its own.
  *
- * `coverageStatuses` is passed in rather than imported so this module keeps its
- * type-only import graph. It is the set actually present in the published
- * entries, which also means a status with no members can't be selected — the
- * same rule as groupCoverage dropping empty groups.
+ * `coverageStatuses` and `categories` are passed in rather than imported so this
+ * module keeps its type-only import graph. Both are the sets actually present in
+ * the data, which also means a status or category with no members can't be
+ * selected — the same rule as groupCoverage dropping empty groups.
  */
 export function parseRegistryParams(
-  raw: { q?: RawParam; status?: RawParam; sort?: RawParam },
+  raw: { q?: RawParam; status?: RawParam; category?: RawParam; sort?: RawParam },
   coverageStatuses: readonly string[],
+  categories: readonly string[] = [],
 ): RegistryParams {
   const sortRaw = firstOf(raw.sort);
   const statusRaw = firstOf(raw.status);
+  const categoryRaw = firstOf(raw.category);
   const valid: readonly string[] = ['all', 'scored', 'not-scored', ...coverageStatuses];
 
   return {
     q: firstOf(raw.q).trim().slice(0, MAX_QUERY),
     status: valid.includes(statusRaw) ? (statusRaw as RegistryStatusFilter) : DEFAULT_STATUS,
+    category: categories.includes(categoryRaw)
+      ? (categoryRaw as RegistryCategoryFilter)
+      : DEFAULT_CATEGORY,
     sort: (REGISTRY_SORTS as readonly string[]).includes(sortRaw)
       ? (sortRaw as RegistrySort)
       : DEFAULT_SORT,
@@ -124,6 +171,8 @@ export function registryHref(params: Partial<RegistryParams>): string {
   const q = params.q?.trim() ?? '';
   if (q) search.set('q', q);
   if (params.status && params.status !== DEFAULT_STATUS) search.set('status', params.status);
+  if (params.category && params.category !== DEFAULT_CATEGORY)
+    search.set('category', params.category);
   if (params.sort && params.sort !== DEFAULT_SORT) search.set('sort', params.sort);
   const qs = search.toString();
   return qs ? `/registry?${qs}` : '/registry';
@@ -191,6 +240,10 @@ export function partitionScored(entries: readonly LeaderboardEntry[]): {
  * Order the entries that actually carry a score. Ties break by name so the list
  * is stable between runs — two protocols on the same number should not swap
  * places because the database returned them in a different order.
+ *
+ * ONE CATEGORY'S ENTRIES AT A TIME. Comparing two scores is only meaningful
+ * inside a rulebook, so callers reach this through groupRankedByCategory rather
+ * than handing it the whole board.
  */
 export function sortRanked(
   entries: readonly LeaderboardEntry[],
@@ -205,18 +258,67 @@ export function sortRanked(
   });
 }
 
+/**
+ * One category's scored entries, in the requested order — the unit a ranked
+ * block is rendered from.
+ *
+ * THE SHAPE IS THE INVARIANT. A `safetyScore` is only comparable with another
+ * one produced by the same rulebook: each category is scored on its own factors
+ * under its own weights, so 54 in one category and 54 in another are two
+ * different measurements wearing the same numeral. A ranked list that mixes
+ * them, and a `#` numeral that counts across them, both assert a comparison
+ * nothing computed. Rather than leave that to the sort function getting it right
+ * — which is how it would come back the first time someone adds a sort — the
+ * view has no flat ranked array at all. There is nowhere to put a cross-category
+ * sequence, so no ordering can produce one.
+ */
+export interface RankedCategoryGroup {
+  category: ProtocolCategory;
+  /** ranked WITHIN this category — position i+1 is rank i+1 here, and nowhere else */
+  entries: LeaderboardEntry[];
+}
+
+/**
+ * Bucket scored entries by category, then order each bucket independently.
+ *
+ * The order of the GROUPS is alphabetical by category, and it deliberately says
+ * nothing: sections are not ranked against each other, so the only requirement
+ * on their order is that it is stable between renders — which rules out
+ * "whatever order the database returned" and anything derived from the scores
+ * inside, since either would read as a ranking of categories.
+ */
+export function groupRankedByCategory(
+  entries: readonly LeaderboardEntry[],
+  sort: RegistrySort,
+): RankedCategoryGroup[] {
+  const buckets = new Map<ProtocolCategory, LeaderboardEntry[]>();
+  for (const entry of entries) {
+    const bucket = buckets.get(entry.category);
+    if (bucket) bucket.push(entry);
+    else buckets.set(entry.category, [entry]);
+  }
+
+  return [...buckets.entries()]
+    .sort(([a], [b]) => a.localeCompare(b, 'en'))
+    .map(([category, rows]) => ({ category, entries: sortRanked(rows, sort) }));
+}
+
 /** A row in the merged, alphabetical view — tagged, because the two render differently. */
 export type RegistryRow =
   { kind: 'scored'; entry: LeaderboardEntry } | { kind: 'coverage'; entry: CoverageEntry };
 
 export interface RegistryView {
   /**
-   * `ranked` renders three separated blocks; `alphabetical` renders one merged
-   * list. The distinction is load-bearing rather than cosmetic — see `merged`.
+   * `ranked` renders a ranked block per category, then the two unranked blocks;
+   * `alphabetical` renders one merged list. The distinction is load-bearing
+   * rather than cosmetic — see `merged`.
    */
   mode: 'ranked' | 'alphabetical';
-  /** scored entries carrying a number, in the requested order */
-  ranked: LeaderboardEntry[];
+  /**
+   * Scored entries carrying a number, grouped by category and ordered within
+   * each group — never one flat sequence. See RankedCategoryGroup.
+   */
+  rankedGroups: RankedCategoryGroup[];
   /** tracked protocols with no score yet — never inside `ranked` */
   pending: LeaderboardEntry[];
   /** coverage entries that survived the filter, always by name */
@@ -227,9 +329,10 @@ export interface RegistryView {
    *
    * Merging is safe here and nowhere else: alphabetical order asserts nothing
    * about quality, so an unscored entry sitting between two scored ones is not
-   * being ranked below either. Under a score sort the same list would be a
-   * ranking claim about entries that have no score, which is the one thing this
-   * page may not do.
+   * being ranked below either, and a lending score above an AMM one is not being
+   * called the better of the two. Under a score sort the same list would be a
+   * ranking claim about entries that have no score, or about two numbers from
+   * two rulebooks, which are the things this page may not do.
    */
   merged: RegistryRow[];
   /**
@@ -240,6 +343,9 @@ export interface RegistryView {
    * truth; under `name` the position is alphabetical and means nothing. In both
    * cases the column is removed rather than blanked — a dash in a rank column is
    * the same ambiguity as a dash in a score column.
+   *
+   * Where a numeral IS printed it counts from 1 inside one RankedCategoryGroup,
+   * because that is the only span over which it means anything.
    */
   showRank: boolean;
   counts: { ranked: number; pending: number; coverage: number; total: number };
@@ -258,12 +364,20 @@ export function buildRegistryView(
   coverage: readonly CoverageEntry[],
   params: RegistryParams,
 ): RegistryView {
-  const { q, status, sort } = params;
+  const { q, status, category, sort } = params;
 
   const wantsScored = status === 'all' || status === 'scored';
-  const wantsCoverage = status !== 'scored';
+  // A category filter narrows the scored side only — a coverage entry has no
+  // category to match, and listing one under `?category=lending` would assert a
+  // categorisation we never made. Same shape as a coverage status implying
+  // not-scored, read from the other end.
+  const wantsCoverage = status !== 'scored' && category === DEFAULT_CATEGORY;
 
-  const matchedProtocols = wantsScored ? protocols.filter((p) => matchesQuery(p, q)) : [];
+  const matchedProtocols = wantsScored
+    ? protocols.filter(
+        (p) => matchesQuery(p, q) && (category === DEFAULT_CATEGORY || p.category === category),
+      )
+    : [];
   const matchedCoverage = wantsCoverage
     ? coverage.filter(
         (c) =>
@@ -273,7 +387,7 @@ export function buildRegistryView(
     : [];
 
   const { ranked, pending } = partitionScored(matchedProtocols);
-  const sortedRanked = sortRanked(ranked, sort);
+  const rankedGroups = groupRankedByCategory(ranked, sort);
   // Pending rows are name-ordered in every mode. There is no score to sort them
   // by, and reversing them under score-asc would imply the order meant
   // something.
@@ -284,24 +398,31 @@ export function buildRegistryView(
   const merged: RegistryRow[] =
     mode === 'alphabetical'
       ? [
-          ...sortedRanked.map((entry) => ({ kind: 'scored' as const, entry })),
+          // The one place two categories' scored entries share a sequence, and
+          // the reason it is allowed: A–Z is not an ordering anyone can read a
+          // comparison out of.
+          ...rankedGroups.flatMap((group) =>
+            group.entries.map((entry) => ({ kind: 'scored' as const, entry })),
+          ),
           ...sortedPending.map((entry) => ({ kind: 'scored' as const, entry })),
           ...sortedCoverage.map((entry) => ({ kind: 'coverage' as const, entry })),
         ].sort((a, b) => byName(a.entry, b.entry))
       : [];
 
+  const rankedCount = rankedGroups.reduce((n, group) => n + group.entries.length, 0);
+
   return {
     mode,
-    ranked: sortedRanked,
+    rankedGroups,
     pending: sortedPending,
     coverage: sortedCoverage,
     merged,
     showRank: sort === 'score-desc',
     counts: {
-      ranked: sortedRanked.length,
+      ranked: rankedCount,
       pending: sortedPending.length,
       coverage: sortedCoverage.length,
-      total: sortedRanked.length + sortedPending.length + sortedCoverage.length,
+      total: rankedCount + sortedPending.length + sortedCoverage.length,
     },
   };
 }
