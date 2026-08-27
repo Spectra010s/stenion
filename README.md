@@ -179,7 +179,6 @@ that fetches this endpoint and renders the overall state prominently, plus per-p
 cards showing last-successful-run time, staleness, and last-run status. It auto-refreshes every 30
 seconds — the same data, for a browser instead of `curl`.
 
-
 To smoke-test the deployed 404 behaviour for an unknown protocol id, run:
 
 ```bash

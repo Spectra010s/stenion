@@ -169,7 +169,10 @@ export default function StatusPage() {
         <div className="mt-4 h-5 w-96 animate-pulse rounded bg-surface-2" />
         <div className="mt-10 grid gap-4 sm:grid-cols-2">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="h-40 animate-pulse rounded-xl border border-line bg-surface-2" />
+            <div
+              key={i}
+              className="h-40 animate-pulse rounded-xl border border-line bg-surface-2"
+            />
           ))}
         </div>
       </div>
@@ -187,9 +190,7 @@ export default function StatusPage() {
           Unable to load status
         </h1>
         <div className="mt-6 rounded-xl border border-danger/25 bg-danger/10 p-6">
-          <p className="text-sm text-danger">
-            Could not reach the health endpoint: {error}
-          </p>
+          <p className="text-sm text-danger">Could not reach the health endpoint: {error}</p>
           <button
             type="button"
             onClick={() => fetchHealth(true)}
@@ -222,12 +223,7 @@ export default function StatusPage() {
       </p>
 
       {/* ---- Overall status banner ---- */}
-      <div
-        className={cn(
-          'mt-8 rounded-2xl border p-6 sm:p-8',
-          statusBgClass(data.status),
-        )}
-      >
+      <div className={cn('mt-8 rounded-2xl border p-6 sm:p-8', statusBgClass(data.status))}>
         <div className="flex items-center gap-3">
           {/* Status indicator dot */}
           <span className="relative flex h-3.5 w-3.5">
@@ -261,9 +257,7 @@ export default function StatusPage() {
       </div>
 
       {/* ---- Per-protocol cards ---- */}
-      <h2 className="mt-12 font-display text-xl font-semibold text-ink">
-        Per-protocol freshness
-      </h2>
+      <h2 className="mt-12 font-display text-xl font-semibold text-ink">Per-protocol freshness</h2>
       <p className="mt-1 text-sm text-muted">
         Each protocol&rsquo;s most recent indexer run and scoring status.
       </p>
@@ -286,9 +280,7 @@ export default function StatusPage() {
               >
                 {/* Protocol ID + status pill */}
                 <div className="flex items-center justify-between gap-3">
-                  <h3 className="font-display text-base font-semibold text-ink">
-                    {protocol.id}
-                  </h3>
+                  <h3 className="font-display text-base font-semibold text-ink">{protocol.id}</h3>
                   <span
                     className={cn(
                       'inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-medium',
@@ -369,9 +361,7 @@ export default function StatusPage() {
               refreshing && 'cursor-wait',
             )}
           >
-            <RefreshCw
-              className={cn('h-4 w-4', refreshing && 'animate-spin')}
-            />
+            <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
             Refresh
           </button>
           {lastChecked && (
