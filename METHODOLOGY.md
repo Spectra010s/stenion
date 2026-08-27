@@ -7,10 +7,12 @@ directly from the shipped code (currently [`adapters/blend.ts`](adapters/blend.t
 [`adapters/kinetic.ts`](adapters/kinetic.ts)); this file is not a summary of intent, it is
 the rulebook the adapters must implement.
 
-**One formula, per-protocol data sources.** Every factor's formula, scale, and thresholds
-are fixed here and identical across protocols — and across _markets_: the three Blend pools
-Stenion scores run one adapter and one rulebook, differing only in the pool each reads. What legitimately differs per adapter is only
-_where the raw inputs are read on-chain_ — e.g. Blend reads a per-reserve `max_util` cap,
+**One formula per category, per-protocol data sources.** Every factor's formula, scale, and
+thresholds are fixed here and identical across every protocol in a category — and across
+_markets_: the three Blend pools Stenion scores run one adapter and one rulebook, differing only
+in the pool each reads. Each category owns a section below, holding its own factor list, weight
+table, worked example and version changelog; **lending** is the only one today. What legitimately
+differs per adapter is only _where the raw inputs are read on-chain_ — e.g. Blend reads a per-reserve `max_util` cap,
 while Kinetic (K2), being Aave-V3-style, has no such cap and instead anchors the same
 utilization formula to its own `OPTIMAL_UTILIZATION_RATE` (see §5). The _anchoring pattern_
 ("grade against the protocol's own on-chain parameter") is the invariant; the specific
@@ -23,14 +25,26 @@ If the code and this document ever disagree, that is a bug — open an issue (se
 
 ## Current version
 
-**Methodology v1** — the rulebook described by this document, in full, including `oracleSafety`
-scoring both price freshness and manipulation resistance (§2), the minimum-size filter §4
-and §5 select reserves through ([The minimum-size filter](#the-minimum-size-filter)), and the
+Versions are **per category**, on independent counters that each start at 1, so a version number
+alone does not identify a rulebook — the category and the number together do. One row per
+category, and the changelog behind each lives in that category's own section:
+
+| Category  | Current version | Rulebook and changelog |
+| --------- | --------------- | ---------------------- |
+| `lending` | 1               | [Lending](#lending)    |
+
+**Lending, methodology v1** — the rulebook described in the [Lending](#lending) section, in full,
+including `oracleSafety` scoring both price freshness and manipulation resistance (§2), the
+minimum-size filter §4 and §5 select reserves through
+([The minimum-size filter](#the-minimum-size-filter)), and the
 [market-size floor](#the-market-size-floor) that decides whether a market is scorable at all.
 The floor is a precondition rather than a formula — it moves no number and did not bump this
 version.
 
-**Versioning begins here.** `methodology_version = 1` is the only version this rulebook
+The rest of this section — what bumps a version, and what a boundary means for a stored score —
+is policy that applies to **every** category, not just lending.
+
+**Versioning begins here.** `methodology_version = 1` is the only version lending's rulebook
 defines, and the only one any stored row will carry. A version 2 was briefly live in the code
 — stamped onto runs between 2026-08-14 11:25 and 2026-08-18 11:30 UTC, before the rulebook was
 flattened back to v1 — and that history is discarded rather than migrated, for the same reason
@@ -95,9 +109,15 @@ one, including us, can recompute an old row under new rules.
 
 ## Ground rules (non-negotiable)
 
-1. **The same formula applies to every protocol, with no exceptions.** A factor's formula
-   and its thresholds are fixed here, in one shared place. They do not vary per protocol,
-   per adapter, or per anything else.
+1. **The same formula applies to every protocol in a category, with no exceptions.** A
+   factor's formula, its weight, and its thresholds are fixed in that category's section
+   below, in one shared place. They do not vary per protocol, per adapter, or per anything
+   else _within_ the category. **A category boundary is the one and only place a rule may
+   differ** — and it differs because the factor sets differ, not because a protocol asked:
+   `utilizationSafety` weighted 0.20 says nothing about an AMM with no borrow cap. That is a
+   different rulebook, published in full under its own heading and versioned on its own
+   counter, never lending's rules bent to fit. Two protocols in the same category are always
+   graded by the same rules.
 2. **Payment never changes a threshold or a formula.** Protocols can pay for visibility,
    speed, or private tooling — never for a better number. A paid tier cannot move a
    threshold, reweight a factor, or alter a curve. The _only_ thing that changes a
@@ -119,13 +139,21 @@ one, including us, can recompute an old row under new rules.
 - **Every factor is on the same scale: 0–100, higher = safer.** Factor names end in
   `*Safety` so a name never disagrees with its number — a `collateralSafety` of 70 means
   well-diversified (safe), not "70% concentrated."
-- The overall score is a **weighted mean of the five factors**, renormalized over whichever
-  factors are non-null (so a genuinely inapplicable factor doesn't drag the score toward
-  zero rather than being excluded):
+- The overall score is a **weighted mean of the category's factors**, renormalized over
+  whichever factors are non-null (so a genuinely inapplicable factor doesn't drag the score
+  toward zero rather than being excluded):
 
   ```
   safetyScore = round( Σ(factor.value × factor.weight) / Σ(factor.weight) )
   ```
+
+**This arithmetic is shared; the factors it averages are not.** The formula above is
+category-agnostic — it reads a value and a weight and nothing else — and it is implemented once,
+in `scoreFactors` ([`core/src/scoring.ts`](core/src/scoring.ts)), which every adapter of every
+category calls. **Which** factors exist and **what each is weighted** is per category: declared
+once in `CATEGORY_FACTORS` ([`core/src/weights.ts`](core/src/weights.ts)) and published in that
+category's own section below. So the weight table and the factor list live under
+[Lending](#lending), not here — a second category would bring its own, not edit lending's.
 
 A factor may publish a **`components`** breakdown — the sub-signals behind its value.
 Components with a numeric `value` are what the factor was computed from; components with
@@ -139,14 +167,31 @@ multiplier, and not an input to `safetyScore` — see
 [Operational state is published, never scored](#operational-state-is-published-never-scored) for
 why, and for why that is a decision rather than an omission.
 
-### Methodology versions
+---
+
+## Lending
+
+Everything from here to
+[Operational state](#operational-state-is-published-never-scored) is **lending's rulebook and
+lending's alone** — its version changelog, its factor weights, its worked example, and the five
+factors themselves. It is the only category Stenion publishes a rulebook for today
+(`PROTOCOL_CATEGORIES` in [`core/src/category.ts`](core/src/category.ts)), and this section is
+the shape a second one would take: its own heading, its own changelog, its own weight table, its
+own factor list. Nothing above this line is lending-specific; nothing below it may be assumed to
+hold for a category that isn't lending.
+
+**Which protocols are scored under it:** every market on the registry today — the three Blend
+pools ([`adapters/blend.ts`](adapters/blend.ts)) and Kinetic/K2
+([`adapters/kinetic.ts`](adapters/kinetic.ts)). Ground rule 1 binds all of them to what follows.
+
+### Version changelog
 
 Every scored run is stamped with the rulebook version that produced it
 (`risk_scores.methodology_version`, from the `lending` entry in `METHODOLOGY_VERSIONS` in
 [`core/src/category.ts`](core/src/category.ts)), and it is surfaced on the API's protocol detail
-and on each history point. Versions are per category and counters are independent, so the changelog
-below is **lending's**; another category's v1 is a different rulebook, not an earlier one. The
-changelog:
+and on each history point. Versions are per category and counters are independent, so this
+changelog is **lending's**; another category's v1 is a different rulebook, not an earlier one.
+Each category gets exactly one such table, in its own section. The changelog:
 
 | Version | Effective | Change                                                                                                                                                                                                                 |
 | ------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -199,6 +244,11 @@ appearing as an unexplained step in a chart.
 
 ### Factor weights
 
+Lending's weights, and lending's only. This table is the published face of
+`CATEGORY_FACTORS.lending` in [`core/src/weights.ts`](core/src/weights.ts), which is where the
+adapters read them from — neither adapter contains a weight of its own, and
+`core/src/scoring.test.ts` parses this table and fails if the two disagree in either direction.
+
 | Factor              | Weight   |
 | ------------------- | -------- |
 | `oracleSafety`      | 0.25     |
@@ -208,7 +258,7 @@ appearing as an unexplained step in a chart.
 | `liquiditySafety`   | 0.15     |
 | **Total**           | **1.00** |
 
-**Worked example (live Blend Fixed V2 pool, 2026-08-14, methodology v1):**
+**Worked example (live Blend Fixed V2 pool, 2026-08-14, lending methodology v1):**
 `70×0.20 + 100×0.25 + 40×0.20 + 22×0.15 + 14×0.20 = 53.1 → 53`.
 
 > **Weights are an unvalidated judgment call, not an external fact.** `oracleSafety` carries the most
@@ -224,7 +274,7 @@ appearing as an unexplained step in a chart.
 
 ---
 
-## The five factors
+### The five lending factors
 
 For each factor: the exact raw on-chain data that feeds it, the exact formula, and why the
 thresholds are what they are (anchored to an external/on-chain value where one exists,
@@ -245,7 +295,7 @@ borrowed = d_supply × d_rate / (SCALAR_12 × 10^assetDecimals)
 
 ---
 
-### 1. `collateralSafety` — collateral concentration (weight 0.20)
+#### 1. `collateralSafety` — collateral concentration (weight 0.20)
 
 **What it measures:** how spread out the pool's supplied value is across its reserves. A
 pool whose value sits in one asset is far more exposed to a single de-peg or liquidation
@@ -285,7 +335,7 @@ many reserves it has, not against an arbitrary constant.
 
 ---
 
-### 2. `oracleSafety` — price trustworthiness: freshness _and_ manipulation resistance (weight 0.25)
+#### 2. `oracleSafety` — price trustworthiness: freshness _and_ manipulation resistance (weight 0.25)
 
 > **Why this factor is not just price age.** An age-only oracle factor scores a fresh but
 > manipulated price 100 — which is precisely the configuration behind the February 2026
@@ -323,7 +373,7 @@ aggregator publish round, so its reserves carry identical ages and **always** ti
 Naming one of them would make an iteration-order artifact read as a diagnosis, and a reserve
 name that is really a tie-break is worse than no name at all.
 
-#### 2a. `priceFreshness` — how stale the worst price is
+##### 2a. `priceFreshness` — how stale the worst price is
 
 **Raw on-chain data (Soroban RPC):** per reserve, the price's publish `timestamp` from
 the method the protocol's own pool calls; `fetchedAt` is the adapter's read time;
@@ -359,7 +409,7 @@ numbers are K2's, and the binding one is the one that governs.
 > threshold here. It lives in one place, `STALE_CEILING_SECONDS` in
 > [`core/src/scoring.ts`](core/src/scoring.ts).
 
-#### 2b. `deviationBound` — can a single update move the price arbitrarily far?
+##### 2b. `deviationBound` — can a single update move the price arbitrarily far?
 
 **Binary, not a curve:**
 
@@ -397,7 +447,7 @@ disclosed. (Whether such a peg _holds_ is a real risk — but it is a collateral
 question, not an oracle-robustness one, and inventing a number for it here would be the
 kind of fabrication ground rule 4 forbids.)
 
-#### 2c. Per-feed price ages are disclosed, never scored
+##### 2c. Per-feed price ages are disclosed, never scored
 
 `priceFreshness` grades the **worst** reserve, which is the right thing to score but hides the
 **spread** — and on real data the spread is the informative part. A factor value of 0 reads as
@@ -416,7 +466,7 @@ computed from, republished so that the grading can be checked rather than taken 
 published on healthy pools as well as unhealthy ones — a disclosure that appears only where
 trouble is expected gives a reader no baseline to compare against.
 
-#### 2d. Bound tightness is disclosed, never scored
+##### 2d. Bound tightness is disclosed, never scored
 
 The raw bound is published as a **disclosure-only component** (`value: null`) — visible,
 never graded. Grading it would invent comparability the underlying data does not support:
@@ -434,7 +484,7 @@ different quantities, so the intuitive reading that K2's bound is three times ti
 Blend's is unsound. Publishing the numbers side by side without a score is the honest
 treatment.
 
-#### 2e. The oracle-legibility precondition
+##### 2e. The oracle-legibility precondition
 
 Both halves of this factor are anchored to parameters **the pool's own price path
 publishes**: §2a's window comes from `resolution` and `max_age`, §2b's bound from per-asset
@@ -476,7 +526,7 @@ separate reading of a separate contract's semantics. All four answer `decimals()
 `lastprice()`, so §1, §3, §4 and §5 compute normally for them; what is missing is only the
 metadata §2 grades against.
 
-##### Why there is no fallback anchor: SEP-40 does not define one
+###### Why there is no fallback anchor: SEP-40 does not define one
 
 Stated plainly rather than worked around. [SEP-40](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0040.md)
 defines `base, assets, decimals, resolution, price, prices, lastprice` — **no maximum
@@ -500,7 +550,7 @@ And `resolution()` is only present on one of the four at all. Orbit and Forex ex
 hop upstream through their bridge/proxy, which would make the anchor a property of a contract
 the pool does not itself publish; Spectra has no upstream feed to chase.
 
-##### Two of the four price off the ledger clock, so freshness is 100 by construction
+###### Two of the four price off the ledger clock, so freshness is 100 by construction
 
 The sharper problem, and the reason this is a precondition rather than a "weak signal":
 
@@ -519,7 +569,7 @@ The sharper problem, and the reason this is a precondition rather than a "weak s
 A fabricated **100** is worse than a fabricated 0, because 0 at least renders in the danger
 band where a reader discounts it. Ground rule 4 forbids both.
 
-##### What was rejected, and why it must not be re-proposed
+###### What was rejected, and why it must not be re-proposed
 
 - **Make the three calls optional and score `oracleSafety` on what remains.** Rejected: there
   is nothing to score on. Both anchors are gone, `deviationBound` collapses to a constant 0
@@ -590,7 +640,7 @@ same conclusion, as the market-size floor.
 > deviation bound, the pool becomes scorable with **no rule change** — it is a `BLEND_POOLS`
 > entry and a deleted coverage entry, in one PR.
 
-#### What was considered and deliberately rejected
+##### What was considered and deliberately rejected
 
 Recorded so these are not re-proposed as improvements later. Each was investigated against
 the February 2026 YieldBlox incident — the test being whether it would have distinguished
@@ -648,7 +698,7 @@ prices, lastprice, last_timestamp, history_retention_period, …`. Earlier Refle
   retroactively, because the exploited market has since been rebuilt. Tracked as a
   candidate in [`ROADMAP.md`](ROADMAP.md) rather than shipped on intuition.
 
-#### What this factor would have said on 2026-02-22
+##### What this factor would have said on 2026-02-22
 
 Running the shipped adapter against the exploited pool and the healthy one today, same
 rulebook, no special-casing:
@@ -702,7 +752,7 @@ anyway, and on the axis that actually failed.
 
 ---
 
-### 3. `adminKeySafety` — admin signer structure + activity (weight 0.20)
+#### 3. `adminKeySafety` — admin signer structure + activity (weight 0.20)
 
 **What it measures:** how much unilateral, live control a single party has over the pool. A
 lone hot key that can reconfigure the pool is the sharpest centralization risk; multisig
@@ -765,7 +815,7 @@ score.
 
 ---
 
-### 4. `liquiditySafety` — free-liquidity depth (weight 0.15)
+#### 4. `liquiditySafety` — free-liquidity depth (weight 0.15)
 
 **What it measures:** the absolute withdrawal/liquidation cushion — how much value could
 leave before the pool is drained. Distinct from `utilizationSafety`, which measures
@@ -794,7 +844,7 @@ rule 4 forbids. The two are reported with different `detail` strings: "the pool 
 
 ---
 
-### The minimum-size filter
+#### The minimum-size filter
 
 Applies to **`liquiditySafety` (§4) and `utilizationSafety` (§5) only**, identically for every
 protocol.
@@ -912,7 +962,7 @@ anchor.
 
 ---
 
-### The market-size floor
+#### The market-size floor
 
 The [minimum-size filter](#the-minimum-size-filter) one level up. That filter asks whether a
 _reserve_ is big enough for its number to mean anything; this asks the same of a whole
@@ -1024,7 +1074,7 @@ precondition on what gets scored at all, which is additive.
 
 ---
 
-### 5. `utilizationSafety` — headroom below the configured cap (weight 0.20)
+#### 5. `utilizationSafety` — headroom below the configured cap (weight 0.20)
 
 **What it measures:** how close live utilization is to the protocol's own on-chain
 utilization stress line — the point the protocol itself defines as "borrowing should stop

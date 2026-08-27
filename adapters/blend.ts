@@ -17,6 +17,7 @@ import { rpc } from '@stellar/stellar-sdk';
 // which has no runtime `Adapter` export. Keep type-only names under
 // `import type`.
 import {
+  LENDING_FACTORS,
   PoolOperation,
   RiskFactorType,
   describePriceAges,
@@ -1201,13 +1202,24 @@ export class BlendAdapter implements Adapter<BlendRawData, 'lending'> {
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // The five factors.
+  //
+  // Each reads Blend-specific raw state, and each takes its weight from
+  // `LENDING_FACTORS` in @stenion/core rather than from a literal. A weight is
+  // part of the shared rulebook, not a per-adapter choice: with the number
+  // written out here and again in kinetic.ts, a drift between the two would have
+  // produced two plausible scores from two different weightings and failed
+  // nothing. See core/src/weights.ts.
+  // ---------------------------------------------------------------------------
+
   // Concentration of supplied value across reserves, via a normalized HHI.
   // Rationale: a pool whose value sits in one asset is far more exposed to a
   // single de-peg/liquidation cascade than a balanced one. HHI = Σ(share²);
   // for n reserves it ranges [1/n, 1]. We map 1/n → 100 (safest, even split)
   // and 1 → 0 (all in one asset). Pure on-chain supplied USD, no assumptions.
   private collateralSafety(raw: BlendRawData): RiskFactor {
-    const weight = 0.2;
+    const weight = LENDING_FACTORS.collateralSafety.weight;
     const values = raw.reserves
       .map((r) => suppliedUsd(r, raw.oracleDecimals))
       .filter((v): v is number => v !== null && v > 0);
@@ -1244,7 +1256,7 @@ export class BlendAdapter implements Adapter<BlendRawData, 'lending'> {
   // constraint (the lower of the two) — a bounded stale price and a fresh
   // unbounded price are both untrustworthy, for different reasons.
   private oracleSafety(raw: BlendRawData): RiskFactor {
-    const weight = 0.25;
+    const weight = LENDING_FACTORS.oracleSafety.weight;
 
     // Base assets are the aggregator's unit of account: `lastprice` returns a
     // hardcoded 1.0 at the current ledger time for them, never reading an
@@ -1358,7 +1370,7 @@ export class BlendAdapter implements Adapter<BlendRawData, 'lending'> {
   // an actively-used admin key is a live lever. Contract-governed admins can't
   // be introspected via Horizon, so they get a flagged neutral baseline.
   private adminKeySafety(raw: BlendRawData): RiskFactor {
-    const weight = 0.2;
+    const weight = LENDING_FACTORS.adminKeySafety.weight;
     const a = raw.admin;
 
     if (a.isContract || a.account === null) {
@@ -1392,7 +1404,7 @@ export class BlendAdapter implements Adapter<BlendRawData, 'lending'> {
   // Reserves below the shared minimum size are excluded before selection — see
   // reserveSizing() and METHODOLOGY.md §4 — and disclosed rather than dropped.
   private liquiditySafety(raw: BlendRawData): RiskFactor {
-    const weight = 0.15;
+    const weight = LENDING_FACTORS.liquiditySafety.weight;
     const sizing = this.reserveSizing(raw);
     const excluded: ExcludedReserve[] = [];
     let worstRatio = 1;
@@ -1446,7 +1458,7 @@ export class BlendAdapter implements Adapter<BlendRawData, 'lending'> {
   // worst reserve wins. util here is computed live (borrowed/supplied), not the
   // config's target field.
   private utilizationSafety(raw: BlendRawData): RiskFactor {
-    const weight = 0.2;
+    const weight = LENDING_FACTORS.utilizationSafety.weight;
     const sizing = this.reserveSizing(raw);
     const excluded: ExcludedReserve[] = [];
     let worst = 100;

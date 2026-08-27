@@ -23,7 +23,7 @@ import {
   oracleNotGradable,
 } from './blend.ts';
 import type { BlendRawData, BlendReserveRaw, OracleGradingReads } from './blend.ts';
-import { OperationalLevel, PoolOperation } from '@stenion/core';
+import { LENDING_FACTORS, OperationalLevel, PoolOperation } from '@stenion/core';
 import type { RiskFactor } from '@stenion/core';
 
 // ---------------------------------------------------------------------------
@@ -433,13 +433,30 @@ describe('the factor map itself', () => {
     }
   });
 
-  it('carries the weights METHODOLOGY.md documents', async () => {
+  it('carries the weights the shared lending rulebook declares', async () => {
+    // PINNED AGAINST THE ONE SHARED SOURCE, NOT AGAINST FIVE LITERALS. This
+    // used to spell the numbers out, which made it a second hand-written copy of
+    // the weight table — it would have passed happily while the adapter and
+    // METHODOLOGY.md disagreed, as long as someone updated both copies of the
+    // literal. Reading `LENDING_FACTORS` instead makes the chain
+    // adapter -> core -> METHODOLOGY.md, with core/src/scoring.test.ts pinning
+    // the last link by parsing the published table. No number in this file.
     const f = await factors(makeRaw());
-    assert.equal(f.collateralSafety!.weight, 0.2);
-    assert.equal(f.oracleSafety!.weight, 0.25);
-    assert.equal(f.adminKeySafety!.weight, 0.2);
-    assert.equal(f.liquiditySafety!.weight, 0.15);
-    assert.equal(f.utilizationSafety!.weight, 0.2);
+
+    assert.deepEqual(
+      Object.keys(f).sort(),
+      Object.keys(LENDING_FACTORS).sort(),
+      'the adapter populates a different factor set than lending declares',
+    );
+
+    for (const [key, decl] of Object.entries(LENDING_FACTORS)) {
+      assert.equal(
+        f[key as keyof typeof f]!.weight,
+        decl.weight,
+        `${key} is weighted ${f[key as keyof typeof f]!.weight} here but ` +
+          `${decl.weight} in CATEGORY_FACTORS.lending`,
+      );
+    }
   });
 });
 

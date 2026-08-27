@@ -35,6 +35,13 @@ const components: Components = {
   // from elsewhere in the doc. Without an id those anchors work on GitHub and
   // silently dead-end on the site.
   h4: ({ children }) => <h4 id={slug(toText(children))}>{children}</h4>,
+  // h5/h6 for the same reason, and they exist because METHODOLOGY.md is now
+  // organized per category: every factor heading sits one level deeper under its
+  // category's section, so `#2e. The oracle-legibility precondition` — linked
+  // from §2 — moved from h4 to h5. Mapping every level the document can reach
+  // means a future nesting change cannot quietly break an in-page link again.
+  h5: ({ children }) => <h5 id={slug(toText(children))}>{children}</h5>,
+  h6: ({ children }) => <h6 id={slug(toText(children))}>{children}</h6>,
   // METHODOLOGY.md has several wide multi-column tables. A prose table is
   // width:100%, but its min-content width is set by its longest cell, so on a
   // narrow screen the table sets a floor on the page width and scrolls the whole

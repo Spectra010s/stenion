@@ -8,16 +8,32 @@
  * stays in the adapters — this file never reaches for chain data.
  */
 
-import type { RiskFactorComponent, RiskFactorMap, RiskScoreResult } from './types';
+import type { FactorMap, RiskFactorComponent, ScoreResult } from './types';
 
 /**
- * The overall score: a weighted mean of the five factors, renormalized over
+ * The overall score: a weighted mean of a category's factors, renormalized over
  * whichever are non-null.
  *
  * This is METHODOLOGY.md's "Score model" formula and it is emphatically **not**
- * per-protocol — ground rule 1 is that one rulebook applies to every adapter.
- * It lives here, and adapters call it, so two protocols cannot drift onto two
- * different weighted means. Do not reimplement it in an adapter.
+ * per-protocol — ground rule 1 is that one rulebook applies to every adapter in
+ * a category. It lives here, and adapters call it, so two protocols cannot drift
+ * onto two different weighted means. Do not reimplement it in an adapter.
+ *
+ * GENERIC OVER THE FACTOR MAP, AND DELIBERATELY NOT OVER THE CATEGORY. The
+ * weighted mean is the one piece of the rulebook that is genuinely
+ * category-agnostic: it reads `value` and `weight` and nothing else, so the key
+ * set it is handed cannot change what it computes. Typing it against lending's
+ * five-key `RiskFactorMap` said otherwise, and would have left the next category
+ * with a copy of this function to keep in sync — the exact drift this module
+ * exists to prevent. So the *type* widened to `FactorMap` and the body did not
+ * change by a character. There is no `scoreDexFactors` and there must never be
+ * one: which factors a category has, and what each is weighted, is data
+ * (`CATEGORY_FACTORS` in `weights.ts`) — never a second implementation of the
+ * mean.
+ *
+ * `M` flows straight through to the result, so a lending caller still gets a
+ * `RiskScoreResult` whose `factors` has exactly the five keys — widening the
+ * parameter narrowed nothing downstream.
  *
  * Renormalizing by the *observed* total weight (rather than dividing by a fixed
  * 1.0) is what makes a null factor genuinely excluded: a protocol for which one
@@ -28,7 +44,7 @@ import type { RiskFactorComponent, RiskFactorMap, RiskScoreResult } from './type
  * unsafe end rather than a division by zero, matching how the individual
  * factors treat "can't assess" (METHODOLOGY.md §1).
  */
-export function scoreFactors(factors: RiskFactorMap): RiskScoreResult {
+export function scoreFactors<M extends FactorMap>(factors: M): ScoreResult<M> {
   let weighted = 0;
   let totalWeight = 0;
   for (const factor of Object.values(factors)) {

@@ -35,7 +35,10 @@ These override any default behavior and are enforced in code and review:
 - **Code and `METHODOLOGY.md` are not allowed to drift.** Any change to a formula/threshold/weight
   changes both together, at the same review bar. Shared rulebook logic that two adapters would
   otherwise duplicate lives in [`core/src/scoring.ts`](core/src/scoring.ts), so it can't drift
-  between them.
+  between them. **`METHODOLOGY.md` is organized per category** — each `ProtocolCategory` owns one
+  `##` section holding its factor list, weight table, worked example and version changelog, and
+  `core/src/scoring.test.ts` parses a named category's section rather than the whole file. Adding a
+  category means adding that section; a category without one is a score with no published rules.
 - **A scoring change that makes old scores non-comparable bumps that category's
   `METHODOLOGY_VERSIONS` entry** (`core/src/category.ts`), stamped onto every run by the indexer
   alongside `risk_scores.category` — counters are per category and each starts at 1, so the pair
@@ -120,6 +123,15 @@ These override any default behavior and are enforced in code and review:
   exception — it imports `./retry.ts` / `./alerts.ts` with explicit extensions, and
   `indexer/tsconfig.build.json` adds `rewriteRelativeImportExtensions` so tsc emits `.js`. Prefer
   the leaf shape; reach for the flag only when a tested module genuinely needs siblings.
+- **A weight is never a literal in an adapter.** Which factors a category scores, what each is
+  weighted, and what it is called are declared once in
+  [`core/src/weights.ts`](core/src/weights.ts) (`CATEGORY_FACTORS`, keyed by `ProtocolCategory`
+  like `METHODOLOGY_VERSIONS` and `CATEGORY_OPERATIONS`); adapters read
+  `LENDING_FACTORS.<factor>.weight`. Two adapters holding their own copies of the same weight can
+  drift into two rulebooks while both still produce plausible scores — the failure the shared
+  `scoreFactors` exists to prevent, applied to the numbers it averages. `scoreFactors` is generic
+  over the factor map for the same reason: the weighted mean is category-agnostic, so there must
+  never be a per-category variant of it.
 - **One adapter may serve several markets; a market never gets its own adapter.** `BlendAdapter`
   takes a `BlendPool` (slug, name, pool contract, mark, links, `deployedOn`) and the indexer
   iterates `BLEND_POOLS` — every Blend market runs the same wasm, so a second pool is a config

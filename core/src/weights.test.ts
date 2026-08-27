@@ -1,0 +1,93 @@
+// Tests for the per-category factor declarations.
+//
+// WHY THESE EXIST. `scoreFactors` renormalizes by the *observed* total weight,
+// not by a fixed 1.0 — that is what makes a null factor genuinely excluded
+// rather than counted as a zero (see `scoring.ts`). The cost of that design is
+// that a weight set which does NOT sum to 1.00 produces no symptom at all: the
+// mean still divides by whatever the weights add up to, and every score still
+// looks like a score. Nothing else in the codebase would notice. So the sum is
+// asserted here, per category, as the property the whole weighting rests on.
+//
+// The second half is the compile-time claim made runnable: `CATEGORY_FACTORS` is
+// declared `satisfies Record<ProtocolCategory, …>`, which catches a category
+// with no factor set but says nothing about a factor set with no factors, a
+// weight of 0, or a weight outside (0, 1]. Those are checked below.
+//
+// WHAT IS NOT TESTED HERE: whether lending's weights match METHODOLOGY.md. That
+// pinning lives in `scoring.test.ts`, which parses the published table out of
+// the document — a value restated in TypeScript is a third copy, not a check.
+//
+// Run with: pnpm --filter @stenion/core test
+
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+
+// VALUE imports, deliberately: this file is also the proof that both modules
+// load under the strip-only test runner. `weights.ts` imports `ProtocolCategory`
+// as a type only, so at runtime it is a leaf — if that import ever becomes a
+// value import, this file is where it shows up.
+import { PROTOCOL_CATEGORIES } from './category.ts';
+import { CATEGORY_FACTORS, LENDING_FACTORS } from './weights.ts';
+
+const categories = () => Object.entries(CATEGORY_FACTORS);
+
+describe('the per-category factor declarations', () => {
+  it('is value-importable under the test runner', () => {
+    assert.equal(typeof CATEGORY_FACTORS, 'object');
+  });
+
+  it('declares a factor set for every category, and no others', () => {
+    // The `satisfies` clause already requires every category to be present. This
+    // asserts the other direction — that nothing has been declared for a
+    // category the registry does not publish — and states the pairing in a form
+    // that fails loudly rather than being inferred from a type annotation.
+    assert.deepEqual(Object.keys(CATEGORY_FACTORS).sort(), [...PROTOCOL_CATEGORIES].sort());
+  });
+
+  it("every category's weights sum to 1.00", () => {
+    for (const [category, { factors }] of categories()) {
+      const sum = Object.values(factors).reduce((a, f) => a + f.weight, 0);
+      assert.ok(
+        Math.abs(sum - 1) < 1e-9,
+        `${category}'s factor weights sum to ${sum}, not 1.00. ` +
+          `scoreFactors divides by the observed total, so this would not fail ` +
+          `anywhere else — every score would just be quietly computed against ` +
+          `the wrong denominator.`,
+      );
+    }
+  });
+
+  it('gives every factor a real weight and a real label', () => {
+    for (const [category, { label, factors }] of categories()) {
+      assert.ok(label.length > 0, `${category} needs a display label`);
+      const keys = Object.keys(factors);
+      assert.ok(keys.length > 0, `${category} declares no factors`);
+
+      for (const [key, decl] of Object.entries(factors)) {
+        const where = `${category}.${key}`;
+        assert.match(key, /^[a-z][A-Za-z]*Safety$/, `${where}: factor keys end in *Safety`);
+        assert.ok(
+          decl.weight > 0 && decl.weight <= 1,
+          `${where}: weight ${decl.weight} is outside (0, 1]`,
+        );
+        assert.ok(decl.label.length > 0, `${where} needs a human label`);
+      }
+    }
+  });
+
+  it('has no two factors sharing a label within a category', () => {
+    // Two factors with the same display name are indistinguishable wherever the
+    // label is what a reader sees, which is the one job a label has.
+    for (const [category, { factors }] of categories()) {
+      const labels = Object.values(factors).map((f) => f.label);
+      assert.equal(new Set(labels).size, labels.length, `${category} reuses a factor label`);
+    }
+  });
+
+  it('exposes lending as the same object, not a copy', () => {
+    // `LENDING_FACTORS` is a convenience alias for the adapters to read. If it
+    // ever becomes a separate literal it becomes a second source of the weights,
+    // which is the whole thing this module was added to stop.
+    assert.equal(LENDING_FACTORS, CATEGORY_FACTORS.lending.factors);
+  });
+});

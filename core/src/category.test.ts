@@ -25,6 +25,11 @@ import { describe, it } from 'node:test';
 
 // A VALUE import, deliberately — see the header. Type-only would prove nothing.
 import { METHODOLOGY_VERSIONS, PROTOCOL_CATEGORIES } from './category.ts';
+import type { ProtocolCategory } from './category.ts';
+// For each category's METHODOLOGY.md section heading — the label is declared
+// once, beside the factor set, so the doc and the code cannot disagree about
+// what a category's section is called.
+import { CATEGORY_FACTORS } from './weights.ts';
 
 /** Walk up from the test's cwd to find a repo file, so this works from any package dir. */
 function repoFile(name: string): string {
@@ -36,6 +41,27 @@ function repoFile(name: string): string {
     if (parent === dir) throw new Error(`could not find ${name} walking up from ${process.cwd()}`);
     dir = parent;
   }
+}
+
+/**
+ * One category's slice of METHODOLOGY.md: its `## <Label>` heading down to the
+ * next h2.
+ *
+ * Deliberately duplicated from `scoring.test.ts` rather than shared. A test file
+ * importing another test file makes the helper run as a suite of its own under
+ * `node --test`, and this file already carries its own `repoFile` for the same
+ * reason. If a third copy is ever wanted, that is the point to move all three
+ * into a real module instead.
+ */
+function categorySection(doc: string, category: ProtocolCategory): string {
+  const heading = `## ${CATEGORY_FACTORS[category].label}`;
+  const lines = doc.split('\n');
+  const start = lines.findIndex((l) => l.trimEnd() === heading);
+  assert.ok(start >= 0, `METHODOLOGY.md has no "${heading}" section for category ${category}`);
+  const rest = lines.slice(start + 1);
+  // `^## ` matches an h2 only — an h3 starts `###`, so the space fails to match.
+  const end = rest.findIndex((l) => /^## /.test(l));
+  return (end === -1 ? rest : rest.slice(0, end)).join('\n');
 }
 
 describe('the category registry', () => {
@@ -99,22 +125,35 @@ describe('the category registry', () => {
     assert.equal(METHODOLOGY_VERSIONS.lending, 1);
   });
 
-  it('agrees with the version METHODOLOGY.md publishes for lending', () => {
-    // Code and METHODOLOGY.md are not allowed to drift (CLAUDE.md). The doc's
-    // changelog table has a **1** row for the five-factor model; this asserts the
-    // constant still matches it, reading the doc rather than restating it — the
-    // same approach scoring.test.ts takes, and for the same reason: a test that
-    // hardcodes the doc's number is a third copy to keep in sync.
+  it('agrees with the version METHODOLOGY.md publishes for each category', () => {
+    // Code and METHODOLOGY.md are not allowed to drift (CLAUDE.md). Each
+    // category's section carries its own changelog table, whose newest **N** row
+    // is that category's current version; this asserts the constants still match,
+    // reading the doc rather than restating it — the same approach
+    // scoring.test.ts takes, and for the same reason: a test that hardcodes the
+    // doc's number is a third copy to keep in sync.
+    //
+    // SCOPED PER CATEGORY, NOT FILE-WIDE. This used to take the max over every
+    // `**N**` row in the whole document, which was a correct reading while the
+    // file described one rulebook. It stopped being one when METHODOLOGY.md
+    // gained per-category sections: counters are independent and each starts at
+    // 1, so a file-wide max mixes two categories' numbering and silently
+    // compares lending's constant against whichever category happens to be
+    // furthest along. It is right today only because there is one category.
     const doc = repoFile('METHODOLOGY.md');
-    const versions = [...doc.matchAll(/^\|\s*\*\*(\d+)\*\*\s*\|/gm)].map((m) => Number(m[1]));
-    assert.ok(
-      versions.length > 0,
-      'could not parse the methodology version changelog out of METHODOLOGY.md — has its format changed?',
-    );
-    assert.equal(
-      Math.max(...versions),
-      METHODOLOGY_VERSIONS.lending,
-      "METHODOLOGY.md's newest published version differs from METHODOLOGY_VERSIONS.lending",
-    );
+
+    for (const category of PROTOCOL_CATEGORIES) {
+      const section = categorySection(doc, category);
+      const versions = [...section.matchAll(/^\|\s*\*\*(\d+)\*\*\s*\|/gm)].map((m) => Number(m[1]));
+      assert.ok(
+        versions.length > 0,
+        `could not parse ${category}'s version changelog out of METHODOLOGY.md — has its format changed?`,
+      );
+      assert.equal(
+        Math.max(...versions),
+        METHODOLOGY_VERSIONS[category],
+        `METHODOLOGY.md's newest published version for ${category} differs from METHODOLOGY_VERSIONS.${category}`,
+      );
+    }
   });
 });

@@ -63,6 +63,20 @@ and must never reimplement it, or two protocols end up on two rulebooks) and `fr
 with `STALE_CEILING_SECONDS`. Per-protocol _input reading_ stays in the adapters; nothing in this
 file reaches for chain data.
 
+`scoreFactors()` is generic over the factor map it is handed rather than typed to lending's five
+keys. The weighted mean reads a `value` and a `weight` and nothing else, so it is genuinely
+category-agnostic; typing it to one category's key set would have left the next category with a
+copy of it to keep in sync. There is deliberately no per-category variant of the function.
+
+**`core/src/weights.ts`** holds `CATEGORY_FACTORS` — which factors each `ProtocolCategory` scores,
+what each is weighted, and its label — keyed the same way `METHODOLOGY_VERSIONS` and
+`CATEGORY_OPERATIONS` are. Weights used to be `const weight = 0.25` literals inside each adapter's
+factor methods, ten of them across the two lending adapters; a drift between two copies would have
+produced two plausible scores from two different weightings and failed nothing. Both adapters now
+read `LENDING_FACTORS`, `core/src/scoring.test.ts` pins that declaration against METHODOLOGY.md's
+published weight table, and both adapter suites pin themselves against the declaration — so the
+chain runs adapter → core → the public rulebook with no hand-written copy in it.
+
 **`@stenion/adapters`** — one file per protocol, each a class implementing `Adapter`. An adapter
 reads a protocol's on-chain state (Soroban RPC + Horizon), reduces it into the five `*Safety`
 factors using the formulas in `METHODOLOGY.md`, and produces a weighted `safetyScore`. Currently

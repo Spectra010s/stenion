@@ -213,11 +213,11 @@ Every adapter must populate the same fixed five factors from `RiskFactorType`
 
 ```ts
 riskFactors: {
-  collateralSafety,    // collateral concentration (diversification)  — weight 0.20
-  oracleSafety,        // price freshness + manipulation resistance   — weight 0.25
-  adminKeySafety,      // admin signer structure + activity            — weight 0.20
-  liquiditySafety,     // free-liquidity depth (withdrawal cushion)    — weight 0.15
-  utilizationSafety,   // headroom below the configured utilization cap — weight 0.20
+  collateralSafety,    // collateral concentration (diversification)
+  oracleSafety,        // price freshness + manipulation resistance
+  adminKeySafety,      // admin signer structure + activity
+  liquiditySafety,     // free-liquidity depth (withdrawal cushion)
+  utilizationSafety,   // headroom below the configured utilization cap
 }
 ```
 
@@ -230,6 +230,16 @@ Conventions you must not break:
 - **Every key must be present.** Use `null` (not omission) for a factor that genuinely doesn't
   apply to your protocol, so the dashboard renders "N/A" instead of silently dropping it. The
   `score()` weighted mean renormalizes over the non-null factors.
+- **Take each factor's `weight` from `CATEGORY_FACTORS`, never a literal.** Import
+  `LENDING_FACTORS` from `@stenion/core` and write
+  `const weight = LENDING_FACTORS.oracleSafety.weight;`. A weight is part of the shared rulebook,
+  not something an adapter picks: the numbers used to be spelled out inside each adapter, and two
+  copies that drift produce two plausible scores from two different weightings while failing
+  nothing. The declarations live in [`core/src/weights.ts`](core/src/weights.ts), keyed by
+  category, and `core/src/scoring.test.ts` pins them against `METHODOLOGY.md`'s published weight
+  table. Your adapter's suite should assert it carries what its category declares — see the
+  `the factor map itself` block in either lending suite — rather than restating the numbers, which
+  would just be another copy.
 - **Each factor carries a `detail` string** — a short, human-readable explanation of what drove the
   value (e.g. "top reserve holds 95% of supplied value"). This is what the dashboard shows and what
   makes the number auditable. Write a real one.
@@ -243,8 +253,11 @@ Conventions you must not break:
   label through `shortenAddressesIn` before it lands in a detail string; it shortens the address and
   keeps the qualifier around it, which is real information.
 
-**How** a factor is computed can differ per protocol; the names, scale, and thresholds do not. New
-factors are added to `@stenion/core` for everyone at once — never invented per-adapter.
+**How** a factor is computed can differ per protocol; the names, scale, weights, and thresholds do
+not — **within a category**. New factors are added to `@stenion/core` for everyone in that category
+at once, never invented per-adapter. The five above are lending's set; a different category
+declares its own in `CATEGORY_FACTORS` and publishes it in its own `METHODOLOGY.md` section, and
+that is the only place a rule is allowed to differ.
 
 **`score()` delegates to `@stenion/core` — do not reimplement the weighted mean.** Your adapter's
 `score()` is one line:
