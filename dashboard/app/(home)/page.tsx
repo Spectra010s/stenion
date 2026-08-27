@@ -15,11 +15,8 @@ import {
 } from 'lucide-react';
 import { getProtocols, type LeaderboardEntry } from '../lib/api';
 import { GITHUB_URL } from '../lib/site';
-import { ScoreRing } from '../../components/score-ring';
-import { MarkAttribution, ProtocolLogo } from '../../components/protocol-logo';
-import { DeploymentBadge } from '../../components/deployment-badge';
-import { OperationalBadge } from '../../components/operational-badge';
-import { StatusPill } from '../../components/status-pill';
+import { MarkAttribution } from '../../components/protocol-logo';
+import { ProtocolCarousel } from '../../components/protocol-carousel';
 import { Reveal, RevealGroup, RevealItem } from '../../components/reveal';
 
 export const dynamic = 'force-dynamic';
@@ -32,7 +29,11 @@ export default async function HomePage() {
     protocols = null; // proof strip degrades gracefully; the pitch still stands
   }
 
-  const scored = (protocols ?? []).filter((p) => p.safetyScore !== null).slice(0, 3);
+  // EVERY scored protocol, not a top three: the strip is a carousel now, so
+  // there is no row length to cut the registry down to. A truncated strip and a
+  // complete one looked identical, which on the page that claims live coverage
+  // is exactly the wrong ambiguity to ship.
+  const scored = (protocols ?? []).filter((p) => p.safetyScore !== null);
 
   return (
     <>
@@ -115,71 +116,9 @@ export default async function HomePage() {
             to check again.
           </div>
         ) : (
-          <RevealGroup className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {scored.map((p, i) => (
-              // `h-full` on both the cell and the card. The grid stretches the
-              // cell to the tallest in the row, but the <Link> inside only grew
-              // to its own content, so a card with one extra line was visibly
-              // taller than its neighbours rather than merely fuller. That went
-              // unnoticed while every card held identical content; the first
-              // card to carry a deployment label exposed it. Same fix the
-              // protocol page's factor grid already uses.
-              <RevealItem key={p.id} className="h-full">
-                <Link
-                  href={`/protocol/${p.id}`}
-                  // `border-sheen` (globals.css) is scoped to these cards only
-                  // for now — a deliberate trial, not a general card treatment.
-                  // The negative delay spreads the three lights around the loop
-                  // instead of firing them in unison; it starts each card
-                  // mid-animation rather than waiting, so nothing is idle.
-                  style={{ '--sheen-delay': `${i * -3}s` } as React.CSSProperties}
-                  className="border-sheen group flex h-full items-center gap-5 rounded-xl border border-line surface-lit p-5 transition-all hover:-translate-y-0.5 hover:border-accent"
-                >
-                  {/* shrink-0: the ring carries its size as an inline style, which
-                      is a flex-basis, not a floor — a longer text column beside it
-                      would otherwise squash the ring on the narrowest cards. */}
-                  <ScoreRing
-                    score={p.safetyScore}
-                    size={104}
-                    stroke={8}
-                    label={null}
-                    className="shrink-0"
-                  />
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <ProtocolLogo name={p.name} logo={p.logo} size={24} />
-                      <div className="truncate font-display text-lg font-semibold text-ink">
-                        {p.name}
-                      </div>
-                    </div>
-                    {/* Chain and deployment label share ONE line, so every card
-                        has the same number of rows whether or not it carries a
-                        label. The badge previously sat on a row of its own,
-                        which is what made the heights diverge; `h-full` above
-                        now equalises them, and keeping the row count equal is
-                        what stops that equalising from leaving the other cards
-                        looking padded out with dead space.
-
-                        The strip shows the top three scores, so a market on
-                        another protocol's contracts can surface here without
-                        the reader ever reaching the registry. It carries the
-                        same label there as everywhere else. */}
-                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
-                      <span className="text-xs uppercase tracking-wider text-faint">{p.chain}</span>
-                      <DeploymentBadge deployedOn={p.deployedOn} />
-                      <OperationalBadge operationalState={p.operationalState} />
-                    </div>
-                    <div className="mt-3">
-                      <StatusPill
-                        lastRunStatus={p.lastRunStatus}
-                        hasScore={p.safetyScore !== null}
-                      />
-                    </div>
-                  </div>
-                </Link>
-              </RevealItem>
-            ))}
-          </RevealGroup>
+          <Reveal className="mt-6">
+            <ProtocolCarousel protocols={scored} />
+          </Reveal>
         )}
 
         {/* Marks appear on this page too, so the note travels with them. */}
@@ -306,9 +245,20 @@ export default async function HomePage() {
               title: 'Trustless & open',
               body: 'Adapters read directly from Soroban RPC and Horizon — nothing is self-reported by protocols. One adapter per protocol, open-source and PR-reviewed.',
             },
-          ].map((c) => (
+          ].map((c, i) => (
             <RevealItem key={c.title}>
-              <div className="h-full rounded-xl border border-line surface-lit p-6">
+              {/* `border-sheen` (globals.css) — the same travelling light the
+                  live-score cards carry, unmodified. These three are the other
+                  place on the site where the claim is "this is alive and it is
+                  ours": the score cards say the numbers are being computed right
+                  now, and these say the rules holding them can't be bought. The
+                  negative delay spreads the three lights around the loop rather
+                  than firing them in unison, and it is offset from the score
+                  strip's own stagger so the two sections aren't in step. */}
+              <div
+                style={{ '--sheen-delay': `${i * -3 - 1.5}s` } as React.CSSProperties}
+                className="border-sheen h-full rounded-xl border border-line surface-lit p-6"
+              >
                 <c.icon className="h-5 w-5 text-accent" strokeWidth={2} />
                 <h3 className="mt-4 font-medium text-ink">{c.title}</h3>
                 <p className="mt-2 text-sm leading-relaxed text-muted">{c.body}</p>
