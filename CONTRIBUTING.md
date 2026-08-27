@@ -259,6 +259,12 @@ at once, never invented per-adapter. The five above are lending's set; a differe
 declares its own in `CATEGORY_FACTORS` and publishes it in its own `METHODOLOGY.md` section, and
 that is the only place a rule is allowed to differ.
 
+> **Proposing a new category? Start at [`TAXONOMY.md`](TAXONOMY.md), not here.** A category is
+> admitted as a published rulebook first and an adapter second, and `TAXONOMY.md` is the standard
+> that rulebook is reviewed against — a set of gates stated as yes/no conditions, with a pre-flight
+> checklist to work through before any adapter code is written. This guide covers writing an adapter
+> against a rulebook that already exists.
+
 **`score()` delegates to `@stenion/core` — do not reimplement the weighted mean.** Your adapter's
 `score()` is one line:
 

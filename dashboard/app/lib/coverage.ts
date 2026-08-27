@@ -230,9 +230,9 @@ export const COVERAGE_STATUS_META: Record<
   },
   'out-of-category': {
     heading: 'Outside the current scoring category',
-    chip: 'lending only, for now',
+    chip: 'no taxonomy yet',
     blurb:
-      'Stenion scores lending protocols. The five factors are lending-specific by design — utilization against a borrow cap means nothing for an AMM — so other categories need their own taxonomy rather than the lending model stretched over them.',
+      'Stenion publishes no scoring taxonomy for this protocol’s category yet. Each category is scored on its own factors under its own weights — utilization against a borrow cap means nothing for an AMM — so a category arrives with a rulebook of its own, published in METHODOLOGY.md, rather than with the lending model stretched over it. Nothing here is a judgment about the protocol: it says only that the rules its number would be computed under have not been written.',
   },
 };
 

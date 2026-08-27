@@ -441,9 +441,19 @@ Roughly in priority order, but not committed to dates:
       protocol exposure (a vault routing into Blend inherits Blend's risk), withdrawal liquidity.
 
     Each is a v2 project in its own right: a new taxonomy, designed and published to the same
-    standard as the lending one, before any adapter is written. Lending stays the priority until its
-    own methodology is settled — an unvalidated oracle-robustness factor is a bigger problem than an
-    unscored category.
+    standard as the lending one, before any adapter is written. **That standard is written down:**
+    [`TAXONOMY.md`](TAXONOMY.md) is the admission bar a category has to clear, stated as gates a
+    reviewer checks off against a submission, with a pre-flight checklist at the end. Lending stays
+    the priority until its own methodology is settled — an unvalidated oracle-robustness factor is a
+    bigger problem than an unscored category.
+
+    **The registry is already ready for the second one.** Two `safetyScore`s are comparable only
+    when the same rulebook produced them, so `buildRegistryView` publishes one ranked block per
+    category — each numbered 01..n within itself — and carries no flat ranked array for a
+    cross-category ordering to live in, with a `?category=` filter on the same param pattern as
+    `?status=`. With one category on the board that renders exactly what it always did, which is
+    asserted rather than assumed. So a new taxonomy lands as a rulebook plus an adapter; it does
+    not also arrive as a ranking bug.
 
 ## Out of scope (for now)
 

@@ -28,6 +28,7 @@ import { cn } from '../app/lib/cn';
 import {
   REGISTRY_SORTS,
   registryHref,
+  type RegistryCategoryFilter,
   type RegistryParams,
   type RegistrySort,
   type RegistryStatusFilter,
@@ -51,10 +52,23 @@ export interface RegistryControlsProps {
    * groupCoverage avoids for headings.
    */
   coverageStatuses: { value: string; label: string }[];
+  /**
+   * The protocol categories the board actually contains.
+   *
+   * The select renders only when there are TWO OR MORE. With one category the
+   * choice is between "all" and the only thing there is — a control whose every
+   * setting shows the same rows, which is noise rather than a filter.
+   */
+  categories: { value: string; label: string }[];
   className?: string;
 }
 
-export function RegistryControls({ params, coverageStatuses, className }: RegistryControlsProps) {
+export function RegistryControls({
+  params,
+  coverageStatuses,
+  categories,
+  className,
+}: RegistryControlsProps) {
   const router = useRouter();
   const [q, setQ] = useState(params.q);
   // Navigating to a Server Component route is not instant: the RSC payload is a
@@ -84,7 +98,7 @@ export function RegistryControls({ params, coverageStatuses, className }: Regist
   // — clearing and re-arming the timer — on renders that changed nothing about
   // the search. With a slow round trip that can defer the navigation the reader
   // is waiting for, which is the failure mode this control exists to avoid.
-  const { status, sort } = params;
+  const { status, category, sort } = params;
   useEffect(() => {
     if (q === pushed.current) return;
     const timer = setTimeout(() => {
@@ -92,11 +106,13 @@ export function RegistryControls({ params, coverageStatuses, className }: Regist
       startTransition(() => {
         // `scroll: false` keeps the reader where they are. Jumping to the top on
         // every keystroke would make the results they are reading unreadable.
-        router.replace(registryHref({ q, status, sort }), { scroll: false });
+        // Every param is carried, not just the query — a search typed inside a
+        // filtered view must not silently drop the filter.
+        router.replace(registryHref({ q, status, category, sort }), { scroll: false });
       });
     }, DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [q, status, sort, router]);
+  }, [q, status, category, sort, router]);
 
   const go = (next: Partial<RegistryParams>) => {
     pushed.current = next.q ?? q;
@@ -185,6 +201,25 @@ export function RegistryControls({ params, coverageStatuses, className }: Regist
             </optgroup>
           )}
         </Select>
+
+        {/* Only once there is a second category. One category makes every
+            setting of this control show the same rows. */}
+        {categories.length > 1 && (
+          <Select
+            id="registry-category"
+            name="category"
+            label="Category"
+            value={params.category}
+            onChange={(value) => go({ category: value as RegistryCategoryFilter })}
+          >
+            <option value="all">All categories</option>
+            {categories.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
+              </option>
+            ))}
+          </Select>
+        )}
 
         <Select
           id="registry-sort"

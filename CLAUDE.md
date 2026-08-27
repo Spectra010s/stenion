@@ -7,6 +7,8 @@ here** — each public doc owns its content:
 - **[`README.md`](README.md)** — what Stenion is, the pitch, local quick-start.
 - **[`ARCHITECTURE.md`](ARCHITECTURE.md)** — monorepo layout, what each package does, data flow, deploy.
 - **[`METHODOLOGY.md`](METHODOLOGY.md)** — the source of truth for every factor's formula, thresholds, weights.
+- **[`TAXONOMY.md`](TAXONOMY.md)** — the admission standard a new scoring category must clear before
+  an adapter is written for it. Owns the gates and the pre-flight checklist; nothing here restates them.
 - **[`API.md`](API.md)** — the public API contract as a consumer meets it: endpoints, live example
   responses, the `ok`/`failed` union, staleness, rate limits, errors. Rendered at `/docs/api`.
 - **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — how to write an adapter, conventions, PR expectations.
@@ -78,6 +80,16 @@ These override any default behavior and are enforced in code and review:
   ordering allowed to merge them, because alphabetical asserts no ranking. The `#` column renders
   **only** under score-descending and is removed — not blanked — otherwise: under score-ascending
   "01" would label the lowest score as first. Enforced in `registry-query.test.ts`.
+- **A `#` numeral is scoped to one category, and no ordering may place two categories' scores in
+  one ranked sequence.** The generalization of the rule above: a position is meaningless across
+  entries that were never compared, and two `safetyScore`s are comparable only when the same
+  rulebook produced them — each category is scored on its own factors under its own weights. So
+  `buildRegistryView` publishes `RankedCategoryGroup[]` and **no flat ranked array**: each
+  category is its own block, numbered 01..n within itself, and there is nowhere for a
+  cross-category ranking to live. Name sort remains the sole ordering allowed to merge them,
+  for the same reason it may merge scored with unscored. Enforced in `registry-query.test.ts`,
+  which also pins that a single-category board renders exactly what it did before this rule
+  existed.
 - **A registry entry is a market, not necessarily a protocol — and it must say which.** An entry
   running another protocol's contracts (the YieldBlox pool on Blend V2) carries
   `ProtocolMetadata.deployedOn`, published as `deployedOn` on both API responses and rendered
