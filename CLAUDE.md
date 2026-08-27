@@ -7,6 +7,8 @@ here** — each public doc owns its content:
 - **[`README.md`](README.md)** — what Stenion is, the pitch, local quick-start.
 - **[`ARCHITECTURE.md`](ARCHITECTURE.md)** — monorepo layout, what each package does, data flow, deploy.
 - **[`METHODOLOGY.md`](METHODOLOGY.md)** — the source of truth for every factor's formula, thresholds, weights.
+- **[`TAXONOMY.md`](TAXONOMY.md)** — the admission standard a new scoring category must clear before
+  an adapter is written for it. Owns the gates and the pre-flight checklist; nothing here restates them.
 - **[`API.md`](API.md)** — the public API contract as a consumer meets it: endpoints, live example
   responses, the `ok`/`failed` union, staleness, rate limits, errors. Rendered at `/docs/api`.
 - **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — how to write an adapter, conventions, PR expectations.
