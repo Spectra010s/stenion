@@ -222,9 +222,39 @@ export interface RiskFactor {
  */
 export type RiskFactorMap = Record<RiskFactorType, RiskFactor | null>;
 
-export interface RiskScoreResult {
+/**
+ * Any category's factor map: factor keys to factors, with `null` for one that
+ * genuinely doesn't apply.
+ *
+ * `RiskFactorMap` above is **lending's** map — its keys are exactly the five
+ * `RiskFactorType` members. This is the shape all of them share, and it exists
+ * for one reason: `scoreFactors` is the weighted mean, and a weighted mean does
+ * not care which factors it is averaging. Typing that function against lending's
+ * key set made the arithmetic look category-specific when it never was, and the
+ * only way for a second category to reuse it would have been to copy it — which
+ * is the drift `core/src/scoring.ts` exists to prevent.
+ *
+ * WHAT THIS IS NOT. It is not an invitation to invent factor keys per adapter.
+ * Which keys a category scores is declared once in `CATEGORY_FACTORS`
+ * (`core/src/weights.ts`) and fixed there; this type is only what the shared
+ * arithmetic accepts, not a licence to widen a taxonomy.
+ */
+export type FactorMap = Record<string, RiskFactor | null>;
+
+/**
+ * The output of the shared weighted mean, parameterized by the factor map it
+ * was computed from so the map comes back out at the type it went in as.
+ *
+ * Defaulted to `RiskFactorMap`, which is why `RiskScoreResult` below is exactly
+ * the type it always was — every lending call site keeps its precise
+ * five-key `factors`, and nothing downstream had to widen.
+ */
+export interface ScoreResult<M extends FactorMap = RiskFactorMap> {
   /** 0-100, higher = safer */
   score: number;
-  factors: RiskFactorMap;
+  factors: M;
   computedAt: Date;
 }
+
+/** A lending score result. Unchanged in shape — see `ScoreResult`. */
+export type RiskScoreResult = ScoreResult<RiskFactorMap>;

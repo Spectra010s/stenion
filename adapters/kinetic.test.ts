@@ -16,7 +16,7 @@ import { describe, it } from 'node:test';
 
 import { KineticAdapter, decodeDecimals, decodeReserveFlags } from './kinetic.ts';
 import type { KineticRawData, KineticReserveFlags, KineticReserveRaw } from './kinetic.ts';
-import { OperationalLevel } from '@stenion/core';
+import { LENDING_FACTORS, OperationalLevel } from '@stenion/core';
 import type { RiskFactor } from '@stenion/core';
 
 // ---------------------------------------------------------------------------
@@ -334,6 +334,60 @@ describe('documented gaps — pinned so a change to them is deliberate', () => {
       Object.values(running).map((f) => f?.value),
       'pause state is not scored yet — see ROADMAP.md',
     );
+  });
+});
+
+describe('the factor map itself', () => {
+  // THE MIRROR OF blend.test.ts'S BLOCK OF THE SAME NAME, and it is here because
+  // it was not. Blend's weights had been pinned against the rulebook since the
+  // adapter was written; Kinetic's had never been pinned against anything, so a
+  // typo in one of its five weight literals would have gone out as a published
+  // score with no test between it and production. Both adapters implement one
+  // shared rulebook (METHODOLOGY.md ground rule 1), so both are held to it here,
+  // to the same standard and against the same source.
+
+  it('populates all five factors, each with a real detail string', async () => {
+    const f = await factors(makeRaw());
+    for (const [key, value] of Object.entries(f)) {
+      assert.ok(value !== undefined, `${key} must be present`);
+      assert.ok(value !== null, `${key} should be populated for a normal K2 market`);
+      assert.ok(value.detail.length > 0, `${key} needs a human-readable detail`);
+      assert.ok(value.value >= 0 && value.value <= 100, `${key} out of the 0-100 range`);
+    }
+  });
+
+  it('carries the weights the shared lending rulebook declares', async () => {
+    // Reads `LENDING_FACTORS` rather than spelling the five numbers out, so this
+    // is not a second hand-written copy of the weight table — it is the same
+    // declaration blend.test.ts checks against, and core/src/scoring.test.ts
+    // pins that declaration to METHODOLOGY.md's published table. No number in
+    // this file.
+    const f = await factors(makeRaw());
+
+    assert.deepEqual(
+      Object.keys(f).sort(),
+      Object.keys(LENDING_FACTORS).sort(),
+      'the adapter populates a different factor set than lending declares',
+    );
+
+    for (const [key, decl] of Object.entries(LENDING_FACTORS)) {
+      assert.equal(
+        f[key as keyof typeof f]!.weight,
+        decl.weight,
+        `${key} is weighted ${f[key as keyof typeof f]!.weight} here but ` +
+          `${decl.weight} in CATEGORY_FACTORS.lending`,
+      );
+    }
+  });
+
+  it('weights the same factors Blend does — one rulebook, two adapters', async () => {
+    // The point of a shared declaration, stated as a property rather than left
+    // implicit: if these two ever disagree, one of them has stopped reading the
+    // rulebook. Compared against the declaration rather than against Blend's
+    // adapter so this suite stays runnable on its own.
+    const f = await factors(makeRaw());
+    const total = Object.values(f).reduce((a, v) => a + (v ? v.weight : 0), 0);
+    assert.ok(Math.abs(total - 1) < 1e-9, `the populated weights sum to ${total}, not 1.00`);
   });
 });
 

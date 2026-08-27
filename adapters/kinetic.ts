@@ -14,6 +14,7 @@ import { rpc } from '@stellar/stellar-sdk';
 // type stripping is syntactic, so type-only names left in a value import
 // survive into the running module and fail against core's CommonJS output.
 import {
+  LENDING_FACTORS,
   PoolOperation,
   RiskFactorType,
   describePriceAges,
@@ -839,12 +840,21 @@ export class KineticAdapter implements Adapter<KineticRawData, 'lending'> {
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // The five factors.
+  //
+  // Each reads K2-specific raw state, and each takes its weight from
+  // `LENDING_FACTORS` in @stenion/core rather than from a literal — the same
+  // declarations blend.ts reads, so the two adapters cannot come to weight the
+  // same factor differently. See core/src/weights.ts.
+  // ---------------------------------------------------------------------------
+
   // Concentration of supplied value across reserves, via a normalized HHI.
   // Identical formula/anchors to Blend (METHODOLOGY.md §1): HHI = Σ(share²),
   // mapped 1/n → 100 (even split) and 1 → 0 (all in one asset). Pure on-chain
   // supplied USD.
   private collateralSafety(raw: KineticRawData): RiskFactor {
-    const weight = 0.2;
+    const weight = LENDING_FACTORS.collateralSafety.weight;
     const values = raw.reserves
       .map((r) => suppliedUsd(r, raw.oraclePriceDecimals))
       .filter((v): v is number => v !== null && v > 0);
@@ -881,7 +891,7 @@ export class KineticAdapter implements Adapter<KineticRawData, 'lending'> {
   // (the window inside which K2 itself considers a price current) and `dead` to
   // the tighter of its per-asset max_age and its global staleness threshold.
   private oracleSafety(raw: KineticRawData): RiskFactor {
-    const weight = 0.25;
+    const weight = LENDING_FACTORS.oracleSafety.weight;
     const { maxPriceChangeBps, priceStalenessThreshold, priceCacheTtl } = raw.oracleConfig;
 
     const worstFresh = worstBy(raw.reserves, (r) => {
@@ -978,7 +988,7 @@ export class KineticAdapter implements Adapter<KineticRawData, 'lending'> {
   // K2's admin (PADMIN) is expected to be a governance contract (C…), which
   // Horizon can't introspect → neutral baseline, flagged in the detail.
   private adminKeySafety(raw: KineticRawData): RiskFactor {
-    const weight = 0.2;
+    const weight = LENDING_FACTORS.adminKeySafety.weight;
     const a = raw.admin;
 
     if (a.isContract || a.account === null) {
@@ -1005,7 +1015,7 @@ export class KineticAdapter implements Adapter<KineticRawData, 'lending'> {
   // reserve. Identical to Blend (METHODOLOGY.md §4): the absolute withdrawal
   // cushion, distinct from utilizationSafety's proximity-to-cap.
   private liquiditySafety(raw: KineticRawData): RiskFactor {
-    const weight = 0.15;
+    const weight = LENDING_FACTORS.liquiditySafety.weight;
     const sizing = this.reserveSizing(raw);
     const excluded: ExcludedReserve[] = [];
     let worstRatio = 1;
@@ -1059,7 +1069,7 @@ export class KineticAdapter implements Adapter<KineticRawData, 'lending'> {
   // protocol's own on-chain utilization parameter — see METHODOLOGY.md §5):
   // headroom = (0.8 − util)/0.8, worst reserve wins.
   private utilizationSafety(raw: KineticRawData): RiskFactor {
-    const weight = 0.2;
+    const weight = LENDING_FACTORS.utilizationSafety.weight;
     const sizing = this.reserveSizing(raw);
     const excluded: ExcludedReserve[] = [];
     let worst = 100;

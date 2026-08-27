@@ -25,7 +25,14 @@ import { describe, it } from 'node:test';
 // strip-only TypeScript mode rejects `enum` (ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX).
 // So the factor keys are written as string literals below, and a test asserts
 // those literals still match the enum — see "taxonomy names".
+import type { ProtocolCategory } from './category.ts';
 import type { RiskFactor, RiskFactorMap } from './types.ts';
+// A VALUE import: the weight declarations are the thing the doc's table is
+// pinned against, so they have to be readable at runtime, not just at compile
+// time. `weights.ts` is a leaf under the strip-only loader — its only import is
+// a type-only one — which is what makes this work.
+import { PROTOCOL_CATEGORIES } from './category.ts';
+import { CATEGORY_FACTORS } from './weights.ts';
 import {
   MIN_RESERVE_POOL_SHARE,
   STALE_CEILING_SECONDS,
@@ -57,27 +64,73 @@ function repoFile(name: string): string {
 const METHODOLOGY = repoFile('METHODOLOGY.md');
 
 /**
- * The "Factor weights" table: rows like ``| `oracleSafety` | 0.25 |``.
+ * The slice of METHODOLOGY.md belonging to one category: from its `## <Label>`
+ * heading down to the next heading of the same level.
+ *
+ * WHY THE PARSERS BELOW ARE SCOPED AND NO LONGER READ THE WHOLE FILE. The
+ * document used to describe exactly one rulebook, so "the weight table" and
+ * "the worked example" were unambiguous phrases and a file-wide regex was a
+ * correct reading of it. Per-category sections make both phrases ambiguous: a
+ * second category brings a second weight table and a second worked example,
+ * with its own factor keys and its own weights, and the old parsers would have
+ * concatenated the two tables and then asserted the pile summed to 1.00. That
+ * break would have surfaced in whatever change added the category, pointing at
+ * the wrong line. Taking a category and reading only its section is what makes
+ * each assertion below say which rulebook it is about.
+ *
+ * The heading text comes from `CATEGORY_FACTORS[category].label` rather than a
+ * literal here, so the document and the code cannot disagree about what a
+ * category's section is called — the same reason these parsers read the doc at
+ * all instead of restating it.
+ */
+function docCategorySection(category: ProtocolCategory): string {
+  const heading = `## ${CATEGORY_FACTORS[category].label}`;
+  const lines = METHODOLOGY.split('\n');
+  const start = lines.findIndex((l) => l.trimEnd() === heading);
+  assert.ok(
+    start >= 0,
+    `METHODOLOGY.md has no "${heading}" section. Every category in ` +
+      `PROTOCOL_CATEGORIES needs one — a category with no published rulebook is ` +
+      `a score nobody outside can check.`,
+  );
+
+  const rest = lines.slice(start + 1);
+  // `^## ` matches an h2 only: an h3 line starts `###`, so the space fails to
+  // match and a subsection cannot be mistaken for the end of the section.
+  const end = rest.findIndex((l) => /^## /.test(l));
+  return (end === -1 ? rest : rest.slice(0, end)).join('\n');
+}
+
+/**
+ * One category's "Factor weights" table: rows like ``| `oracleSafety` | 0.25 |``.
  * The `Total` row is excluded by requiring a `*Safety` name.
  */
-function docWeightTable(): { factor: string; weight: number }[] {
-  const rows = [...METHODOLOGY.matchAll(/^\|\s*`(\w+Safety)`\s*\|\s*([\d.]+)\s*\|/gm)];
+function docWeightTable(category: ProtocolCategory): { factor: string; weight: number }[] {
+  const rows = [
+    ...docCategorySection(category).matchAll(/^\|\s*`(\w+Safety)`\s*\|\s*([\d.]+)\s*\|/gm),
+  ];
   assert.ok(
     rows.length > 0,
-    'could not parse the factor-weight table out of METHODOLOGY.md — has its format changed?',
+    `could not parse ${category}'s factor-weight table out of METHODOLOGY.md — has its format changed?`,
   );
   return rows.map((m) => ({ factor: m[1], weight: Number(m[2]) }));
 }
 
 /**
- * The worked example, e.g.
+ * One category's worked example, e.g.
  * `70×0.20 + 100×0.25 + 40×0.20 + 22×0.15 + 14×0.20 = 53.1 → 53`
  *
  * Returns the (value, weight) pairs plus the score the doc claims they produce.
  */
-function docWorkedExample(): { pairs: [number, number][]; stated: number; rounded: number } {
-  const line = METHODOLOGY.split('\n').find((l) => /×/.test(l) && /→/.test(l) && /\+/.test(l));
-  assert.ok(line, 'could not find the worked example line in METHODOLOGY.md');
+function docWorkedExample(category: ProtocolCategory): {
+  pairs: [number, number][];
+  stated: number;
+  rounded: number;
+} {
+  const line = docCategorySection(category)
+    .split('\n')
+    .find((l) => /×/.test(l) && /→/.test(l) && /\+/.test(l));
+  assert.ok(line, `could not find ${category}'s worked example line in METHODOLOGY.md`);
 
   const pairs = [...line.matchAll(/([\d.]+)×([\d.]+)/g)].map(
     (m) => [Number(m[1]), Number(m[2])] as [number, number],
@@ -115,9 +168,14 @@ function factorMap(entries: (RiskFactor | null)[]): RiskFactorMap {
 
 // ---------------------------------------------------------------------------
 
-describe('scoreFactors — agreement with METHODOLOGY.md', () => {
+describe("scoreFactors — agreement with METHODOLOGY.md's lending section", () => {
+  // Every assertion in here names the category it is about. `scoreFactors`
+  // itself is category-agnostic — it is a weighted mean and does not know which
+  // rulebook produced the weights — but a worked example and a weight table are
+  // a *category's*, so reading them without saying whose would be reading the
+  // wrong rulebook the moment a second one is published.
   it("reproduces the doc's worked example exactly", () => {
-    const { pairs, stated, rounded } = docWorkedExample();
+    const { pairs, stated, rounded } = docWorkedExample('lending');
 
     assert.equal(
       pairs.length,
@@ -150,7 +208,7 @@ describe('scoreFactors — agreement with METHODOLOGY.md', () => {
   });
 
   it("the doc's weight table sums to 1.00 and matches the worked example's weights", () => {
-    const table = docWeightTable();
+    const table = docWeightTable('lending');
     assert.equal(table.length, FACTOR_KEYS.length, 'expected five weighted factors');
 
     const sum = table.reduce((a, r) => a + r.weight, 0);
@@ -160,7 +218,7 @@ describe('scoreFactors — agreement with METHODOLOGY.md', () => {
     // worked example. They must agree with each other, or the doc contradicts
     // itself regardless of what the code does.
     const fromTable = table.map((r) => r.weight).sort();
-    const fromExample = docWorkedExample()
+    const fromExample = docWorkedExample('lending')
       .pairs.map(([, w]) => w)
       .sort();
     assert.deepEqual(
@@ -168,6 +226,47 @@ describe('scoreFactors — agreement with METHODOLOGY.md', () => {
       fromTable,
       "the worked example's weights differ from the table's",
     );
+  });
+
+  it("the published table is exactly what CATEGORY_FACTORS declares — the adapters' source", () => {
+    // THE LINK THAT MAKES THE CHAIN A CHAIN. Both adapters read their weights
+    // from `CATEGORY_FACTORS.lending`, and neither contains a weight literal
+    // any more; their suites assert they carry what it declares. This asserts
+    // the other end — that what it declares is what METHODOLOGY.md publishes.
+    // Without it, the two adapters could agree perfectly with each other and
+    // both disagree with the rulebook, which is worse than the drift the move
+    // into core was meant to fix, not better: it would look consistent.
+    //
+    // The doc is parsed, never restated, so a weight edited in either place
+    // alone fails here.
+    const fromDoc = Object.fromEntries(docWeightTable('lending').map((r) => [r.factor, r.weight]));
+    const declared = Object.fromEntries(
+      Object.entries(CATEGORY_FACTORS.lending.factors).map(([k, f]) => [k, f.weight]),
+    );
+
+    assert.deepEqual(
+      declared,
+      fromDoc,
+      'CATEGORY_FACTORS.lending and METHODOLOGY.md’s "Factor weights" table disagree. ' +
+        'Code and the doc are not allowed to drift — fix whichever is wrong, in the same change.',
+    );
+  });
+
+  it('publishes a rulebook section for every category that exists', () => {
+    // A category in PROTOCOL_CATEGORIES with no METHODOLOGY.md section is a
+    // score with no published rules behind it. `docCategorySection` throws with
+    // that message if the heading is missing, so iterating every category is the
+    // whole assertion — and it is the check that stops the next category being
+    // registered in code and forgotten in the document.
+    for (const category of PROTOCOL_CATEGORIES) {
+      const section = docCategorySection(category);
+      assert.ok(section.trim().length > 0, `${category}'s section in METHODOLOGY.md is empty`);
+      assert.ok(docWeightTable(category).length > 0, `${category} publishes no weight table`);
+      assert.ok(
+        docWorkedExample(category).pairs.length > 0,
+        `${category} publishes no worked example`,
+      );
+    }
   });
 
   it('taxonomy names agree across the enum, the doc, and this test', () => {
@@ -181,11 +280,16 @@ describe('scoreFactors — agreement with METHODOLOGY.md', () => {
 
     assert.deepEqual([...FACTOR_KEYS].sort(), fromEnum, 'FACTOR_KEYS is out of date with the enum');
     assert.deepEqual(
-      docWeightTable()
+      docWeightTable('lending')
         .map((r) => r.factor)
         .sort(),
       fromEnum,
-      "METHODOLOGY.md's weight table names a different set of factors than the enum",
+      "METHODOLOGY.md's lending weight table names a different set of factors than the enum",
+    );
+    assert.deepEqual(
+      Object.keys(CATEGORY_FACTORS.lending.factors).sort(),
+      fromEnum,
+      'CATEGORY_FACTORS.lending declares a different set of factors than the enum',
     );
   });
 });
