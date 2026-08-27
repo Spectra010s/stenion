@@ -118,12 +118,14 @@
   --light-lit-overlay: rgba(255, 255, 255, 0.28);
   --light-dot: rgba(35, 26, 56, 0.07);
   --light-shimmer: rgba(35, 26, 56, 0.1);
-  /* Tuned on screen, not guessed. At 0.55 the light sheen measured ~1.5x the
-     border separation dark gets at 0.8 (B-G spread of 9 vs 6 across the card's
-     top edge) — dark-violet-on-light reads stronger than light-violet-on-dark
-     at equal delta, so it needs LESS opacity, not more. 0.45 lands it close to
-     parity while staying easy to miss on first glance. */
-  --light-sheen-opacity: 0.45;
+  /* Tuned on screen, not guessed. Dark-violet-on-light reads stronger than
+     light-violet-on-dark at equal delta, so light needs LESS opacity than dark,
+     not more — that ratio is the part to preserve if these are retuned. Both
+     were raised together (0.45/0.8 -> 0.62/1.0) when the effect picked up a
+     second home on the trust cards: at the old values it was easy to miss on
+     first glance, which is the right call for one accent card in a strip and
+     the wrong one for a card whose whole job is to be read. */
+  --light-sheen-opacity: 0.62;
   --light-glow-opacity: 0.09;
 
   /* ---- DARK palette. Near-black with a violet cast, never pure black. ---- */
@@ -154,7 +156,7 @@
   --dark-lit-overlay: rgba(255, 255, 255, 0.025);
   --dark-dot: rgba(255, 255, 255, 0.05);
   --dark-shimmer: rgba(255, 255, 255, 0.06);
-  --dark-sheen-opacity: 0.8;
+  --dark-sheen-opacity: 1;
   --dark-glow-opacity: 0.1;
 }
 
@@ -361,10 +363,22 @@ body {
 
 /* Ambient border sheen — a slow, low-contrast violet light travelling around a
    card's border, so the card reads as quietly alive rather than static.
-   Deliberately scoped: applied ONLY to the homepage live-score cards for now
-   (see app/(home)/page.tsx). Don't spread it to other cards without a decision —
-   the whole point of one accent used sparingly is that motion in the accent is
+
+   SCOPE (two card sets on the homepage, both in app/(home)/page.tsx): the
+   live-score carousel cards, and the three "Rules that can't be bought" cards.
+   Still deliberately scoped, and the reason it is these two and not every card
+   is that they make the same kind of claim — the score cards say the numbers
+   are being computed right now, the rules cards say the constraints producing
+   them are ours and fixed. Don't spread it further without a decision: the
+   whole point of one accent used sparingly is that motion in the accent stays
    rare enough to mean something.
+
+   BOTH THEMES ARE ALREADY HANDLED, so a new user of this class does not need to
+   adapt anything for a lighter ground. The two knobs are tokens: opacity is
+   `--t-sheen-opacity` (0.45 light / 0.8 dark — see the note on the light value,
+   which is LOWER on purpose) and the gradient peak is `--color-accent-ink`,
+   which inverts direction per theme. Any card on `surface-lit` gets the same
+   read as the score cards do.
 
    Pure CSS, no framer-motion: this is an ambient loop with no state, no
    interaction, and no dependence on React, so a keyframe animation is both
@@ -400,12 +414,18 @@ body {
      1px border rather than leaving it floating just inside. */
   inset: -1px;
   border-radius: inherit;
-  padding: 1px; /* = ring thickness */
+  /* = ring thickness. 1.5 rather than 1: at exactly 1px the ring only ever
+     covered the card's own border, so the light could never read as brighter
+     than a border, only as a differently-coloured one. The extra half pixel
+     laps just inside the border and is what lets the bright wedge register as
+     light rather than as ink. */
+  padding: 1.5px;
   pointer-events: none;
-  /* The two knobs, if this needs retuning: `opacity` here and the peak colour
-     in the gradient below. Started at 0.5 on `accent` and read as too faint on
-     a real display, so the peak moved to the lighter `accent-ink` and opacity
-     up to 0.8 — brighter core, same hue, still well short of a neon outline. */
+  /* The knobs, if this needs retuning: `opacity` here, the ring thickness
+     above, and the peak colour in the gradient below. Started at 0.5 on
+     `accent` and read as too faint on a real display, so the peak moved to the
+     lighter `accent-ink` — brighter core, same hue, still well short of a neon
+     outline. The per-theme values live on the palettes, never here. */
   opacity: var(--t-sheen-opacity);
 
   /* A fully-transparent *accent*, not the `transparent` keyword (= transparent
@@ -528,6 +548,52 @@ body {
   background-size: 26px 26px;
   -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 40%, transparent 100%);
   mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 40%, transparent 100%);
+}
+
+/* Horizontal edge fade for a scrolling row — cards fade IN from the right and
+   OUT to the left instead of being sliced off at the container's edge.
+
+   A mask, not an overlaid gradient div, and the difference is not cosmetic: an
+   overlay tints whatever is behind it, so it has to know the page ground and
+   would need a token per theme to stay invisible — and it would sit ON TOP of
+   the cards, eating their hover and their clicks. The mask is applied to the
+   scroller's own alpha, so it costs nothing per theme, blurs nothing inside the
+   card, and leaves every card fully interactive right up to the point it
+   disappears.
+
+   The mask's positioning area is the border box, so it stays put while the
+   content scrolls underneath — which is the whole point. Prefixed and
+   unprefixed: Safari only dropped the -webkit- requirement in 15.4.
+
+   Used by the homepage protocol carousel (components/protocol-carousel.tsx).
+   `--edge-fade` is a knob: widen it and the row reads softer but shows less. */
+.edge-fade-x {
+  --edge-fade: 56px;
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 var(--edge-fade),
+    #000 calc(100% - var(--edge-fade)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 var(--edge-fade),
+    #000 calc(100% - var(--edge-fade)),
+    transparent 100%
+  );
+}
+
+/* Scroll without the bar. Only for rows that carry their own affordance — the
+   carousel's constant drift IS the affordance, and a classic scrollbar under a
+   self-scrolling row reads as a control that is moving on its own. Do not put
+   this on a region whose scrollability isn't otherwise obvious. */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
 /* Shimmer for skeleton loaders. */
